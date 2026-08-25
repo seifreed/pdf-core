@@ -735,64 +735,42 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         dict: &PdfDictionary,
         index: u32,
     ) -> Result<(PdfValue, usize, usize), String> {
-        let n = dict.get("N").and_then(|v| v.as_integer()).unwrap_or(0) as usize;
-        let first = dict.get("First").and_then(|v| v.as_integer()).unwrap_or(0) as usize;
+        let n = dict
+            .get("N")
+            .and_then(|v| v.as_integer())
+            .ok_or_else(|| "Missing N in object stream".to_string())?
+            .try_into()
+            .map_err(|_| "Invalid N in object stream".to_string())?;
+        let first = dict
+            .get("First")
+            .and_then(|v| v.as_integer())
+            .ok_or_else(|| "Missing First in object stream".to_string())?
+            .try_into()
+            .map_err(|_| "Invalid First in object stream".to_string())?;
+        let index: usize = index
+            .try_into()
+            .map_err(|_| "Invalid object stream index".to_string())?;
 
-        if n == 0 || first == 0 || first > data.len() {
-            return Err("Invalid object stream header".to_string());
-        }
-        if index as usize >= n {
+        if index >= n {
             return Err("Object stream index out of range".to_string());
         }
 
-        let header = &data[..first];
-        let mut pos = 0usize;
-        let mut offsets = Vec::with_capacity(n);
-
-        for _ in 0..n {
-            while pos < header.len() && header[pos].is_ascii_whitespace() {
-                pos += 1;
-            }
-            let num_start = pos;
-            while pos < header.len() && header[pos].is_ascii_digit() {
-                pos += 1;
-            }
-            let _obj_num = std::str::from_utf8(&header[num_start..pos])
-                .unwrap_or("0")
-                .parse::<u32>()
-                .unwrap_or(0);
-            while pos < header.len() && header[pos].is_ascii_whitespace() {
-                pos += 1;
-            }
-            let off_start = pos;
-            while pos < header.len() && header[pos].is_ascii_digit() {
-                pos += 1;
-            }
-            let obj_offset = std::str::from_utf8(&header[off_start..pos])
-                .unwrap_or("0")
-                .parse::<usize>()
-                .unwrap_or(0);
-            offsets.push(obj_offset);
-        }
-
-        if offsets.len() <= index as usize {
-            return Err("Object stream header incomplete".to_string());
-        }
-
-        let start = first + offsets[index as usize];
-        let mut next_offset = data.len();
-        for off in offsets.iter().skip(index as usize + 1) {
-            let candidate = first + *off;
-            if candidate > start && candidate < next_offset {
-                next_offset = candidate;
-            }
-        }
+        let offsets = object_parser::parse_object_stream_offsets(data, n, first)?;
+        let start = offsets[index];
+        let next_offset = offsets
+            .iter()
+            .copied()
+            .filter(|candidate| *candidate > start)
+            .min()
+            .unwrap_or(data.len());
 
         if start >= data.len() || start >= next_offset {
             return Err("Invalid object stream offsets".to_string());
         }
 
-        let slice = &data[start..next_offset];
+        let slice = data
+            .get(start..next_offset)
+            .ok_or_else(|| "Invalid object stream offsets".to_string())?;
         let (_, value) =
             object_parser::parse_value(slice).map_err(|e| format!("Parse value error: {:?}", e))?;
         Ok((value, start, next_offset - start))

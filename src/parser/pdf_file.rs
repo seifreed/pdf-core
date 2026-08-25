@@ -25,7 +25,6 @@ const HEADER_SEARCH_BUFFER_SIZE: usize = 1024;
 const XREF_TAIL_BUFFER_SIZE: i64 = 1024;
 const XREF_BUFFER_SIZE: usize = 65536;
 const XREF_LARGE_BUFFER_SIZE: usize = 262144;
-const OBJECT_BUFFER_SIZE: usize = 65536;
 
 // PDF structure constants
 const MIN_PDF_SIZE: usize = 8;
@@ -1727,30 +1726,49 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             }
 
             // Get object location from xref
-            let entry = match self.document.xref.entries.get(obj_id) {
+            let entry = match self.document.xref.entries.get(obj_id).copied() {
                 Some(entry) => entry,
                 None => {
-                    // Gracefully handle missing xref entries in malformed PDFs.
+                    if !self.tolerant {
+                        return Err(AstError::ParseError(format!(
+                            "Missing xref entry for object {} {}",
+                            obj_id.number, obj_id.generation
+                        )));
+                    }
                     return Ok(PdfValue::Null);
                 }
             };
 
             let value = match entry {
                 XRefEntry::InUse { offset, .. } => {
-                    self.reader.seek(SeekFrom::Start(*offset))?;
-                    let mut buffer = vec![0u8; 65536];
-                    let n = self.reader.read(&mut buffer)?;
-                    buffer.truncate(n);
+                    let buffer = self.read_object_buffer(offset)?;
 
                     match object_parser::parse_indirect_object(&buffer) {
                         Ok((_, (parsed_id, value))) => {
                             if parsed_id == *obj_id {
                                 value
-                            } else {
+                            } else if self.tolerant {
                                 PdfValue::Null
+                            } else {
+                                return Err(AstError::ParseError(format!(
+                                    "Object ID mismatch: expected {} {}, got {} {}",
+                                    obj_id.number,
+                                    obj_id.generation,
+                                    parsed_id.number,
+                                    parsed_id.generation
+                                )));
                             }
                         }
-                        Err(_) => PdfValue::Null,
+                        Err(err) if self.tolerant => {
+                            log::warn!("Failed to parse object {}: {:?}", obj_id.number, err);
+                            PdfValue::Null
+                        }
+                        Err(err) => {
+                            return Err(AstError::ParseError(format!(
+                                "Failed to parse object {} {}: {:?}",
+                                obj_id.number, obj_id.generation, err
+                            )))
+                        }
                     }
                 }
                 XRefEntry::Compressed {
@@ -1758,7 +1776,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     index,
                 } => {
                     // Load from object stream
-                    self.load_from_object_stream(*stream_object, *index)?
+                    self.load_from_object_stream(stream_object, index)?
                 }
                 XRefEntry::Free { .. } => PdfValue::Null,
             };
@@ -1772,6 +1790,44 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         }
 
         result
+    }
+
+    fn read_object_buffer(&mut self, offset: u64) -> AstResult<Vec<u8>> {
+        let file_size = Self::read_file_size(&mut self.reader)?;
+        if offset >= file_size {
+            return Err(AstError::ParseError(format!(
+                "Object offset {} is outside the file",
+                offset
+            )));
+        }
+
+        let max_bytes = self
+            .limits
+            .max_object_size_mb
+            .checked_mul(1024 * 1024)
+            .ok_or_else(|| AstError::ParseError("Object size limit overflow".to_string()))?
+            as u64;
+        let next_offset = self
+            .document
+            .xref
+            .entries
+            .values()
+            .filter_map(|entry| match entry {
+                XRefEntry::InUse { offset, .. } => Some(*offset),
+                _ => None,
+            })
+            .filter(|candidate| *candidate > offset)
+            .min()
+            .unwrap_or(file_size);
+        let bound = next_offset
+            .saturating_sub(offset)
+            .min(file_size.saturating_sub(offset))
+            .min(max_bytes);
+
+        self.reader.seek(SeekFrom::Start(offset))?;
+        let mut buffer = Vec::new();
+        self.reader.by_ref().take(bound).read_to_end(&mut buffer)?;
+        Ok(buffer)
     }
 
     fn load_from_object_stream(&mut self, stream_obj: u32, index: u32) -> AstResult<PdfValue> {
@@ -1803,60 +1859,45 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         dict: &PdfDictionary,
     ) -> AstResult<PdfValue> {
         // Get N (number of objects) and First (offset to first object)
-        let n = dict.get("N").and_then(|v| v.as_integer()).unwrap_or(0) as u32;
-        let first = dict.get("First").and_then(|v| v.as_integer()).unwrap_or(0) as usize;
+        let n = dict
+            .get("N")
+            .and_then(|v| v.as_integer())
+            .ok_or_else(|| AstError::ParseError("Missing N in object stream".to_string()))
+            .and_then(|n| {
+                usize::try_from(n)
+                    .map_err(|_| AstError::ParseError("Invalid N in object stream".to_string()))
+            })?;
+        let first = dict
+            .get("First")
+            .and_then(|v| v.as_integer())
+            .ok_or_else(|| AstError::ParseError("Missing First in object stream".to_string()))
+            .and_then(|first| {
+                usize::try_from(first)
+                    .map_err(|_| AstError::ParseError("Invalid First in object stream".to_string()))
+            })?;
 
+        let index = usize::try_from(index)
+            .map_err(|_| AstError::ParseError("Invalid object stream index".to_string()))?;
         if index >= n {
             return Ok(PdfValue::Null);
         }
 
-        // Parse object number/offset pairs
-        let header = &data[..first];
-        let mut pairs = Vec::new();
-        let mut offset = 0;
-
-        for _ in 0..n {
-            // Skip whitespace
-            while offset < header.len() && header[offset].is_ascii_whitespace() {
-                offset += 1;
-            }
-
-            // Parse object number
-            let num_start = offset;
-            while offset < header.len() && header[offset].is_ascii_digit() {
-                offset += 1;
-            }
-
-            if let Ok(obj_num) = std::str::from_utf8(&header[num_start..offset])
-                .unwrap_or("0")
-                .parse::<u32>()
-            {
-                // Skip whitespace
-                while offset < header.len() && header[offset].is_ascii_whitespace() {
-                    offset += 1;
-                }
-
-                // Parse offset
-                let off_start = offset;
-                while offset < header.len() && header[offset].is_ascii_digit() {
-                    offset += 1;
-                }
-
-                if let Ok(obj_offset) = std::str::from_utf8(&header[off_start..offset])
-                    .unwrap_or("0")
-                    .parse::<usize>()
-                {
-                    pairs.push((obj_num, first + obj_offset));
-                }
-            }
-        }
+        let offsets = object_parser::parse_object_stream_offsets(data, n, first)
+            .map_err(AstError::ParseError)?;
 
         // Find the object at the requested index
-        if let Some((_, obj_offset)) = pairs.get(index as usize) {
-            let obj_data = &data[*obj_offset..];
-            if let Ok((_, value)) = object_parser::parse_value(obj_data) {
-                return Ok(value);
-            }
+        let obj_offset = offsets[index];
+        let next_offset = offsets
+            .iter()
+            .copied()
+            .filter(|candidate| *candidate > obj_offset)
+            .min()
+            .unwrap_or(data.len());
+        let obj_data = data
+            .get(obj_offset..next_offset)
+            .ok_or_else(|| AstError::ParseError("Invalid object stream offsets".to_string()))?;
+        if let Ok((_, value)) = object_parser::parse_value(obj_data) {
+            return Ok(value);
         }
 
         Ok(PdfValue::Null)

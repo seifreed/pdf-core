@@ -127,6 +127,17 @@ mod parser_tests {
     }
 
     #[test]
+    fn stream_parser_rejects_invalid_length_and_missing_endstream() {
+        use object_parser::parse_indirect_object;
+
+        assert!(
+            parse_indirect_object(b"1 0 obj\n<< /Length -1 >>\nstream\n\nendstream\nendobj")
+                .is_err()
+        );
+        assert!(parse_indirect_object(b"1 0 obj\n<< /Length 3 >>\nstream\nabc\nendobj").is_err());
+    }
+
+    #[test]
     fn test_xref_table_parsing() {
         use xref::parse_xref_table;
 
@@ -371,5 +382,17 @@ mod parser_tests {
         // Very large numbers
         let result = parse_value(b"999999999999999");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn object_stream_offsets_reject_invalid_bounds() {
+        use object_parser::parse_object_stream_offsets;
+
+        assert_eq!(
+            parse_object_stream_offsets(b"10 0 11 3 abcdefghi", 2, 10).unwrap(),
+            vec![10, 13]
+        );
+        assert!(parse_object_stream_offsets(b"10 99 abc", 1, 6).is_err());
+        assert!(parse_object_stream_offsets(b"10", 2, 3).is_err());
     }
 }

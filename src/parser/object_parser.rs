@@ -1,6 +1,5 @@
 use crate::parser::lexer::*;
 use crate::types::*;
-use log::warn;
 use nom::{
     branch::alt,
     bytes::complete::tag,
@@ -123,22 +122,7 @@ pub fn parse_indirect_object(input: &[u8]) -> IResult<&[u8], (ObjectId, PdfValue
     let (input, _) = skip_whitespace(input)?;
     let (input, _) = tag(b"obj")(input)?;
     let (input, _) = skip_whitespace_and_comments(input)?;
-    let (input, value) = match parse_value(input) {
-        Ok(result) => result,
-        Err(err) => {
-            warn!("Failed to parse object value, attempting recovery to endobj");
-            if let Some(rest) = recover_to_endobj(input) {
-                return Ok((
-                    rest,
-                    (
-                        ObjectId::new(obj_num as u32, gen_num as u16),
-                        PdfValue::Null,
-                    ),
-                ));
-            }
-            return Err(err);
-        }
-    };
+    let (input, value) = parse_value(input)?;
     let (input, _) = skip_whitespace_and_comments(input)?;
 
     let (input, value) =
@@ -156,14 +140,6 @@ pub fn parse_indirect_object(input: &[u8]) -> IResult<&[u8], (ObjectId, PdfValue
         input,
         (ObjectId::new(obj_num as u32, gen_num as u16), value),
     ))
-}
-
-fn recover_to_endobj(input: &[u8]) -> Option<&[u8]> {
-    let marker = b"endobj";
-    input
-        .windows(marker.len())
-        .position(|w| w == marker)
-        .map(|pos| &input[pos + marker.len()..])
 }
 
 fn parse_stream_data(input: &[u8], dict_value: PdfValue) -> IResult<&[u8], PdfValue> {
@@ -184,20 +160,18 @@ fn parse_stream_data_with_resolver<'a>(
 
         // Try to resolve Length - could be direct integer or indirect reference
         let length = match dict.get("Length") {
-            Some(PdfValue::Integer(len)) => *len as usize,
+            Some(PdfValue::Integer(len)) if *len >= 0 => *len as usize,
+            Some(PdfValue::Integer(_)) => {
+                return Err(nom::Err::Failure(nom::error::Error::new(
+                    input,
+                    nom::error::ErrorKind::Verify,
+                )))
+            }
             Some(PdfValue::Reference(pdf_ref)) => {
-                // For now, we'll store the reference and handle it later in the resolver
-                // This is a limitation of the current parser architecture
-                warn!(
-                    "Indirect Length reference {} {} R found - will need resolution",
-                    pdf_ref.object_id().number,
-                    pdf_ref.object_id().generation
-                );
-                // Try to read until "endstream" as fallback
+                let _ = pdf_ref;
                 return parse_stream_with_endstream_detection(input, dict);
             }
             _ => {
-                warn!("No Length found for stream, trying endstream detection");
                 return parse_stream_with_endstream_detection(input, dict);
             }
         };
@@ -250,8 +224,57 @@ fn parse_stream_with_endstream_detection(
         pos += 1;
     }
 
-    // If we get here, no endstream found - return error
-    // Aggressive recovery: treat the rest of the buffer as stream data.
-    let stream = PdfStream::new(dict, input.to_vec());
-    Ok((&[][..], PdfValue::Stream(stream)))
+    Err(nom::Err::Failure(nom::error::Error::new(
+        input,
+        nom::error::ErrorKind::Tag,
+    )))
+}
+
+/// Return validated absolute offsets for objects stored in an object stream.
+pub fn parse_object_stream_offsets(
+    data: &[u8],
+    object_count: usize,
+    first: usize,
+) -> Result<Vec<usize>, String> {
+    if object_count == 0 || first == 0 {
+        return Err("Invalid object stream header".to_string());
+    }
+    let header = data
+        .get(..first)
+        .ok_or_else(|| "Object stream header exceeds decoded data".to_string())?;
+    let mut cursor = 0;
+    let mut offsets = Vec::with_capacity(object_count);
+
+    for _ in 0..object_count {
+        let _object_number = next_decimal(header, &mut cursor)?;
+        let relative_offset = next_decimal(header, &mut cursor)?;
+        let absolute_offset = first
+            .checked_add(relative_offset)
+            .ok_or_else(|| "Object stream offset overflow".to_string())?;
+        if absolute_offset >= data.len() {
+            return Err("Object stream object offset exceeds decoded data".to_string());
+        }
+        offsets.push(absolute_offset);
+    }
+
+    Ok(offsets)
+}
+
+fn next_decimal(data: &[u8], cursor: &mut usize) -> Result<usize, String> {
+    while *cursor < data.len() && data[*cursor].is_ascii_whitespace() {
+        *cursor += 1;
+    }
+    let start = *cursor;
+    let mut value = 0usize;
+    while *cursor < data.len() && data[*cursor].is_ascii_digit() {
+        value = value
+            .checked_mul(10)
+            .and_then(|value| value.checked_add((data[*cursor] - b'0') as usize))
+            .ok_or_else(|| "Object stream header number overflow".to_string())?;
+        *cursor += 1;
+    }
+    if *cursor == start {
+        return Err("Incomplete object stream header".to_string());
+    }
+    Ok(value)
 }
