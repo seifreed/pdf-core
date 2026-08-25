@@ -1744,8 +1744,21 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     let buffer = self.read_object_buffer(offset)?;
 
                     match object_parser::parse_indirect_object(&buffer) {
-                        Ok((_, (parsed_id, value))) => {
+                        Ok((_, (parsed_id, mut value))) => {
                             if parsed_id == *obj_id {
+                                if let PdfValue::Stream(stream) = &mut value {
+                                    let result = self.resolve_indirect_stream_length(stream);
+                                    if let Err(err) = result {
+                                        if !self.tolerant {
+                                            return Err(err);
+                                        }
+                                        log::warn!(
+                                            "Failed to resolve stream length for object {}: {}",
+                                            obj_id.number,
+                                            err
+                                        );
+                                    }
+                                }
                                 value
                             } else if self.tolerant {
                                 PdfValue::Null
@@ -1828,6 +1841,31 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let mut buffer = Vec::new();
         self.reader.by_ref().take(bound).read_to_end(&mut buffer)?;
         Ok(buffer)
+    }
+
+    fn resolve_indirect_stream_length(&mut self, stream: &mut PdfStream) -> AstResult<()> {
+        let length_id = match stream.dict.get("Length") {
+            Some(PdfValue::Reference(reference)) => reference.id(),
+            _ => return Ok(()),
+        };
+        let length = match self.load_object(&length_id)? {
+            PdfValue::Integer(length) if length >= 0 => usize::try_from(length)
+                .map_err(|_| AstError::ParseError("Stream length is too large".to_string()))?,
+            _ => {
+                return Err(AstError::ParseError(
+                    "Indirect stream Length is not a non-negative integer".to_string(),
+                ))
+            }
+        };
+        if length > stream.data.len() {
+            return Err(AstError::ParseError(format!(
+                "Declared stream length {} exceeds observed data {}",
+                length,
+                stream.data.len()
+            )));
+        }
+        stream.data.truncate(length);
+        Ok(())
     }
 
     fn load_from_object_stream(&mut self, stream_obj: u32, index: u32) -> AstResult<PdfValue> {

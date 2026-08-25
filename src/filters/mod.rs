@@ -41,7 +41,7 @@ pub enum FilterError {
 pub type FilterResult<T> = Result<T, FilterError>;
 
 pub fn decode_stream(data: &[u8], filters: &[StreamFilter]) -> Result<Vec<u8>, FilterError> {
-    decode_stream_with_limits(data, filters, usize::MAX, usize::MAX)
+    decode_stream_with_limits(data, filters, 10 * 1024 * 1024, 100)
 }
 
 pub fn decode_stream_with_limits(
@@ -54,7 +54,7 @@ pub fn decode_stream_with_limits(
     let input_len = data.len().max(1);
 
     for filter in filters {
-        result = decode_single_filter(&result, filter)?;
+        result = decode_single_filter(&result, filter, max_output_bytes)?;
 
         if result.len() > max_output_bytes {
             return Err(FilterError::DecompressionError(format!(
@@ -76,11 +76,17 @@ pub fn decode_stream_with_limits(
     Ok(result)
 }
 
-fn decode_single_filter(data: &[u8], filter: &StreamFilter) -> Result<Vec<u8>, FilterError> {
+fn decode_single_filter(
+    data: &[u8],
+    filter: &StreamFilter,
+    max_output_bytes: usize,
+) -> Result<Vec<u8>, FilterError> {
     match filter {
         StreamFilter::ASCIIHexDecode => decode_ascii_hex(data),
         StreamFilter::ASCII85Decode => decode_ascii85(data),
-        StreamFilter::FlateDecode(params) => decode_flate_with_struct(data, params),
+        StreamFilter::FlateDecode(params) => {
+            decode_flate_with_struct(data, params, max_output_bytes)
+        }
         StreamFilter::LZWDecode(params) => decode_lzw_with_params(data, params),
         StreamFilter::RunLengthDecode => decode_run_length(data),
         StreamFilter::CCITTFaxDecode(params) => decode_ccitt_fax(data, params),
@@ -167,18 +173,34 @@ fn ascii85_tuple_to_u32(tuple: &[u8]) -> u32 {
         .fold(0u32, |acc, (&digit, &power)| acc + digit as u32 * power)
 }
 
-fn decode_flate_raw(data: &[u8]) -> Result<Vec<u8>, FilterError> {
+fn decode_flate_raw(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
     let mut decoder = ZlibDecoder::new(data);
     let mut result = Vec::new();
 
-    match decoder.read_to_end(&mut result) {
+    match decoder
+        .by_ref()
+        .take(max_output_bytes.saturating_add(1) as u64)
+        .read_to_end(&mut result)
+    {
+        Ok(_) if result.len() > max_output_bytes => Err(FilterError::DecompressionError(
+            "Flate output exceeds limit".to_string(),
+        )),
         Ok(_) => Ok(result),
         Err(zlib_err) => {
             let mut deflate_decoder = flate2::read::DeflateDecoder::new(data);
             result.clear();
-            deflate_decoder.read_to_end(&mut result).map_err(|_| {
-                FilterError::DecompressionError(format!("Flate decode error: {}", zlib_err))
-            })?;
+            deflate_decoder
+                .by_ref()
+                .take(max_output_bytes.saturating_add(1) as u64)
+                .read_to_end(&mut result)
+                .map_err(|_| {
+                    FilterError::DecompressionError(format!("Flate decode error: {}", zlib_err))
+                })?;
+            if result.len() > max_output_bytes {
+                return Err(FilterError::DecompressionError(
+                    "Flate output exceeds limit".to_string(),
+                ));
+            }
             Ok(result)
         }
     }
@@ -187,8 +209,9 @@ fn decode_flate_raw(data: &[u8]) -> Result<Vec<u8>, FilterError> {
 fn decode_flate_with_struct(
     data: &[u8],
     params: &FlateDecodeParams,
+    max_output_bytes: usize,
 ) -> Result<Vec<u8>, FilterError> {
-    let decoded = decode_flate_raw(data)?;
+    let decoded = decode_flate_raw(data, max_output_bytes)?;
     apply_predictor(
         decoded,
         params.predictor,

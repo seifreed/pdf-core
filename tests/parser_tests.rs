@@ -138,6 +138,23 @@ mod parser_tests {
     }
 
     #[test]
+    fn flate_decoder_stops_at_output_limit() {
+        use flate2::{write::ZlibEncoder, Compression};
+        use std::io::Write;
+
+        let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoder.write_all(&vec![b'A'; 4096]).unwrap();
+        let compressed = encoder.finish().unwrap();
+        let result = pdf_ast::filters::decode_stream_with_limits(
+            &compressed,
+            &[StreamFilter::FlateDecode(Default::default())],
+            1024,
+            100,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_xref_table_parsing() {
         use xref::parse_xref_table;
 
