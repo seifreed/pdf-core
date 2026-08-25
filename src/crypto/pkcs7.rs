@@ -736,7 +736,7 @@ impl Pkcs7Handler {
         subject
             .entries()
             .next()
-            .and_then(|entry| entry.data().as_utf8().ok().map(|s| s.to_string()))
+            .and_then(|entry| entry.data().to_string().ok())
     }
 
     #[cfg(not(feature = "crypto"))]

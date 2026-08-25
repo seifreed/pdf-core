@@ -135,7 +135,7 @@ fn parse_xml_root(xml: &str) -> Result<XfaNode, String> {
             Ok(Event::Start(e)) => {
                 let node = XfaNode {
                     name: String::from_utf8_lossy(e.name().as_ref()).to_string(),
-                    attributes: parse_attributes(&reader, &e)?,
+                    attributes: parse_attributes(&e)?,
                     text: None,
                     children: Vec::new(),
                 };
@@ -144,7 +144,7 @@ fn parse_xml_root(xml: &str) -> Result<XfaNode, String> {
             Ok(Event::Empty(e)) => {
                 let node = XfaNode {
                     name: String::from_utf8_lossy(e.name().as_ref()).to_string(),
-                    attributes: parse_attributes(&reader, &e)?,
+                    attributes: parse_attributes(&e)?,
                     text: None,
                     children: Vec::new(),
                 };
@@ -205,7 +205,6 @@ fn parse_xml_root(xml: &str) -> Result<XfaNode, String> {
 }
 
 fn parse_attributes(
-    reader: &Reader<&[u8]>,
     element: &quick_xml::events::BytesStart,
 ) -> Result<HashMap<String, String>, String> {
     let mut attrs = HashMap::new();
@@ -213,7 +212,7 @@ fn parse_attributes(
         let attr = attr.map_err(|e| e.to_string())?;
         let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
         let value = attr
-            .unescape_value()
+            .normalized_value(quick_xml::XmlVersion::Implicit1_0)
             .map_err(|e| e.to_string())?
             .to_string();
         attrs.insert(key, value);

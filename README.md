@@ -40,6 +40,28 @@
 
 ---
 
+## Capability Matrix
+
+| Area | Status |
+|------|--------|
+| Basic objects, arrays, dictionaries | Implemented |
+| Classic xref | Implemented |
+| Xref streams and incremental updates | Implemented with limited corpus coverage |
+| Object streams | Partial, bounded and validated |
+| Flate, ASCII85, LZW, RunLength | Implemented |
+| CCITT | Experimental |
+| JBIG2 | Placeholder, not supported for production decoding |
+| JPX | Container inspection, not full JPEG 2000 decoding |
+| Text extraction | Experimental |
+| PDF/A and PDF/UA | Partial preflight checks, not certifiable |
+| Streaming parser | Prototype |
+| Python and JavaScript bindings | Experimental |
+
+This project is not production-ready for untrusted PDFs without process
+isolation and an application-level resource policy.
+
+---
+
 ## Supported Use Cases
 
 - **Threat Intelligence**: detect suspicious actions, embedded scripts, and attachments.
