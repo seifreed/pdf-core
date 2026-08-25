@@ -294,8 +294,8 @@ If pre-built binaries are not available for your platform:
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 
 # Clone repository
-git clone https://github.com/pdf-ast/pdf-ast.git
-cd pdf-ast/javascript
+git clone https://github.com/seifreed/pdf-core.git
+cd pdf-core/javascript
 
 # Install dependencies and build
 npm install

@@ -1,4 +1,4 @@
-use pdf_ast::{PdfDocument, Visitor, VisitorAction, AstNode, PdfDictionary};
+use pdf_ast::{AstNode, PdfDictionary, PdfDocument, Visitor, VisitorAction};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -12,7 +12,7 @@ pub struct ComplianceReport {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ComplianceProfile {
     PdfA1a,
-    PdfA1b, 
+    PdfA1b,
     PdfA2a,
     PdfA2b,
     PdfA2u,
@@ -74,9 +74,17 @@ impl PdfA1bValidator {
     }
 
     fn generate_report(&self) -> ComplianceReport {
-        let status = if self.violations.iter().any(|v| v.severity == ViolationSeverity::Error) {
+        let status = if self
+            .violations
+            .iter()
+            .any(|v| v.severity == ViolationSeverity::Error)
+        {
             ComplianceStatus::NonCompliant
-        } else if self.violations.iter().any(|v| v.severity == ViolationSeverity::Warning) {
+        } else if self
+            .violations
+            .iter()
+            .any(|v| v.severity == ViolationSeverity::Warning)
+        {
             ComplianceStatus::PartiallyCompliant
         } else {
             ComplianceStatus::Compliant
@@ -97,7 +105,10 @@ impl PdfA1bValidator {
 
 impl Visitor for PdfA1bValidator {
     fn visit_font(&mut self, _node: &AstNode, dict: &PdfDictionary) -> VisitorAction {
-        if dict.get("FontFile").is_none() && dict.get("FontFile2").is_none() && dict.get("FontFile3").is_none() {
+        if dict.get("FontFile").is_none()
+            && dict.get("FontFile2").is_none()
+            && dict.get("FontFile3").is_none()
+        {
             self.violations.push(Violation {
                 rule: "PDF/A-1b Font Embedding".to_string(),
                 description: "All fonts must be embedded in PDF/A-1b".to_string(),
@@ -137,7 +148,11 @@ impl PdfUA1Validator {
     }
 
     fn generate_report(&self) -> ComplianceReport {
-        let status = if self.violations.iter().any(|v| v.severity == ViolationSeverity::Error) {
+        let status = if self
+            .violations
+            .iter()
+            .any(|v| v.severity == ViolationSeverity::Error)
+        {
             ComplianceStatus::NonCompliant
         } else {
             ComplianceStatus::Compliant

@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 authors = ["PDF-AST Team"]
 description = "Security analysis library for PDF documents using PDF-AST"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 
 [dependencies]
 pdf-ast = { path = ".." }

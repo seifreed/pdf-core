@@ -55,10 +55,13 @@ impl Threat {
             threat_type: ThreatType::EmbeddedExecutable,
             severity: Severity::Critical,
             title: "Embedded Executable File".to_string(),
-            description: "PDF contains an embedded executable file that could be automatically launched.".to_string(),
+            description:
+                "PDF contains an embedded executable file that could be automatically launched."
+                    .to_string(),
             location,
             evidence: vec![format!("File: {} (Type: {})", file_name, file_type)],
-            mitigation: "Do not open embedded executables. Scan with antivirus before extraction.".to_string(),
+            mitigation: "Do not open embedded executables. Scan with antivirus before extraction."
+                .to_string(),
             cve_references: vec!["CVE-2010-0188".to_string()],
         }
     }
@@ -76,7 +79,10 @@ impl Threat {
             threat_type: ThreatType::SuspiciousAction,
             severity,
             title: format!("{} Action Detected", action_type),
-            description: format!("PDF contains a {} action which could be used maliciously.", action_type),
+            description: format!(
+                "PDF contains a {} action which could be used maliciously.",
+                action_type
+            ),
             location,
             evidence: vec![details.to_string()],
             mitigation: match action_type {
@@ -103,7 +109,8 @@ impl Threat {
             description: "PDF attempts to connect to external servers.".to_string(),
             location,
             evidence: vec![format!("URL: {}", url)],
-            mitigation: "Review destination for legitimacy. Block network access if suspicious.".to_string(),
+            mitigation: "Review destination for legitimacy. Block network access if suspicious."
+                .to_string(),
             cve_references: vec![],
         }
     }
@@ -116,7 +123,8 @@ impl Threat {
             description: "PDF form configured to submit data to external server.".to_string(),
             location,
             evidence: vec![format!("Submit URL: {}", submit_url)],
-            mitigation: "Verify form submission destination. Do not enter sensitive data.".to_string(),
+            mitigation: "Verify form submission destination. Do not enter sensitive data."
+                .to_string(),
             cve_references: vec![],
         }
     }
@@ -152,23 +160,18 @@ impl Threat {
         ];
 
         let script_lower = script.to_lowercase();
-        suspicious_patterns.iter().any(|pattern| script_lower.contains(pattern))
+        suspicious_patterns
+            .iter()
+            .any(|pattern| script_lower.contains(pattern))
     }
 
     fn is_suspicious_url(url: &str) -> bool {
-        let suspicious_domains = [
-            "bit.ly",
-            "tinyurl.com",
-            "t.co",
-            "goo.gl",
-            "ow.ly",
-            "is.gd",
-        ];
+        let suspicious_domains = ["bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd"];
 
         let suspicious_schemes = ["ftp://", "file://", "javascript:", "data:"];
 
         let url_lower = url.to_lowercase();
-        
+
         suspicious_domains.iter().any(|domain| url_lower.contains(domain)) ||
         suspicious_schemes.iter().any(|scheme| url_lower.starts_with(scheme)) ||
         url_lower.contains("..") || // Path traversal

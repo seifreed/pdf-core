@@ -1,4 +1,4 @@
-use pdf_ast::{PdfDocument, Visitor, VisitorAction, AstNode, PdfDictionary, NodeType};
+use pdf_ast::{AstNode, NodeType, PdfDictionary, PdfDocument, Visitor, VisitorAction};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -142,7 +142,7 @@ impl TextExtractor {
 
     pub fn extract(&mut self, document: &PdfDocument) -> TextExtractionResult {
         let start = std::time::Instant::now();
-        
+
         // Initialize pages
         for i in 0..document.metadata.page_count {
             self.pages.push(PageText {
@@ -190,8 +190,10 @@ impl Visitor for TextExtractor {
             let sample_text = "Sample extracted text from page";
             if self.current_page < self.pages.len() {
                 self.pages[self.current_page].text.push_str(sample_text);
-                self.pages[self.current_page].formatted_text.push_str(sample_text);
-                
+                self.pages[self.current_page]
+                    .formatted_text
+                    .push_str(sample_text);
+
                 // Add sample text block
                 self.pages[self.current_page].text_blocks.push(TextBlock {
                     text: sample_text.to_string(),
@@ -205,27 +207,30 @@ impl Visitor for TextExtractor {
                 });
             }
         }
-        
+
         self.current_page += 1;
         VisitorAction::Continue
     }
 
     fn visit_font(&mut self, _node: &AstNode, dict: &PdfDictionary) -> VisitorAction {
-        let font_name = dict.get("BaseFont")
+        let font_name = dict
+            .get("BaseFont")
             .and_then(|v| v.as_name())
             .map(|n| n.without_slash().to_string())
             .unwrap_or_else(|| "Unknown".to_string());
 
-        let encoding = dict.get("Encoding")
+        let encoding = dict
+            .get("Encoding")
             .and_then(|v| v.as_name())
             .map(|n| n.without_slash().to_string())
             .unwrap_or_else(|| "StandardEncoding".to_string());
 
-        let embedded = dict.get("FontFile").is_some() || 
-                      dict.get("FontFile2").is_some() || 
-                      dict.get("FontFile3").is_some();
+        let embedded = dict.get("FontFile").is_some()
+            || dict.get("FontFile2").is_some()
+            || dict.get("FontFile3").is_some();
 
-        let font_type = dict.get("Subtype")
+        let font_type = dict
+            .get("Subtype")
             .and_then(|v| v.as_name())
             .map(|n| n.without_slash().to_string())
             .unwrap_or_else(|| "Type1".to_string());
@@ -244,7 +249,7 @@ impl Visitor for TextExtractor {
 
     fn visit_image(&mut self, _node: &AstNode, dict: &PdfDictionary) -> VisitorAction {
         let image_name = format!("Image_{}", self.extraction_stats.images_found + 1);
-        
+
         if self.current_page > 0 && self.current_page <= self.pages.len() {
             self.pages[self.current_page - 1].images.push(ImageInfo {
                 name: image_name,
@@ -274,7 +279,9 @@ pub fn extract_text(document: &PdfDocument) -> TextExtractionResult {
 
 pub fn extract_plain_text(document: &PdfDocument) -> String {
     let result = extract_text(document);
-    result.pages.iter()
+    result
+        .pages
+        .iter()
         .map(|page| page.text.as_str())
         .collect::<Vec<_>>()
         .join("\n\n")
@@ -283,7 +290,7 @@ pub fn extract_plain_text(document: &PdfDocument) -> String {
 pub fn search_text(document: &PdfDocument, query: &str) -> Vec<(usize, String)> {
     let result = extract_text(document);
     let mut matches = Vec::new();
-    
+
     for (page_num, page) in result.pages.iter().enumerate() {
         for line in page.text.lines() {
             if line.to_lowercase().contains(&query.to_lowercase()) {
@@ -291,7 +298,7 @@ pub fn search_text(document: &PdfDocument, query: &str) -> Vec<(usize, String)> 
             }
         }
     }
-    
+
     matches
 }
 

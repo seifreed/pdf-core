@@ -1,12 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    ".",
+    "pdf-compliance",
+    "pdf-sec-analyzer",
+    "experimental/pdf-diff",
+    "experimental/pdf-text-intel",
+    "python",
+    "examples/dynamic_plugin",
+]
+
 [package]
 name = "pdf-ast"
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.85"
 authors = ["Marc Rivero <mriverolopez@gmail.com>"]
-description = "Universal AST for PDF based on ISO 32000-2"
+description = "Experimental PDF AST parser for structural, forensic, and security analysis"
 license = "MIT"
-repository = "https://github.com/seifreed/PDF-AST"
-homepage = "https://github.com/seifreed/PDF-AST"
+repository = "https://github.com/seifreed/pdf-core"
+homepage = "https://github.com/seifreed/pdf-core"
 keywords = ["pdf", "ast", "abstract-syntax-tree", "parsing", "security"]
 categories = ["parsing", "data-structures"]
 

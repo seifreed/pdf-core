@@ -1,8 +1,8 @@
-//! PDF-AST: A comprehensive PDF analysis library providing Abstract Syntax Tree representation
+//! PDF-AST: An experimental PDF analysis library providing Abstract Syntax Tree representation
 //! and security analysis capabilities for PDF documents.
 //!
 //! This library offers:
-//! - Full PDF parsing with tolerance for malformed documents
+//! - PDF parsing with controlled tolerance for malformed documents
 //! - AST-based graph representation of PDF structure
 //! - Advanced security analysis including signature verification
 //! - Multimedia content extraction (audio, video, 3D, RichMedia)
@@ -11,7 +11,7 @@
 //! - Multiple output formats (JSON, YAML, TOML)
 //!
 //! Copyright (C) 2026 Marc Rivero López
-//! Licensed under the GNU General Public License v3.0
+//! Licensed under the MIT License
 //! See LICENSE file for details
 
 /// Abstract Syntax Tree implementation for PDF documents.

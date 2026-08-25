@@ -1,9 +1,9 @@
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict};
+use pyo3::types::{PyBytes, PyDict, PyModule};
 use std::sync::Arc;
 
-use pdf_ast_core::ast::{AstNode, NodeId, NodeType, PdfDocument, PdfVersion};
+use pdf_ast_core::ast::{AstNode, NodeId, PdfDocument, PdfVersion};
 use pdf_ast_core::parser::PdfParser;
 use pdf_ast_core::plugins::api::PluginManager;
 use pdf_ast_core::validation::{SchemaRegistry, ValidationReport};
@@ -24,7 +24,7 @@ impl PyPdfDocument {
     }
 
     #[staticmethod]
-    fn from_bytes(data: &PyBytes) -> PyResult<Self> {
+    fn from_bytes(data: &Bound<'_, PyBytes>) -> PyResult<Self> {
         let bytes = data.as_bytes();
         let parser = PdfParser::new();
         parser
@@ -58,7 +58,9 @@ impl PyPdfDocument {
             .ast
             .get_all_nodes()
             .iter()
-            .map(|node| PyAstNode { inner: node.clone() })
+            .map(|node| PyAstNode {
+                inner: (*node).clone(),
+            })
             .collect()
     }
 
@@ -67,23 +69,33 @@ impl PyPdfDocument {
             .ast
             .get_root()
             .and_then(|node_id| self.inner.ast.get_node(node_id))
-            .map(|node| PyAstNode { inner: node.clone() })
+            .map(|node| PyAstNode {
+                inner: node.clone(),
+            })
     }
 
     fn get_node(&self, node_id: u64) -> Option<PyAstNode> {
+        let node_id = usize::try_from(node_id).ok()?;
         self.inner
             .ast
             .get_node(NodeId(node_id))
-            .map(|node| PyAstNode { inner: node.clone() })
+            .map(|node| PyAstNode {
+                inner: node.clone(),
+            })
     }
 
     fn get_children(&self, node_id: u64) -> Vec<PyAstNode> {
+        let Ok(node_id) = usize::try_from(node_id) else {
+            return Vec::new();
+        };
         self.inner
             .ast
             .get_children(NodeId(node_id))
             .iter()
             .filter_map(|child_id| self.inner.ast.get_node(*child_id))
-            .map(|node| PyAstNode { inner: node.clone() })
+            .map(|node| PyAstNode {
+                inner: node.clone(),
+            })
             .collect()
     }
 
@@ -92,10 +104,12 @@ impl PyPdfDocument {
             Ok(nt) => self
                 .inner
                 .ast
-                .get_nodes_by_type(&nt)
+                .get_nodes_by_type(nt)
                 .iter()
                 .filter_map(|node_id| self.inner.ast.get_node(*node_id))
-                .map(|node| PyAstNode { inner: node.clone() })
+                .map(|node| PyAstNode {
+                    inner: node.clone(),
+                })
                 .collect(),
             Err(_) => Vec::new(),
         }
@@ -148,7 +162,7 @@ pub struct PyAstNode {
 #[pymethods]
 impl PyAstNode {
     fn get_id(&self) -> u64 {
-        self.inner.id.0
+        self.inner.id.0 as u64
     }
 
     fn get_type(&self) -> String {
@@ -188,7 +202,10 @@ impl PyAstNode {
     }
 
     fn __repr__(&self) -> String {
-        format!("AstNode(id={}, type={:?})", self.inner.id.0, self.inner.node_type)
+        format!(
+            "AstNode(id={}, type={:?})",
+            self.inner.id.0, self.inner.node_type
+        )
     }
 }
 
@@ -216,7 +233,9 @@ impl PyValidationReport {
         self.inner
             .issues
             .iter()
-            .map(|issue| PyValidationIssue { inner: issue.clone() })
+            .map(|issue| PyValidationIssue {
+                inner: issue.clone(),
+            })
             .collect()
     }
 
@@ -265,7 +284,7 @@ impl PyValidationIssue {
     }
 
     fn get_node_id(&self) -> Option<u64> {
-        self.inner.node_id.map(|id| id.0)
+        self.inner.node_id.map(|id| id.0 as u64)
     }
 }
 
@@ -334,14 +353,18 @@ impl PyPluginManager {
 }
 
 #[pyfunction]
-fn parse_pdf(data: &PyBytes) -> PyResult<PyPdfDocument> {
+fn parse_pdf(data: &Bound<'_, PyBytes>) -> PyResult<PyPdfDocument> {
     PyPdfDocument::from_bytes(data)
 }
 
 #[pyfunction]
 fn get_available_schemas() -> Vec<String> {
     let registry = SchemaRegistry::new();
-    registry.list_schemas().into_iter().map(|s| s.to_string()).collect()
+    registry
+        .list_schemas()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect()
 }
 
 #[pyfunction]
@@ -357,7 +380,7 @@ fn validate_document(document: &PyPdfDocument, schema_name: &str) -> PyResult<Py
 }
 
 #[pymodule]
-fn pdf_ast(_py: Python, m: &PyModule) -> PyResult<()> {
+fn pdf_ast(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyPdfDocument>()?;
     m.add_class::<PyAstNode>()?;
     m.add_class::<PyValidationReport>()?;

@@ -1,41 +1,41 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/PDF--AST-PDF%20Security%20Analysis-blue?style=for-the-badge" alt="PDF-AST">
+  <img src="https://img.shields.io/badge/pdf--core-PDF%20Security%20Analysis-blue?style=for-the-badge" alt="pdf-core">
 </p>
 
-<h1 align="center">PDF-AST</h1>
+<h1 align="center">pdf-core</h1>
 
 <p align="center">
-  <strong>Universal Abstract Syntax Tree for PDF documents, built for security analysis and deep inspection</strong>
+  <strong>Experimental PDF parser and AST for structural, forensic, and security analysis</strong>
 </p>
 
 <p align="center">
-  <a href="https://github.com/seifreed/PDF-AST/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"></a>
-  <a href="https://github.com/seifreed/PDF-AST/actions"><img src="https://img.shields.io/github/actions/workflow/status/seifreed/PDF-AST/ci.yml?style=flat-square&logo=github&label=CI" alt="CI Status"></a>
+  <a href="https://github.com/seifreed/pdf-core/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License"></a>
+  <a href="https://github.com/seifreed/pdf-core/actions"><img src="https://img.shields.io/github/actions/workflow/status/seifreed/pdf-core/ci.yml?style=flat-square&logo=github&label=CI" alt="CI Status"></a>
   <img src="https://img.shields.io/badge/rust-stable-orange?style=flat-square" alt="Rust Stable">
 </p>
 
 <p align="center">
-  <a href="https://github.com/seifreed/PDF-AST/stargazers"><img src="https://img.shields.io/github/stars/seifreed/PDF-AST?style=flat-square" alt="GitHub Stars"></a>
-  <a href="https://github.com/seifreed/PDF-AST/issues"><img src="https://img.shields.io/github/issues/seifreed/PDF-AST?style=flat-square" alt="GitHub Issues"></a>
+  <a href="https://github.com/seifreed/pdf-core/stargazers"><img src="https://img.shields.io/github/stars/seifreed/pdf-core?style=flat-square" alt="GitHub Stars"></a>
+  <a href="https://github.com/seifreed/pdf-core/issues"><img src="https://img.shields.io/github/issues/seifreed/pdf-core?style=flat-square" alt="GitHub Issues"></a>
 </p>
 
 ---
 
 ## Overview
 
-**PDF-AST** is a comprehensive Rust library and toolchain for parsing PDF documents into a rich Abstract Syntax Tree (AST). It is designed for security analysis, malware detection, compliance validation, and structured document inspection. The parser targets **ISO 32000-2 (PDF 2.0)** while maintaining backward compatibility with older PDFs.
+**pdf-core** is an experimental Rust library for parsing PDF documents into a rich Abstract Syntax Tree (AST). It targets structural, forensic, and security analysis. The published crate remains `pdf-ast` for compatibility.
 
 ### Key Features
 
 | Feature | Description |
 |---------|-------------|
-| **Full PDF 2.0 Coverage** | Objects, streams, xref tables, linearization, and incremental updates |
-| **Rich AST** | 70+ node types representing the full PDF object graph |
+| **PDF parser** | Objects, streams, xref tables, linearization, and incremental updates; corpus coverage is still pending |
+| **Rich AST** | Typed nodes for common PDF structures; schema/API are experimental |
 | **Security Analysis** | JavaScript, forms, embedded files, and suspicious actions |
-| **PDF/A Validation** | Compliance checks for archival standards |
-| **Stream Decoding** | Flate, LZW, CCITT, DCT, JPX, and more |
+| **PDF/A Validation** | Experimental preflight checks for selected requirements |
+| **Stream Decoding** | Flate, LZW, CCITT, DCT, and JPX container inspection; some codecs are partial |
 | **XFA + AcroForm** | XML packets, scripts, and field trees |
-| **Signature Support** | CMS/PKCS#7 parsing and optional crypto verification |
+| **Signature Support** | CMS/PKCS#7 parsing and optional crypto verification; experimental |
 | **CLI + Library** | Use from the command line or embed in Rust apps |
 
 ---
@@ -69,7 +69,7 @@ For a Git dependency:
 
 ```toml
 [dependencies]
-pdf-ast = { git = "https://github.com/seifreed/PDF-AST" }
+pdf-ast = { git = "https://github.com/seifreed/pdf-core" }
 ```
 
 ### Feature Flags
@@ -77,7 +77,7 @@ pdf-ast = { git = "https://github.com/seifreed/PDF-AST" }
 ```toml
 [dependencies]
 pdf-ast = {
-    git = "https://github.com/seifreed/PDF-AST",
+    git = "https://github.com/seifreed/pdf-core",
     features = ["crypto", "parallel", "async"]
 }
 ```
@@ -113,7 +113,7 @@ cargo build --release
 
 ## CLI Usage
 
-### pdf-ast-simple (Production Ready)
+### pdf-ast-simple (Experimental)
 
 ```bash
 # Parse to AST JSON
@@ -205,7 +205,7 @@ for edge in document.ast.edges_from(catalog.id) {
 ## Project Structure
 
 ```
-PDF-AST/
+pdf-core/
 ├── src/            # Core library
 ├── tests/          # Test suite
 ├── examples/       # Usage examples
@@ -230,7 +230,7 @@ Contributions are welcome:
 
 ## Support the Project
 
-If you find PDF-AST useful, consider supporting its development:
+If you find pdf-core useful, consider supporting its development:
 
 <a href="https://buymeacoffee.com/seifreed" target="_blank">
   <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50">

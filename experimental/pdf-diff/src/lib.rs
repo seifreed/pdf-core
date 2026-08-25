@@ -1,4 +1,4 @@
-use pdf_ast::{PdfDocument, AstNode, NodeType, PdfValue, PdfDictionary};
+use pdf_ast::{AstNode, NodeType, PdfDictionary, PdfDocument, PdfValue};
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
 use std::collections::HashMap;
@@ -151,10 +151,9 @@ impl<'a> DocumentDiffer<'a> {
         self.compare_metadata();
         self.compare_structure();
         self.compare_pages();
-        
-        let total_changes = self.structure_changes.len() + 
-                           self.content_changes.len() + 
-                           self.metadata_changes.len();
+
+        let total_changes =
+            self.structure_changes.len() + self.content_changes.len() + self.metadata_changes.len();
 
         let similarity_score = self.calculate_similarity();
 
@@ -274,7 +273,7 @@ impl<'a> DocumentDiffer<'a> {
 
     fn compare_pages(&mut self) {
         let max_pages = std::cmp::max(self.doc1.metadata.page_count, self.doc2.metadata.page_count);
-        
+
         for page_num in 1..=max_pages {
             let has_page1 = page_num <= self.doc1.metadata.page_count;
             let has_page2 = page_num <= self.doc2.metadata.page_count;
@@ -300,10 +299,11 @@ impl<'a> DocumentDiffer<'a> {
                     // Compare page content (simplified)
                     let sample_text1 = format!("Sample text from page {} in doc1", page_num);
                     let sample_text2 = format!("Sample text from page {} in doc2", page_num);
-                    
+
                     if sample_text1 != sample_text2 {
-                        let text_changes = PdfDiffer::find_text_differences(&sample_text1, &sample_text2);
-                        
+                        let text_changes =
+                            PdfDiffer::find_text_differences(&sample_text1, &sample_text2);
+
                         if !text_changes.is_empty() {
                             self.page_changes.push(PageChange {
                                 page_number: page_num,
@@ -320,31 +320,31 @@ impl<'a> DocumentDiffer<'a> {
     }
 
     fn calculate_similarity(&self) -> f64 {
-        let total_changes = self.structure_changes.len() + 
-                           self.content_changes.len() + 
-                           self.metadata_changes.len() + 
-                           self.page_changes.len();
+        let total_changes = self.structure_changes.len()
+            + self.content_changes.len()
+            + self.metadata_changes.len()
+            + self.page_changes.len();
 
         if total_changes == 0 {
             return 1.0; // Identical documents
         }
 
-        let total_items = self.doc1.ast.node_count() + 
-                         self.doc1.metadata.page_count + 
-                         10; // Base metadata items
+        let total_items = self.doc1.ast.node_count() + self.doc1.metadata.page_count + 10; // Base metadata items
 
         let similarity = 1.0 - (total_changes as f64 / total_items as f64);
         similarity.max(0.0).min(1.0)
     }
 
     fn count_pages_added(&self) -> usize {
-        self.page_changes.iter()
+        self.page_changes
+            .iter()
             .filter(|pc| pc.change_type == ChangeType::Added)
             .count()
     }
 
     fn count_pages_removed(&self) -> usize {
-        self.page_changes.iter()
+        self.page_changes
+            .iter()
             .filter(|pc| pc.change_type == ChangeType::Removed)
             .count()
     }
@@ -352,25 +352,48 @@ impl<'a> DocumentDiffer<'a> {
 
 pub fn generate_diff_report(result: &PdfDiffResult) -> String {
     let mut report = String::new();
-    
+
     report.push_str("PDF Document Comparison Report\n");
     report.push_str("==============================\n\n");
-    
-    report.push_str(&format!("Similarity Score: {:.2}%\n", result.summary.similarity_score * 100.0));
-    report.push_str(&format!("Total Changes: {}\n", result.summary.total_changes));
-    report.push_str(&format!("Structure Changes: {}\n", result.summary.structure_changes));
-    report.push_str(&format!("Content Changes: {}\n", result.summary.content_changes));
-    report.push_str(&format!("Metadata Changes: {}\n", result.summary.metadata_changes));
+
+    report.push_str(&format!(
+        "Similarity Score: {:.2}%\n",
+        result.summary.similarity_score * 100.0
+    ));
+    report.push_str(&format!(
+        "Total Changes: {}\n",
+        result.summary.total_changes
+    ));
+    report.push_str(&format!(
+        "Structure Changes: {}\n",
+        result.summary.structure_changes
+    ));
+    report.push_str(&format!(
+        "Content Changes: {}\n",
+        result.summary.content_changes
+    ));
+    report.push_str(&format!(
+        "Metadata Changes: {}\n",
+        result.summary.metadata_changes
+    ));
     report.push_str(&format!("Pages Added: {}\n", result.summary.pages_added));
-    report.push_str(&format!("Pages Removed: {}\n", result.summary.pages_removed));
-    report.push_str(&format!("Pages Modified: {}\n\n", result.summary.pages_modified));
+    report.push_str(&format!(
+        "Pages Removed: {}\n",
+        result.summary.pages_removed
+    ));
+    report.push_str(&format!(
+        "Pages Modified: {}\n\n",
+        result.summary.pages_modified
+    ));
 
     if !result.metadata_changes.is_empty() {
         report.push_str("METADATA CHANGES:\n");
         report.push_str("-----------------\n");
         for change in &result.metadata_changes {
-            report.push_str(&format!("• {} changed from {:?} to {:?}\n", 
-                change.field, change.old_value, change.new_value));
+            report.push_str(&format!(
+                "• {} changed from {:?} to {:?}\n",
+                change.field, change.old_value, change.new_value
+            ));
         }
         report.push_str("\n");
     }
@@ -379,8 +402,10 @@ pub fn generate_diff_report(result: &PdfDiffResult) -> String {
         report.push_str("STRUCTURE CHANGES:\n");
         report.push_str("------------------\n");
         for change in &result.structure_changes {
-            report.push_str(&format!("• {} in {}: {}\n", 
-                change.node_type, change.location, change.description));
+            report.push_str(&format!(
+                "• {} in {}: {}\n",
+                change.node_type, change.location, change.description
+            ));
         }
         report.push_str("\n");
     }
@@ -389,8 +414,10 @@ pub fn generate_diff_report(result: &PdfDiffResult) -> String {
         report.push_str("PAGE CHANGES:\n");
         report.push_str("-------------\n");
         for change in &result.page_changes {
-            report.push_str(&format!("• Page {}: {:?} - {}\n", 
-                change.page_number, change.change_type, change.description));
+            report.push_str(&format!(
+                "• Page {}: {:?} - {}\n",
+                change.page_number, change.change_type, change.description
+            ));
         }
     }
 
@@ -406,7 +433,7 @@ mod tests {
     fn test_identical_documents() {
         let doc1 = PdfDocument::new(PdfVersion::new(1, 7));
         let doc2 = PdfDocument::new(PdfVersion::new(1, 7));
-        
+
         let result = PdfDiffer::compare(&doc1, &doc2);
         assert_eq!(result.summary.similarity_score, 1.0);
         assert_eq!(result.summary.total_changes, 0);
@@ -416,7 +443,7 @@ mod tests {
     fn test_different_versions() {
         let doc1 = PdfDocument::new(PdfVersion::new(1, 4));
         let doc2 = PdfDocument::new(PdfVersion::new(1, 7));
-        
+
         let result = PdfDiffer::compare(&doc1, &doc2);
         assert!(result.summary.similarity_score < 1.0);
         assert!(result.summary.total_changes > 0);

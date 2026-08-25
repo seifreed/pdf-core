@@ -1,5 +1,7 @@
-use pdf_ast::plugins::{AstPlugin, PluginCapabilities, PluginContext, PluginMetadata, PluginResult};
-use pdf_ast::ast::{AstNode, NodeId, NodeType, PdfDocument};
+use pdf_ast::ast::{AstNode, NodeType, PdfDocument};
+use pdf_ast::plugins::{
+    AstPlugin, PluginCapabilities, PluginContext, PluginMetadata, PluginResult,
+};
 
 #[derive(Clone)]
 pub struct ExampleMetadataPlugin {
@@ -27,6 +29,9 @@ impl AstPlugin for ExampleMetadataPlugin {
     fn capabilities(&self) -> PluginCapabilities {
         PluginCapabilities {
             can_modify_nodes: false,
+            can_add_nodes: false,
+            can_remove_nodes: false,
+            can_validate: false,
             can_transform: false,
             requires_document_context: true,
             thread_safe: true,
@@ -95,12 +100,12 @@ pub extern "C" fn pdf_ast_plugin_license() -> *const u8 {
 
 #[allow(dead_code)]
 pub extern "C" fn pdf_ast_plugin_homepage() -> *const u8 {
-    b"https://github.com/seifreed/PDF-AST\0".as_ptr()
+    b"https://github.com/seifreed/pdf-core\0".as_ptr()
 }
 
 #[allow(dead_code)]
 pub extern "C" fn pdf_ast_plugin_repository() -> *const u8 {
-    b"https://github.com/seifreed/PDF-AST\0".as_ptr()
+    b"https://github.com/seifreed/pdf-core\0".as_ptr()
 }
 
 #[allow(dead_code)]

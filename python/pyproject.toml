@@ -5,7 +5,7 @@ build-backend = "pyo3_setuptools.build_meta"
 [project]
 name = "pdf-ast"
 authors = [
-    {name = "PDF-AST Team", email = "contact@pdf-ast.org"},
+    {name = "Marc Rivero López"},
 ]
 description = "Universal AST library for PDF documents based on ISO 32000-2"
 readme = "README.md"
@@ -37,10 +37,9 @@ dependencies = [
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/pdf-ast/pdf-ast"
-Documentation = "https://pdf-ast.readthedocs.io/"
-Repository = "https://github.com/pdf-ast/pdf-ast"
-"Bug Tracker" = "https://github.com/pdf-ast/pdf-ast/issues"
+Homepage = "https://github.com/seifreed/pdf-core"
+Repository = "https://github.com/seifreed/pdf-core"
+"Bug Tracker" = "https://github.com/seifreed/pdf-core/issues"
 
 [project.optional-dependencies]
 dev = [

@@ -1,15 +1,15 @@
-pub mod scanner;
-pub mod rules;
-pub mod threats;
 pub mod report;
+pub mod rules;
+pub mod scanner;
+pub mod threats;
 
-use pdf_ast::{AstNode, NodeType, PdfDocument, Visitor, VisitorAction, PdfDictionary, PdfValue};
+use pdf_ast::{AstNode, NodeType, PdfDictionary, PdfDocument, PdfValue, Visitor, VisitorAction};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub use report::SecurityReport;
 pub use scanner::SecurityScanner;
 pub use threats::*;
-pub use report::SecurityReport;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ScanResult {
@@ -69,15 +69,24 @@ pub fn scan_document(document: &PdfDocument) -> ScanResult {
 
 pub fn scan_for_malware(document: &PdfDocument) -> Vec<Threat> {
     let result = scan_document(document);
-    result.threats.into_iter()
+    result
+        .threats
+        .into_iter()
         .filter(|t| matches!(t.threat_type, ThreatType::Malware | ThreatType::Exploit))
         .collect()
 }
 
 pub fn scan_for_privacy_risks(document: &PdfDocument) -> Vec<Threat> {
     let result = scan_document(document);
-    result.threats.into_iter()
-        .filter(|t| matches!(t.threat_type, ThreatType::PrivacyRisk | ThreatType::DataLeakage))
+    result
+        .threats
+        .into_iter()
+        .filter(|t| {
+            matches!(
+                t.threat_type,
+                ThreatType::PrivacyRisk | ThreatType::DataLeakage
+            )
+        })
         .collect()
 }
 
@@ -89,7 +98,7 @@ pub fn quick_security_check(document: &PdfDocument) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pdf_ast::{PdfVersion, NodeType, PdfName};
+    use pdf_ast::{NodeType, PdfName, PdfVersion};
 
     #[test]
     fn test_basic_scan() {
