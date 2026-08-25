@@ -412,4 +412,16 @@ mod parser_tests {
         assert!(parse_object_stream_offsets(b"10 99 abc", 1, 6).is_err());
         assert!(parse_object_stream_offsets(b"10", 2, 3).is_err());
     }
+
+    #[test]
+    fn parser_modes_are_explicit() {
+        assert_eq!(PdfParser::strict().mode(), ParseMode::Strict);
+        assert_eq!(PdfParser::new().mode(), ParseMode::Tolerant);
+        assert_eq!(PdfParser::forensic().mode(), ParseMode::Forensic);
+        assert!(PdfParser::strict().parse_objects(b"1 2 nope").is_err());
+        assert_eq!(
+            PdfParser::new().parse_objects(b"1 2 nope").unwrap().len(),
+            2
+        );
+    }
 }

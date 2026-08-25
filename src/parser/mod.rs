@@ -26,9 +26,22 @@ use crate::performance::PerformanceLimits;
 use crate::types::PdfValue;
 use std::io::{BufRead, Read, Seek};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParseMode {
+    Strict,
+    Tolerant,
+    Forensic,
+}
+
+impl ParseMode {
+    fn is_tolerant(self) -> bool {
+        !matches!(self, Self::Strict)
+    }
+}
+
 #[allow(dead_code)]
 pub struct PdfParser {
-    tolerant: bool,
+    mode: ParseMode,
     max_depth: usize,
     max_errors: usize,
     limits: PerformanceLimits,
@@ -47,7 +60,7 @@ impl PdfParser {
     /// A new `PdfParser` configured for tolerant parsing
     pub fn new() -> Self {
         PdfParser {
-            tolerant: true,
+            mode: ParseMode::Tolerant,
             max_depth: 100,
             max_errors: 1000,
             limits: PerformanceLimits::default(),
@@ -66,7 +79,7 @@ impl PdfParser {
     /// A new `PdfParser` configured for strict parsing
     pub fn strict() -> Self {
         PdfParser {
-            tolerant: false,
+            mode: ParseMode::Strict,
             max_depth: 100,
             max_errors: 0,
             limits: PerformanceLimits::default(),
@@ -81,8 +94,29 @@ impl PdfParser {
     /// # Returns
     /// Self for method chaining
     pub fn with_tolerance(mut self, tolerant: bool) -> Self {
-        self.tolerant = tolerant;
+        self.mode = if tolerant {
+            ParseMode::Tolerant
+        } else {
+            ParseMode::Strict
+        };
         self
+    }
+
+    pub fn forensic() -> Self {
+        Self {
+            mode: ParseMode::Forensic,
+            max_errors: 10_000,
+            ..Self::new()
+        }
+    }
+
+    pub fn with_mode(mut self, mode: ParseMode) -> Self {
+        self.mode = mode;
+        self
+    }
+
+    pub fn mode(&self) -> ParseMode {
+        self.mode
     }
 
     /// Sets the maximum nesting depth for PDF objects.
@@ -122,8 +156,11 @@ impl PdfParser {
     /// # Errors
     /// Returns `AstError::ParseError` if the PDF cannot be parsed
     pub fn parse<R: Read + Seek + BufRead>(&self, reader: R) -> AstResult<PdfDocument> {
-        let parser =
-            document_parser::DocumentParser::new(reader, self.tolerant, self.limits.clone());
+        let parser = document_parser::DocumentParser::new(
+            reader,
+            self.mode.is_tolerant(),
+            self.limits.clone(),
+        );
         parser.parse()
     }
 
@@ -183,11 +220,12 @@ impl PdfParser {
     /// A vector of parsed `PdfValue` objects
     ///
     /// # Errors
-    /// Returns `AstError` if parsing fails catastrophically (partial results may still be returned)
+    /// Returns `AstError` when an object cannot be parsed within the configured error policy.
     pub fn parse_objects(&self, input: &[u8]) -> AstResult<Vec<PdfValue>> {
         // Parse multiple objects from input
         let mut objects = Vec::new();
         let mut remaining = input;
+        let mut errors = 0;
 
         while !remaining.is_empty() {
             match object_parser::parse_value(remaining) {
@@ -195,7 +233,16 @@ impl PdfParser {
                     objects.push(value);
                     remaining = rest;
                 }
-                Err(_) => break,
+                Err(err) => {
+                    errors += 1;
+                    if !self.mode.is_tolerant() || errors > self.max_errors {
+                        return Err(AstError::ParseError(format!(
+                            "Failed to parse object: {:?}",
+                            err
+                        )));
+                    }
+                    break;
+                }
             }
         }
 
