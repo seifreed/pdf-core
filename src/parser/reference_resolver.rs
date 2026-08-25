@@ -310,6 +310,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
         // Second pass: resolve references and create edges
         while let Some((source_node, pdf_ref)) = self.pending_references.pop_front() {
+            self.limits.budget.check().map_err(|err| err.to_string())?;
             let obj_id = pdf_ref.id();
 
             // Check if we already have this object as a node
@@ -333,6 +334,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             };
 
             // Create reference edge from source to target
+            self.limits
+                .budget
+                .consume_edge()
+                .map_err(|err| err.to_string())?;
             ast.add_edge(source_node, target_node, EdgeType::Reference);
             debug!(
                 "Created reference edge from {:?} to {:?} for object {}",
@@ -443,6 +448,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         obj_id: ObjectId,
         ast: &mut PdfAstGraph,
     ) -> Result<NodeId, String> {
+        self.limits
+            .budget
+            .consume_object()
+            .map_err(|err| err.to_string())?;
         if let Some(&offset) = self.xref_table.get(&obj_id) {
             // Read and parse the object
             self.reader
@@ -450,7 +459,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 .map_err(|e| format!("Seek error: {}", e))?;
 
             let mut buffer = Vec::new();
-            let max_bytes = self.limits.max_object_size_mb * 1024 * 1024;
+            let max_bytes = self.limits.max_object_size_mb.saturating_mul(1024 * 1024);
             let mut total_read = 0usize;
             let mut chunk = vec![0u8; 65536];
             let mut found_endobj = false;
@@ -492,6 +501,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
                     // Create node with proper type
                     let node_type = self.determine_node_type(&value, obj_id);
+                    self.limits
+                        .budget
+                        .consume_node()
+                        .map_err(|err| err.to_string())?;
                     let node_id = ast.create_node(node_type, value);
 
                     // Add metadata
@@ -524,6 +537,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                     if self.tolerant {
                         if let Some(recovered) = self.parse_object_value_fallback(&buffer) {
                             let node_type = self.determine_node_type(&recovered, obj_id);
+                            self.limits
+                                .budget
+                                .consume_node()
+                                .map_err(|err| err.to_string())?;
                             let node_id = ast.create_node(node_type, recovered);
                             if let Some(node) = ast.get_node_mut(node_id) {
                                 node.metadata.offset = Some(offset);
@@ -540,6 +557,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                             return Ok(node_id);
                         }
 
+                        self.limits
+                            .budget
+                            .consume_node()
+                            .map_err(|err| err.to_string())?;
                         let node_id = ast.create_node(NodeType::Object(obj_id), PdfValue::Null);
                         if let Some(node) = ast.get_node_mut(node_id) {
                             node.metadata.offset = Some(offset);
@@ -572,6 +593,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 .resolve_compressed_object(stream_object, index)
                 .map_err(|e| format!("Compressed object {} error: {}", obj_id.number, e))?;
             let node_type = self.determine_node_type(&value, obj_id);
+            self.limits
+                .budget
+                .consume_node()
+                .map_err(|err| err.to_string())?;
             let node_id = ast.create_node(node_type, value);
 
             if let Some(node) = ast.get_node_mut(node_id) {
@@ -609,6 +634,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
             Ok(node_id)
         } else if self.tolerant {
+            self.limits
+                .budget
+                .consume_node()
+                .map_err(|err| err.to_string())?;
             let node_id = ast.create_node(NodeType::Object(obj_id), PdfValue::Null);
             if let Some(node) = ast.get_node_mut(node_id) {
                 node.metadata.errors.push(crate::ast::node::ParseError {
@@ -679,7 +708,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .map_err(|e| format!("Seek error: {}", e))?;
 
         let mut buffer = Vec::new();
-        let max_bytes = self.limits.max_object_size_mb * 1024 * 1024;
+        let max_bytes = self.limits.max_object_size_mb.saturating_mul(1024 * 1024);
         let mut total_read = 0usize;
         let mut chunk = vec![0u8; 65536];
         let mut found_endobj = false;
@@ -721,10 +750,14 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         let decoded = decode_stream_with_limits(
             raw,
             &filters,
-            self.limits.max_object_size_mb * 1024 * 1024,
+            self.limits.max_object_size_mb.saturating_mul(1024 * 1024),
             self.limits.max_stream_decode_ratio,
         )
         .map_err(|e| format!("Failed to decode object stream: {}", e))?;
+        self.limits
+            .budget
+            .consume_decoded(decoded.len() as u64)
+            .map_err(|err| err.to_string())?;
 
         Ok((decoded, stream.dict))
     }

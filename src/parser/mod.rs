@@ -42,7 +42,6 @@ impl ParseMode {
 #[allow(dead_code)]
 pub struct PdfParser {
     mode: ParseMode,
-    max_depth: usize,
     max_errors: usize,
     limits: PerformanceLimits,
 }
@@ -61,7 +60,6 @@ impl PdfParser {
     pub fn new() -> Self {
         PdfParser {
             mode: ParseMode::Tolerant,
-            max_depth: 100,
             max_errors: 1000,
             limits: PerformanceLimits::default(),
         }
@@ -80,7 +78,6 @@ impl PdfParser {
     pub fn strict() -> Self {
         PdfParser {
             mode: ParseMode::Strict,
-            max_depth: 100,
             max_errors: 0,
             limits: PerformanceLimits::default(),
         }
@@ -127,7 +124,8 @@ impl PdfParser {
     /// # Returns
     /// Self for method chaining
     pub fn with_max_depth(mut self, depth: usize) -> Self {
-        self.max_depth = depth;
+        self.limits.max_depth = depth;
+        self.limits.refresh_budget();
         self
     }
 

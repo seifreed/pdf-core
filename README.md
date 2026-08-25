@@ -44,7 +44,7 @@
 
 - **Threat Intelligence**: detect suspicious actions, embedded scripts, and attachments.
 - **Malware Research**: inspect object graphs and content streams for obfuscation.
-- **Compliance & Archival**: validate PDF/A structure and conformance.
+- **Compliance & Archival**: run experimental PDF/A preflight checks.
 - **Forensics**: extract full AST for offline analysis and correlation.
 - **Pipeline Integration**: run automated PDF parsing in CI/CD or batch jobs.
 
