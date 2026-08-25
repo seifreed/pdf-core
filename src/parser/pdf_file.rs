@@ -1869,19 +1869,36 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             // Decode stream
             let filters = stream.get_filters();
             if let Some(raw_data) = stream.raw_data() {
-                if let Ok(decoded) = crate::filters::decode_stream_with_limits(
+                match crate::filters::decode_stream_with_limits(
                     raw_data,
                     &filters,
                     self.limits.max_object_size_mb.saturating_mul(1024 * 1024),
                     self.limits.max_stream_decode_ratio,
                 ) {
-                    self.limits
-                        .budget
-                        .consume_decoded(decoded.len() as u64)
-                        .map_err(|err| AstError::ParseError(err.to_string()))?;
-                    return self.parse_object_from_stream(&decoded, index, &stream.dict);
+                    Ok(decoded) => {
+                        self.limits
+                            .budget
+                            .consume_decoded(decoded.len() as u64)
+                            .map_err(|err| AstError::ParseError(err.to_string()))?;
+                        return self.parse_object_from_stream(&decoded, index, &stream.dict);
+                    }
+                    Err(err) if !self.tolerant => {
+                        return Err(AstError::ParseError(format!(
+                            "Failed to decode object stream: {}",
+                            err
+                        )));
+                    }
+                    Err(_) => {}
                 }
+            } else if !self.tolerant {
+                return Err(AstError::ParseError(
+                    "Object stream has no raw data".to_string(),
+                ));
             }
+        } else if !self.tolerant {
+            return Err(AstError::ParseError(
+                "Xref compressed entry is not an object stream".to_string(),
+            ));
         }
 
         Ok(PdfValue::Null)
@@ -1914,6 +1931,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let index = usize::try_from(index)
             .map_err(|_| AstError::ParseError("Invalid object stream index".to_string()))?;
         if index >= n {
+            if !self.tolerant {
+                return Err(AstError::ParseError(
+                    "Object stream index out of range".to_string(),
+                ));
+            }
             return Ok(PdfValue::Null);
         }
 
@@ -1931,11 +1953,17 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let obj_data = data
             .get(obj_offset..next_offset)
             .ok_or_else(|| AstError::ParseError("Invalid object stream offsets".to_string()))?;
-        if let Ok((_, value)) = object_parser::parse_value(obj_data) {
-            return Ok(value);
+        match object_parser::parse_value(obj_data) {
+            Ok((_, value)) => Ok(value),
+            Err(err) if self.tolerant => {
+                log::warn!("Failed to parse compressed object: {:?}", err);
+                Ok(PdfValue::Null)
+            }
+            Err(err) => Err(AstError::ParseError(format!(
+                "Failed to parse compressed object: {:?}",
+                err
+            ))),
         }
-
-        Ok(PdfValue::Null)
     }
 
     fn add_to_ast(

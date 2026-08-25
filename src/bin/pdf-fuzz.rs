@@ -4,7 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Parser, Debug)]
-#[command(author, version, about = "Deterministic PDF fuzzing over a corpus")]
+#[command(author, version, about = "Deterministic PDF mutation smoke test")]
 struct Args {
     #[arg(long, default_value = "pdfs")]
     corpus_dir: String,
