@@ -9,6 +9,7 @@ members = [
     "python",
     "examples/dynamic_plugin",
 ]
+exclude = ["fuzz"]
 
 [package]
 name = "pdf-ast"

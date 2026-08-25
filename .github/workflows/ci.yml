@@ -104,6 +104,27 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
         slug: seifreed/pdf-core
 
+  corpus:
+    name: Regression Corpus
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-01-01
+        with:
+          toolchain: stable
+
+      - name: Require checked-in corpus
+        run: test -s pdfs/CORPUS.json
+
+      - name: Run corpus tests
+        run: cargo test --test corpus_tests
+
   build:
     name: Build Release (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

@@ -60,7 +60,11 @@ fn corpus_manifest_matches_files() {
         let digest = format!("{:x}", hasher.finalize());
         assert_eq!(digest, entry.sha256, "SHA256 mismatch for {}", entry.file);
         assert_eq!(
-            entry.file, entry.sha256,
+            Path::new(&entry.file)
+                .file_stem()
+                .and_then(|name| name.to_str())
+                .unwrap_or_default(),
+            entry.sha256,
             "Filename should match sha256 for {}",
             entry.file
         );
