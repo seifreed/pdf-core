@@ -80,7 +80,7 @@ impl PySimplePdfDocument {
 
     /// Get basic statistics
     fn get_statistics(&self) -> PyResult<Py<PyDict>> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let dict = PyDict::new(py);
 
             dict.set_item("version", format!("{}.{}", self.version.0, self.version.1))?;

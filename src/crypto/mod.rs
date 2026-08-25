@@ -322,10 +322,12 @@ mod openssl_provider {
             match algorithm {
                 "RC4" => Ok(crate::crypto::encryption::rc4_encrypt(data, key)),
                 "AES-128-CBC" | "AES-256-CBC" => {
-                    use rand::RngCore;
+                    use rand::TryRngCore;
                     let mut iv = [0u8; 16];
                     let mut rng = rand::rngs::OsRng;
-                    rng.fill_bytes(&mut iv);
+                    rng.try_fill_bytes(&mut iv).map_err(|e| {
+                        CryptoError::EncryptionError(format!("OS randomness unavailable: {}", e))
+                    })?;
                     let encrypted =
                         crate::crypto::encryption::aes_encrypt_cbc(data, key, Some(&iv)).map_err(
                             |e| CryptoError::EncryptionError(format!("AES encrypt error: {}", e)),

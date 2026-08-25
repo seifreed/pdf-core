@@ -569,10 +569,11 @@ impl PdfEncryptionHandler {
 
     /// Generate random bytes for IV/salt
     fn generate_random_bytes(&self, len: usize) -> Vec<u8> {
-        use rand::RngCore;
+        use rand::TryRngCore;
         let mut buf = vec![0u8; len];
         let mut rng = rand::rngs::OsRng;
-        rng.fill_bytes(&mut buf);
+        rng.try_fill_bytes(&mut buf)
+            .expect("OS randomness unavailable");
         buf
     }
 

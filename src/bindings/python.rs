@@ -131,7 +131,7 @@ impl PyPdfDocument {
 
     /// Get document statistics
     fn get_statistics(&self) -> PyResult<Py<PyDict>> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let dict = PyDict::new(py);
 
             let total_nodes = self.inner.ast.get_all_nodes().len();
@@ -195,7 +195,7 @@ impl PyAstNode {
 
     /// Get metadata
     fn get_metadata(&self) -> PyResult<Py<PyDict>> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let dict = PyDict::new(py);
 
             dict.set_item("offset", self.inner.metadata.offset)?;
@@ -271,7 +271,7 @@ impl PyValidationReport {
 
     /// Get statistics
     fn get_statistics(&self) -> PyResult<Py<PyDict>> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let dict = PyDict::new(py);
 
             dict.set_item("total_checks", self.inner.statistics.total_checks)?;
@@ -381,7 +381,7 @@ impl PyPluginManager {
         // Update the document
         py_document.inner = Arc::new(document);
 
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let dict = PyDict::new(py);
 
             dict.set_item("total_plugins", summary.total_plugins)?;
@@ -402,7 +402,7 @@ impl PyPluginManager {
 
     /// List available plugins
     fn list_plugins(&self) -> Vec<Py<PyDict>> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             self.inner
                 .list_plugins()
                 .into_iter()

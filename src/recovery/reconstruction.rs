@@ -383,7 +383,7 @@ impl DocumentReconstructor {
             .likely_node_type
             .clone()
             .unwrap_or(NodeType::Other);
-        let node_id = NodeId(rand::random());
+        let node_id = NodeId(rand::random::<u64>() as usize);
 
         // Try to extract dictionary content
         if let Some(dict_content) = self.extract_dictionary_content(&data_str) {

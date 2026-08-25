@@ -127,7 +127,7 @@ impl PyPdfDocument {
     }
 
     fn get_statistics(&self) -> PyResult<Py<PyDict>> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let dict = PyDict::new(py);
             let total_nodes = self.inner.ast.get_all_nodes().len();
             dict.set_item("total_nodes", total_nodes)?;
@@ -174,7 +174,7 @@ impl PyAstNode {
     }
 
     fn get_metadata(&self) -> PyResult<Py<PyDict>> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let dict = PyDict::new(py);
             dict.set_item("offset", self.inner.metadata.offset)?;
             dict.set_item("size", self.inner.metadata.size)?;
@@ -240,7 +240,7 @@ impl PyValidationReport {
     }
 
     fn get_statistics(&self) -> PyResult<Py<PyDict>> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let dict = PyDict::new(py);
             dict.set_item("total_checks", self.inner.statistics.total_checks)?;
             dict.set_item("passed_checks", self.inner.statistics.passed_checks)?;
@@ -316,7 +316,7 @@ impl PyPluginManager {
     }
 
     fn execute_plugins(&self, document: &PyPdfDocument) -> PyResult<Py<PyDict>> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             let mut doc = (*document.inner).clone();
             let summary = self.inner.execute_plugins(&mut doc);
             let dict = PyDict::new(py);
@@ -333,7 +333,7 @@ impl PyPluginManager {
     }
 
     fn list_plugins(&self) -> Vec<Py<PyDict>> {
-        Python::with_gil(|py| {
+        Python::attach(|py| {
             self.inner
                 .list_plugins()
                 .iter()

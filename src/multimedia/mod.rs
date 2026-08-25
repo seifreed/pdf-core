@@ -541,7 +541,7 @@ impl MultimediaManager {
         }
 
         let threed_content = ThreeDContent::new(model_data, format, settings)?;
-        let node_id = NodeId(rand::random());
+        let node_id = NodeId(rand::random::<u64>() as usize);
 
         // Create annotation dictionary
         let mut annotation_dict = PdfDictionary::new();
@@ -584,7 +584,7 @@ impl MultimediaManager {
         }
 
         let video_content = VideoContent::new(video_data, format, settings)?;
-        let node_id = NodeId(rand::random());
+        let node_id = NodeId(rand::random::<u64>() as usize);
 
         // Create rich media annotation
         let mut annotation_dict = PdfDictionary::new();
@@ -624,7 +624,7 @@ impl MultimediaManager {
         }
 
         let audio_content = AudioContent::new(audio_data, format, settings)?;
-        let node_id = NodeId(rand::random());
+        let node_id = NodeId(rand::random::<u64>() as usize);
 
         // Create sound annotation
         let mut annotation_dict = PdfDictionary::new();
@@ -663,7 +663,7 @@ impl MultimediaManager {
         }
 
         let interactive_content = InteractiveContent::new(content_type, script, settings)?;
-        let node_id = NodeId(rand::random());
+        let node_id = NodeId(rand::random::<u64>() as usize);
 
         let mut annotation_dict = PdfDictionary::new();
         annotation_dict.insert("Type", PdfValue::Name(PdfName::new("Annot")));

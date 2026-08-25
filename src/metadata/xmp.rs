@@ -37,7 +37,7 @@ impl<'a> EnhancedXmpParser<'a> {
 
     fn parse(&mut self, xml: &str) -> Result<(), String> {
         let mut reader = Reader::from_str(xml);
-        reader.trim_text(true);
+        reader.config_mut().trim_text(true);
 
         let mut buf = Vec::new();
 
@@ -53,8 +53,10 @@ impl<'a> EnhancedXmpParser<'a> {
                     self.handle_end_element(e)?;
                 }
                 Ok(Event::Text(ref e)) => {
-                    let text = e
-                        .unescape()
+                    let decoded = e
+                        .decode()
+                        .map_err(|e| format!("Text decode error: {}", e))?;
+                    let text = quick_xml::escape::unescape(&decoded)
                         .map_err(|e| format!("Text decode error: {}", e))?;
                     self.current_text.push_str(&text);
                 }

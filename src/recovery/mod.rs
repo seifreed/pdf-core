@@ -452,7 +452,7 @@ impl RecoveryParser {
     /// Parse a partial object with lenient rules
     fn parse_partial_object(&self, data: &[u8]) -> AstResult<AstNode> {
         // Very simplified object parsing for recovery
-        let node_id = NodeId(rand::random());
+        let node_id = NodeId(rand::random::<u64>() as usize);
 
         // Try to determine object type from content
         let node_type = if data.windows(4).any(|w| w == b"Type") {

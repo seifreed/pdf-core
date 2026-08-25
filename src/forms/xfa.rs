@@ -124,7 +124,7 @@ fn parse_xfa_from_bytes(name: &str, bytes: &[u8]) -> Result<Option<XfaPacket>, S
 
 fn parse_xml_root(xml: &str) -> Result<XfaNode, String> {
     let mut reader = Reader::from_str(xml);
-    reader.trim_text(true);
+    reader.config_mut().trim_text(true);
 
     let mut buf = Vec::new();
     let mut stack: Vec<XfaNode> = Vec::new();
@@ -156,7 +156,8 @@ fn parse_xml_root(xml: &str) -> Result<XfaNode, String> {
             }
             Ok(Event::Text(e)) => {
                 if let Some(current) = stack.last_mut() {
-                    let text = e.unescape().map_err(|e| e.to_string())?;
+                    let decoded = e.decode().map_err(|e| e.to_string())?;
+                    let text = quick_xml::escape::unescape(&decoded).map_err(|e| e.to_string())?;
                     let new_text = text.trim();
                     if !new_text.is_empty() {
                         let existing = current.text.take().unwrap_or_default();
@@ -212,7 +213,7 @@ fn parse_attributes(
         let attr = attr.map_err(|e| e.to_string())?;
         let key = String::from_utf8_lossy(attr.key.as_ref()).to_string();
         let value = attr
-            .decode_and_unescape_value(reader)
+            .unescape_value()
             .map_err(|e| e.to_string())?
             .to_string();
         attrs.insert(key, value);
