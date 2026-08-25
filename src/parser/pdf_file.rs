@@ -929,34 +929,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     });
                 }
             }
-            Err(_) => {
-                // Even if parsing fails, we can detect that this looks like an XRef stream
-                // by checking if the buffer contains the XRef stream markers
-                if data.windows(11).any(|w| w == b"/Type /XRef") {
-                    // Create a minimal XRef stream entry for detection
-                    let dummy_dict = PdfDictionary::new();
-                    self.document.add_xref_stream(crate::ast::XRefStream {
-                        object_id: ObjectId::new(4, 0), // Reasonable assumption for test PDFs
-                        dict: dummy_dict,
-                        entries: Vec::new(),
-                    });
-
-                    // Also add some minimal XRef entries to satisfy basic parsing requirements
-                    self.document.xref.entries.insert(
-                        ObjectId::new(1, 0),
-                        XRefEntry::InUse {
-                            offset: 9,
-                            generation: 0,
-                        },
-                    );
-                    self.document.xref.entries.insert(
-                        ObjectId::new(4, 0),
-                        XRefEntry::InUse {
-                            offset: 186,
-                            generation: 0,
-                        },
-                    );
-                }
+            Err(err) => {
+                return Err(AstError::ParseError(format!(
+                    "Failed to parse xref stream: {:?}",
+                    err
+                )));
             }
         }
 
