@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 type MigrationFunction = Box<dyn Fn(&mut StableAstSchema) -> Result<(), String>>;
 
-pub const SCHEMA_VERSION: &str = "1.0.0";
+pub const SCHEMA_VERSION: &str = "1.1.0";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaVersion {
@@ -22,7 +22,7 @@ impl SchemaVersion {
     pub fn current() -> Self {
         Self {
             major: 1,
-            minor: 0,
+            minor: 1,
             patch: 0,
         }
     }

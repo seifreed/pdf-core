@@ -3,7 +3,7 @@ use crate::types::PdfValue;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-const AST_SCHEMA_VERSION: &str = "1.1";
+pub const AST_SCHEMA_VERSION: &str = "1.1.0";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableDocument {
@@ -213,7 +213,7 @@ impl GraphSerializer {
                 node_count: ast.node_count(),
                 edge_count: ast.edge_count(),
                 is_cyclic: ast.is_cyclic(),
-                serialization_version: "1.0".to_string(),
+                serialization_version: AST_SCHEMA_VERSION.to_string(),
             },
         }
     }
@@ -267,6 +267,18 @@ pub struct GraphDeserializer;
 
 impl GraphDeserializer {
     pub fn deserialize(serialized: SerializableGraph) -> Result<PdfAstGraph, String> {
+        let major = serialized
+            .metadata
+            .serialization_version
+            .split('.')
+            .next()
+            .ok_or_else(|| "Missing serialization version".to_string())?;
+        if major != "1" {
+            return Err(format!(
+                "Unsupported AST serialization major version: {}",
+                serialized.metadata.serialization_version
+            ));
+        }
         let mut ast = PdfAstGraph::new();
         let mut id_map: HashMap<usize, NodeId> = HashMap::new();
 
@@ -276,11 +288,6 @@ impl GraphDeserializer {
                 Self::parse_node_type(&serialized_node.node_type, serialized_node.object_id)?;
             let value = Self::deserialize_value(&serialized_node.value)?;
             let node_id = ast.create_node(node_type, value);
-
-            // Object ID mapping would need to be implemented in the AST
-            // if let Some((obj_num, obj_gen)) = serialized_node.object_id {
-            //     ast.set_object_mapping(node_id, object_id);
-            // }
 
             id_map.insert(serialized_node.id, node_id);
         }
@@ -585,10 +592,12 @@ mod tests {
         let mut ast = PdfAstGraph::new();
         let root_value = PdfValue::Dictionary(PdfDictionary::new());
         let root_id = ast.create_node(NodeType::Root, root_value);
+        let object_id = crate::types::ObjectId::new(42, 7);
+        ast.create_node(NodeType::Object(object_id), PdfValue::Integer(1));
         ast.set_root(root_id);
 
         let serialized = SerializableGraph::from_ast(&ast);
-        assert_eq!(serialized.nodes.len(), 1);
+        assert_eq!(serialized.nodes.len(), 2);
         assert_eq!(serialized.edges.len(), 0);
         assert!(serialized.root.is_some());
 
@@ -596,7 +605,9 @@ mod tests {
         assert!(json.contains("Root"));
 
         let deserialized = SerializableGraph::from_json(&json).unwrap();
-        assert_eq!(deserialized.nodes.len(), 1);
+        assert_eq!(deserialized.nodes.len(), 2);
+        let restored = GraphDeserializer::deserialize(deserialized).unwrap();
+        assert!(restored.get_node_by_object(object_id).is_some());
     }
 
     #[test]

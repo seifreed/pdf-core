@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ComplianceReport {
     pub profile: ComplianceProfile,
+    pub scope: String,
     pub status: ComplianceStatus,
     pub violations: Vec<Violation>,
     pub recommendations: Vec<String>,
@@ -31,9 +32,11 @@ pub enum ComplianceStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Violation {
+    pub rule_id: String,
     pub rule: String,
     pub description: String,
     pub location: String,
+    pub standard_reference: Option<String>,
     pub severity: ViolationSeverity,
 }
 
@@ -92,6 +95,7 @@ impl PdfA1bValidator {
 
         ComplianceReport {
             profile: ComplianceProfile::PdfA1b,
+            scope: "Experimental preflight checks for selected PDF/A-1b requirements".to_string(),
             status,
             violations: self.violations.clone(),
             recommendations: vec![
@@ -110,9 +114,11 @@ impl Visitor for PdfA1bValidator {
             && dict.get("FontFile3").is_none()
         {
             self.violations.push(Violation {
+                rule_id: "pdfa-1b.font-embedding".to_string(),
                 rule: "PDF/A-1b Font Embedding".to_string(),
                 description: "All fonts must be embedded in PDF/A-1b".to_string(),
                 location: "Font dictionary".to_string(),
+                standard_reference: Some("ISO 19005-1:2005, 6.3.5".to_string()),
                 severity: ViolationSeverity::Error,
             });
         } else {
@@ -123,9 +129,11 @@ impl Visitor for PdfA1bValidator {
 
     fn visit_action(&mut self, _node: &AstNode, _dict: &PdfDictionary) -> VisitorAction {
         self.violations.push(Violation {
+            rule_id: "pdfa-1b.interactive-content".to_string(),
             rule: "PDF/A-1b Interactive Content".to_string(),
             description: "Interactive content not allowed in PDF/A-1b".to_string(),
             location: "Action dictionary".to_string(),
+            standard_reference: Some("ISO 19005-1:2005, 6.6".to_string()),
             severity: ViolationSeverity::Error,
         });
         VisitorAction::Continue
@@ -160,6 +168,7 @@ impl PdfUA1Validator {
 
         ComplianceReport {
             profile: ComplianceProfile::PdfUA1,
+            scope: "Experimental preflight checks for selected PDF/UA-1 requirements".to_string(),
             status,
             violations: self.violations.clone(),
             recommendations: vec![
@@ -177,9 +186,11 @@ impl Visitor for PdfUA1Validator {
             self.has_structure_tree = true;
         } else {
             self.violations.push(Violation {
+                rule_id: "pdfua-1.structure-tree".to_string(),
                 rule: "PDF/UA-1 Structure Tree".to_string(),
                 description: "Document must have a structure tree".to_string(),
                 location: "Catalog".to_string(),
+                standard_reference: Some("ISO 14289-1:2014, 7.1".to_string()),
                 severity: ViolationSeverity::Error,
             });
         }
@@ -188,9 +199,11 @@ impl Visitor for PdfUA1Validator {
             self.has_lang_attribute = true;
         } else {
             self.violations.push(Violation {
+                rule_id: "pdfua-1.language".to_string(),
                 rule: "PDF/UA-1 Language".to_string(),
                 description: "Document must specify primary language".to_string(),
                 location: "Catalog".to_string(),
+                standard_reference: Some("ISO 14289-1:2014, 7.2".to_string()),
                 severity: ViolationSeverity::Warning,
             });
         }
