@@ -62,6 +62,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 limits.max_file_size_mb
             )));
         }
+        limits
+            .budget
+            .consume_input(file_size)
+            .map_err(|err| AstError::ParseError(err.to_string()))?;
 
         let mut document = PdfDocument::new(version);
         document.metadata.file_size = Some(file_size);
@@ -78,6 +82,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     pub fn parse(mut self) -> AstResult<PdfDocument> {
+        self.limits
+            .budget
+            .check()
+            .map_err(|err| AstError::ParseError(err.to_string()))?;
         // Track file size (seek may have moved during checks)
         let _ = self.reader.seek(SeekFrom::Start(0));
         // Check for linearization (must be first object)
@@ -1720,10 +1728,18 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         }
 
         let result = (|| {
+            self.limits
+                .budget
+                .check()
+                .map_err(|err| AstError::ParseError(err.to_string()))?;
             // Check cache
             if let Some(cached) = self.object_cache.get(obj_id).cloned() {
                 return Ok(cached);
             }
+            self.limits
+                .budget
+                .consume_object()
+                .map_err(|err| AstError::ParseError(err.to_string()))?;
 
             // Get object location from xref
             let entry = match self.document.xref.entries.get(obj_id).copied() {
@@ -1879,9 +1895,13 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 if let Ok(decoded) = crate::filters::decode_stream_with_limits(
                     raw_data,
                     &filters,
-                    self.limits.max_object_size_mb * 1024 * 1024,
+                    self.limits.max_object_size_mb.saturating_mul(1024 * 1024),
                     self.limits.max_stream_decode_ratio,
                 ) {
+                    self.limits
+                        .budget
+                        .consume_decoded(decoded.len() as u64)
+                        .map_err(|err| AstError::ParseError(err.to_string()))?;
                     return self.parse_object_from_stream(&decoded, index, &stream.dict);
                 }
             }
@@ -1946,6 +1966,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         value: PdfValue,
         node_type: NodeType,
     ) -> AstResult<crate::ast::NodeId> {
+        self.limits
+            .budget
+            .consume_node()
+            .map_err(|err| AstError::ParseError(err.to_string()))?;
         // Auto-detect more specific node types based on the value
         let refined_node_type = self.refine_node_type(&value, node_type);
         let node_id = self.document.ast.create_node(refined_node_type, value);

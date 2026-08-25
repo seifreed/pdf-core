@@ -1,5 +1,171 @@
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+#[derive(Debug, Clone, Default)]
+pub struct CancellationToken(Arc<AtomicBool>);
+
+impl CancellationToken {
+    pub fn cancel(&self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ResourceBudget {
+    pub max_input_bytes: u64,
+    pub max_decoded_bytes_total: u64,
+    pub max_decoded_bytes_per_stream: u64,
+    pub max_decode_ratio: u64,
+    pub max_objects: usize,
+    pub max_nodes: usize,
+    pub max_edges: usize,
+    pub max_depth: usize,
+    pub deadline: Option<Instant>,
+    pub cancellation: CancellationToken,
+    input_bytes: Arc<AtomicU64>,
+    decoded_bytes_total: Arc<AtomicU64>,
+    objects: Arc<AtomicU64>,
+    nodes: Arc<AtomicU64>,
+    edges: Arc<AtomicU64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResourceBudgetError {
+    InputBytes,
+    DecodedBytes,
+    Objects,
+    Nodes,
+    Edges,
+    Deadline,
+    Cancelled,
+}
+
+impl std::fmt::Display for ResourceBudgetError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "resource budget exceeded: {:?}", self)
+    }
+}
+
+impl std::error::Error for ResourceBudgetError {}
+
+impl Default for ResourceBudget {
+    fn default() -> Self {
+        Self::new(
+            100 * 1024 * 1024,
+            1024 * 1024 * 1024,
+            50 * 1024 * 1024,
+            100,
+            1_000_000,
+            1_000_000,
+            5_000_000,
+            1000,
+        )
+    }
+}
+
+impl ResourceBudget {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        max_input_bytes: u64,
+        max_decoded_bytes_total: u64,
+        max_decoded_bytes_per_stream: u64,
+        max_decode_ratio: u64,
+        max_objects: usize,
+        max_nodes: usize,
+        max_edges: usize,
+        max_depth: usize,
+    ) -> Self {
+        Self {
+            max_input_bytes,
+            max_decoded_bytes_total,
+            max_decoded_bytes_per_stream,
+            max_decode_ratio,
+            max_objects,
+            max_nodes,
+            max_edges,
+            max_depth,
+            deadline: None,
+            cancellation: CancellationToken::default(),
+            input_bytes: Arc::new(AtomicU64::new(0)),
+            decoded_bytes_total: Arc::new(AtomicU64::new(0)),
+            objects: Arc::new(AtomicU64::new(0)),
+            nodes: Arc::new(AtomicU64::new(0)),
+            edges: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    pub fn check(&self) -> Result<(), ResourceBudgetError> {
+        if self.cancellation.is_cancelled() {
+            return Err(ResourceBudgetError::Cancelled);
+        }
+        if self
+            .deadline
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            return Err(ResourceBudgetError::Deadline);
+        }
+        Ok(())
+    }
+
+    pub fn consume_input(&self, bytes: u64) -> Result<(), ResourceBudgetError> {
+        self.check()?;
+        let total = self
+            .input_bytes
+            .fetch_add(bytes, Ordering::Relaxed)
+            .saturating_add(bytes);
+        if total > self.max_input_bytes {
+            return Err(ResourceBudgetError::InputBytes);
+        }
+        Ok(())
+    }
+
+    pub fn consume_decoded(&self, bytes: u64) -> Result<(), ResourceBudgetError> {
+        self.check()?;
+        let total = self
+            .decoded_bytes_total
+            .fetch_add(bytes, Ordering::Relaxed)
+            .saturating_add(bytes);
+        if total > self.max_decoded_bytes_total || bytes > self.max_decoded_bytes_per_stream {
+            return Err(ResourceBudgetError::DecodedBytes);
+        }
+        Ok(())
+    }
+
+    pub fn consume_object(&self) -> Result<(), ResourceBudgetError> {
+        self.consume_counter(
+            &self.objects,
+            self.max_objects,
+            ResourceBudgetError::Objects,
+        )
+    }
+
+    pub fn consume_node(&self) -> Result<(), ResourceBudgetError> {
+        self.consume_counter(&self.nodes, self.max_nodes, ResourceBudgetError::Nodes)
+    }
+
+    pub fn consume_edge(&self) -> Result<(), ResourceBudgetError> {
+        self.consume_counter(&self.edges, self.max_edges, ResourceBudgetError::Edges)
+    }
+
+    fn consume_counter(
+        &self,
+        counter: &AtomicU64,
+        limit: usize,
+        error: ResourceBudgetError,
+    ) -> Result<(), ResourceBudgetError> {
+        self.check()?;
+        let total = counter.fetch_add(1, Ordering::Relaxed).saturating_add(1);
+        if total > limit as u64 {
+            return Err(error);
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct PerformanceLimits {
@@ -16,11 +182,12 @@ pub struct PerformanceLimits {
     pub enable_timeout_checks: bool,
     pub enable_memory_checks: bool,
     pub enable_recursion_checks: bool,
+    pub budget: ResourceBudget,
 }
 
 impl Default for PerformanceLimits {
     fn default() -> Self {
-        Self {
+        let mut limits = Self {
             max_nodes: 1_000_000,
             max_edges: 5_000_000,
             max_memory_mb: 1024,
@@ -34,13 +201,16 @@ impl Default for PerformanceLimits {
             enable_timeout_checks: true,
             enable_memory_checks: true,
             enable_recursion_checks: true,
-        }
+            budget: ResourceBudget::default(),
+        };
+        limits.refresh_budget();
+        limits
     }
 }
 
 impl PerformanceLimits {
     pub fn conservative() -> Self {
-        Self {
+        let mut limits = Self {
             max_nodes: 100_000,
             max_edges: 500_000,
             max_memory_mb: 256,
@@ -52,11 +222,13 @@ impl PerformanceLimits {
             max_stream_decode_ratio: 50,
             max_concurrent_parsers: 2,
             ..Default::default()
-        }
+        };
+        limits.refresh_budget();
+        limits
     }
 
     pub fn permissive() -> Self {
-        Self {
+        let mut limits = Self {
             max_nodes: 10_000_000,
             max_edges: 50_000_000,
             max_memory_mb: 4096,
@@ -68,7 +240,26 @@ impl PerformanceLimits {
             max_stream_decode_ratio: 200,
             max_concurrent_parsers: 8,
             ..Default::default()
-        }
+        };
+        limits.refresh_budget();
+        limits
+    }
+
+    pub fn refresh_budget(&mut self) {
+        let deadline = self.budget.deadline;
+        let cancellation = self.budget.cancellation.clone();
+        self.budget = ResourceBudget::new(
+            (self.max_file_size_mb as u64).saturating_mul(1024 * 1024),
+            (self.max_memory_mb as u64).saturating_mul(1024 * 1024),
+            (self.max_object_size_mb as u64).saturating_mul(1024 * 1024),
+            self.max_stream_decode_ratio as u64,
+            self.max_nodes,
+            self.max_nodes,
+            self.max_edges,
+            self.max_depth,
+        );
+        self.budget.deadline = deadline;
+        self.budget.cancellation = cancellation;
     }
 }
 
@@ -436,5 +627,17 @@ mod tests {
 
         thread::sleep(Duration::from_millis(20));
         assert!(guard.check_parse_timeout().is_err());
+    }
+
+    #[test]
+    fn test_resource_budget_is_shared_and_cancelable() {
+        let budget = ResourceBudget::new(4, 8, 8, 10, 1, 1, 1, 1);
+        let clone = budget.clone();
+
+        budget.consume_input(4).unwrap();
+        assert!(clone.consume_input(1).is_err());
+
+        clone.cancellation.cancel();
+        assert_eq!(budget.check(), Err(ResourceBudgetError::Cancelled));
     }
 }

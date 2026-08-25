@@ -13,8 +13,8 @@ use std::time::{Duration, Instant};
 
 // Re-export limits module
 pub use limits::{
-    ConcurrencyGuard, ParserSlot, PerformanceGuard, PerformanceLimits, PerformanceViolation,
-    RecursionGuard,
+    CancellationToken, ConcurrencyGuard, ParserSlot, PerformanceGuard, PerformanceLimits,
+    PerformanceViolation, RecursionGuard, ResourceBudget, ResourceBudgetError,
 };
 
 /// Configuration for performance optimizations

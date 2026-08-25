@@ -105,6 +105,8 @@ impl PdfParser {
     /// # Returns
     /// Self for method chaining
     pub fn with_limits(mut self, limits: PerformanceLimits) -> Self {
+        let mut limits = limits;
+        limits.refresh_budget();
         self.limits = limits;
         self
     }
