@@ -12,7 +12,8 @@ node ID, and source offset when the AST provides them. Registry reports also
 include `iso.<constraint>` metadata for constraints that declare a normative
 reference. The reproducible fixture corpus is maintained at
 https://github.com/seifreed/pdf-core-corpus and pinned by the corpus workflow;
-the corpus contains 2,601 upstream fixtures across PDF/A and PDF/UA profiles,
+the corpus contains 2,806 upstream fixtures across PDF/A, PDF/UA, and Isartor
+profiles,
 plus three local parser regressions. The PDF/A-1b comparison gate uses its 569
 profile fixtures; the other profiles are available for parser and preflight
 campaigns.

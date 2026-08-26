@@ -29,7 +29,7 @@
 
 | Feature | Description |
 |---------|-------------|
-| **PDF parser** | Objects, streams, xref tables, linearization, and incremental updates; 2,601 pinned PDF/A and PDF/UA fixtures |
+| **PDF parser** | Objects, streams, xref tables, linearization, and incremental updates; 2,806 pinned PDF/A, PDF/UA, and Isartor fixtures |
 | **Rich AST** | Typed nodes for common PDF structures; schema/API are experimental |
 | **Security Analysis** | JavaScript, forms, embedded files, and suspicious actions |
 | **PDF/A Validation** | Experimental preflight checks for selected requirements |
