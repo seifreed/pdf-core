@@ -1,5 +1,26 @@
 # Veredicto
 
+## Estado de seguimiento (2026-08-26)
+
+Este documento conserva la auditoria original. Desde entonces se han cerrado
+varios puntos: el workspace incluye todos los crates, `main` esta protegida,
+las alertas de Dependabot estan resueltas, el parser tiene lecturas acotadas y
+validacion de limites en las rutas de xref/object streams, y la serializacion
+restaura el estado documental lossless disponible. Tambien existe un corpus
+reproducible de 2.806 fixtures upstream mas tres regresiones, metricas
+diferenciales, una campana fuzz local de 16.000 ejecuciones sin crashes y un
+chequeo completo de 205 mapeos contra veraPDF 1.30.2.
+
+Siguen pendientes para cerrar este roadmap: evidencia verde y repetida en CI
+para corpus/differential/fuzzing y bindings; semantica estricta completa y
+presupuesto de recursos aplicado a todas las operaciones; matriz normativa
+clausula por clausula y validacion PDF/A/PDF/UA no experimental; cobertura
+completa de CMap, fuentes, herencia, revisiones hibridas y codecs; API/visitors
+estables y reorganizacion final de crates; y publicacion firmada en crates.io,
+PyPI y npm con consumidores externos. El chequeo local de `cargo-semver-checks`
+pasa para `pdf-ast` contra `0.1.0`; el workspace completo no es auditable
+porque `pdf-ast-dynamic-plugin-example` no esta publicado en crates.io.
+
 **`pdf-core` es actualmente una alpha técnica avanzada, no una beta y todavía no una librería preparada para procesar PDFs no confiables en producción.**
 
 Mi valoración aproximada sería:
