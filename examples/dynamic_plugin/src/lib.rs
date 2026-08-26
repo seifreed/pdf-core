@@ -21,6 +21,12 @@ impl ExampleMetadataPlugin {
     }
 }
 
+impl Default for ExampleMetadataPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AstPlugin for ExampleMetadataPlugin {
     fn metadata(&self) -> &PluginMetadata {
         &self.metadata
@@ -75,50 +81,52 @@ pub extern "C" fn pdf_ast_plugin_factory() -> *mut std::ffi::c_void {
 
 #[allow(dead_code)]
 pub extern "C" fn pdf_ast_plugin_api_version() -> *const u8 {
-    b"1.0.0\0".as_ptr()
+    c"1.0.0".as_ptr().cast()
 }
 
 #[allow(dead_code)]
 pub extern "C" fn pdf_ast_plugin_name() -> *const u8 {
-    b"example_metadata\0".as_ptr()
+    c"example_metadata".as_ptr().cast()
 }
 
 #[allow(dead_code)]
 pub extern "C" fn pdf_ast_plugin_description() -> *const u8 {
-    b"Example dynamic plugin that records basic document stats\0".as_ptr()
+    c"Example dynamic plugin that records basic document stats"
+        .as_ptr()
+        .cast()
 }
 
 #[allow(dead_code)]
 pub extern "C" fn pdf_ast_plugin_author() -> *const u8 {
-    b"PDF-AST\0".as_ptr()
+    c"PDF-AST".as_ptr().cast()
 }
 
 #[allow(dead_code)]
 pub extern "C" fn pdf_ast_plugin_license() -> *const u8 {
-    b"MIT\0".as_ptr()
+    c"MIT".as_ptr().cast()
 }
 
 #[allow(dead_code)]
 pub extern "C" fn pdf_ast_plugin_homepage() -> *const u8 {
-    b"https://github.com/seifreed/pdf-core\0".as_ptr()
+    c"https://github.com/seifreed/pdf-core".as_ptr().cast()
 }
 
 #[allow(dead_code)]
 pub extern "C" fn pdf_ast_plugin_repository() -> *const u8 {
-    b"https://github.com/seifreed/pdf-core\0".as_ptr()
+    c"https://github.com/seifreed/pdf-core".as_ptr().cast()
 }
 
 #[allow(dead_code)]
 pub extern "C" fn pdf_ast_plugin_tags() -> *const u8 {
-    b"metadata,stats\0".as_ptr()
+    c"metadata,stats".as_ptr().cast()
 }
 
 #[allow(dead_code)]
 pub extern "C" fn pdf_ast_plugin_supported_node_types() -> *const u8 {
-    b"Catalog,Page,Pages\0".as_ptr()
+    c"Catalog,Page,Pages".as_ptr().cast()
 }
 
 #[allow(dead_code)]
 pub extern "C" fn pdf_ast_plugin_dependencies() -> *const u8 {
-    b"\0".as_ptr()
+    c"".as_ptr().cast()
 }

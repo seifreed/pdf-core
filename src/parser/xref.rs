@@ -558,8 +558,10 @@ mod tests {
             ],
             None,
         );
-        let mut limits = PerformanceLimits::default();
-        limits.max_object_size_mb = 0;
+        let mut limits = PerformanceLimits {
+            max_object_size_mb: 0,
+            ..PerformanceLimits::default()
+        };
         limits.refresh_budget();
 
         let error = parse_xref_stream(&stream, &limits)

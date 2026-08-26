@@ -100,8 +100,8 @@ impl SecurityReport {
     pub fn detailed_report(&self) -> String {
         let mut report = String::new();
 
-        report.push_str(&format!("PDF Security Analysis Report\n"));
-        report.push_str(&format!("============================\n\n"));
+        report.push_str("PDF Security Analysis Report\n");
+        report.push_str("============================\n\n");
 
         report.push_str(&self.summary());
         report.push_str("\n\n");
@@ -133,10 +133,10 @@ impl SecurityReport {
                 if !threat.cve_references.is_empty() {
                     report.push_str("   CVE References: ");
                     report.push_str(&threat.cve_references.join(", "));
-                    report.push_str("\n");
+                    report.push('\n');
                 }
 
-                report.push_str("\n");
+                report.push('\n');
             }
         }
 
@@ -155,7 +155,7 @@ impl SecurityReport {
                     report.push_str(&format!("   Location: {}\n", location));
                 }
                 report.push_str(&format!("   Recommendation: {}\n", warning.recommendation));
-                report.push_str("\n");
+                report.push('\n');
             }
         }
 
@@ -167,7 +167,7 @@ impl SecurityReport {
             for info in &self.result.info {
                 categories
                     .entry(info.category.clone())
-                    .or_insert_with(Vec::new)
+                    .or_default()
                     .push(info);
             }
 
@@ -176,7 +176,7 @@ impl SecurityReport {
                 for item in items {
                     report.push_str(&format!("  - {}: {}\n", item.message, item.value));
                 }
-                report.push_str("\n");
+                report.push('\n');
             }
         }
 

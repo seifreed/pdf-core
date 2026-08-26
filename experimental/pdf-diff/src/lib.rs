@@ -440,7 +440,7 @@ pub fn generate_diff_report(result: &PdfDiffResult) -> String {
                 change.field, change.old_value, change.new_value
             ));
         }
-        report.push_str("\n");
+        report.push('\n');
     }
 
     if !result.structure_changes.is_empty() {
@@ -452,7 +452,7 @@ pub fn generate_diff_report(result: &PdfDiffResult) -> String {
                 change.node_type, change.location, change.description
             ));
         }
-        report.push_str("\n");
+        report.push('\n');
     }
 
     if !result.page_changes.is_empty() {

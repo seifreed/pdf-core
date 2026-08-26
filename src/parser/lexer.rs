@@ -15,18 +15,6 @@ fn parse_u8(input: &[u8]) -> Result<u8, &'static str> {
         .map_err(|_| "numeric token out of range")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{integer, pdf_header, real};
-
-    #[test]
-    fn numeric_overflow_is_a_parse_error() {
-        assert!(integer(b"999999999999999999999999").is_err());
-        assert!(real(b"1e999999999999999999999").is_err());
-        assert!(pdf_header(b"%PDF-999.0").is_err());
-    }
-}
-
 fn parse_i64(input: &[u8]) -> Result<i64, &'static str> {
     std::str::from_utf8(input)
         .map_err(|_| "invalid numeric token")?
@@ -229,4 +217,16 @@ pub fn name(input: &[u8]) -> IResult<&[u8], String> {
             },
         ),
     )(input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{integer, pdf_header, real};
+
+    #[test]
+    fn numeric_overflow_is_a_parse_error() {
+        assert!(integer(b"999999999999999999999999").is_err());
+        assert!(real(b"1e999999999999999999999").is_err());
+        assert!(pdf_header(b"%PDF-999.0").is_err());
+    }
 }

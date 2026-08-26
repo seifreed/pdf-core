@@ -183,7 +183,7 @@ impl LazyStream {
 
         // Parse offset table (simplified - would need proper parsing)
         let _offset_entry_size = 16; // Approximate size of "objnum offset" entry
-        let offset_table_end = first as usize;
+        let offset_table_end = first;
 
         if offset_table_end > data.len() {
             return Err("Invalid First offset in object stream".to_string());

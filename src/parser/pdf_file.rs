@@ -64,9 +64,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let tolerant = mode.is_tolerant();
         let version = Self::read_header(&mut reader, tolerant)?;
         let file_size = Self::read_file_size(&mut reader)?;
-        let max_file_size = (limits.max_file_size_mb as u64)
-            .checked_mul(1024 * 1024)
-            .unwrap_or(u64::MAX);
+        let max_file_size = (limits.max_file_size_mb as u64).saturating_mul(1024 * 1024);
         if file_size > max_file_size {
             return Err(AstError::ParseError(format!(
                 "File too large: {}MB > {}MB",
@@ -923,6 +921,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn record_diagnostic(
         &mut self,
         object_id: Option<ObjectId>,
