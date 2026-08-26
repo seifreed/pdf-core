@@ -1,6 +1,7 @@
-use crate::ast::{NodeType, PdfDocument};
+use crate::ast::{NodeId, NodeType, PdfDocument};
 use crate::types::{PdfDictionary, PdfValue};
 use crate::validation::{ValidationIssue, ValidationReport, ValidationSeverity};
+use std::collections::HashSet;
 
 /// PDF/A-1b validator implementing ISO 19005-1:2005 Level B requirements
 pub struct PdfA1bValidator {
@@ -111,9 +112,7 @@ impl PdfA1bValidator {
                     }
                 }
                 NodeType::Page => {
-                    if let Some(dict) = node.as_dict() {
-                        self.check_resources_for_device_colors(dict, &mut has_device_colors);
-                    }
+                    self.check_inherited_page_resources(document, node.id, &mut has_device_colors);
                 }
                 _ => {}
             }
@@ -146,26 +145,77 @@ impl PdfA1bValidator {
 
     fn check_resources_for_device_colors(
         &self,
+        document: &PdfDocument,
         page_dict: &PdfDictionary,
         has_device_colors: &mut bool,
     ) {
         if let Some(resources_value) = page_dict.get("Resources") {
-            if let Some(resources_dict) = resources_value.as_dict() {
+            let resources = match resources_value {
+                PdfValue::Dictionary(dict) => Some(dict),
+                PdfValue::Reference(reference) => document
+                    .ast
+                    .get_node_by_object(reference.id())
+                    .and_then(|node| node.as_dict()),
+                _ => None,
+            };
+            if let Some(resources_dict) = resources {
                 if let Some(colorspaces_value) = resources_dict.get("ColorSpace") {
-                    if let Some(colorspaces_dict) = colorspaces_value.as_dict() {
-                        for (_name, colorspace_value) in colorspaces_dict.iter() {
-                            if let Some(colorspace_name) = colorspace_value.as_name() {
-                                match colorspace_name.without_slash() {
-                                    "DeviceRGB" | "DeviceGray" | "DeviceCMYK" => {
-                                        *has_device_colors = true;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
+                    let mut visited = HashSet::new();
+                    *has_device_colors |=
+                        Self::contains_device_colors(document, colorspaces_value, &mut visited);
                 }
             }
+        }
+    }
+
+    fn check_inherited_page_resources(
+        &self,
+        document: &PdfDocument,
+        page_id: NodeId,
+        has_device_colors: &mut bool,
+    ) {
+        let mut current = Some(page_id);
+        let mut visited = HashSet::new();
+
+        while let Some(node_id) = current {
+            if !visited.insert(node_id) {
+                break;
+            }
+            if let Some(node) = document.ast.get_node(node_id) {
+                if let Some(dict) = node.as_dict() {
+                    self.check_resources_for_device_colors(document, dict, has_device_colors);
+                }
+            }
+            current = document.ast.get_parent(node_id);
+        }
+    }
+
+    fn contains_device_colors(
+        document: &PdfDocument,
+        value: &PdfValue,
+        visited: &mut HashSet<NodeId>,
+    ) -> bool {
+        match value {
+            PdfValue::Name(name) => matches!(
+                name.without_slash(),
+                "DeviceRGB" | "DeviceGray" | "DeviceCMYK"
+            ),
+            PdfValue::Array(values) => values
+                .iter()
+                .any(|value| Self::contains_device_colors(document, value, visited)),
+            PdfValue::Dictionary(dict) => dict
+                .values()
+                .any(|value| Self::contains_device_colors(document, value, visited)),
+            PdfValue::Reference(reference) => {
+                let Some(node) = document.ast.get_node_by_object(reference.id()) else {
+                    return false;
+                };
+                if !visited.insert(node.id) {
+                    return false;
+                }
+                Self::contains_device_colors(document, &node.value, visited)
+            }
+            _ => false,
         }
     }
 

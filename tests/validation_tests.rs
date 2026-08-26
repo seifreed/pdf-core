@@ -75,6 +75,32 @@ mod validation_tests {
     }
 
     #[test]
+    fn test_pdfa_color_space_validation_follows_inherited_page_resources() {
+        let validator = PdfA1bValidator::new().with_strict_mode(false);
+        let mut document = create_test_document();
+        let pages_id = document
+            .ast
+            .find_nodes_by_type(NodeType::Pages)
+            .into_iter()
+            .next()
+            .expect("test document should have a Pages node");
+        let pages = document
+            .ast
+            .get_node_mut(pages_id)
+            .expect("Pages node should exist");
+        if let PdfValue::Dictionary(dict) = &mut pages.value {
+            let mut resources = PdfDictionary::new();
+            let mut colorspaces = PdfDictionary::new();
+            colorspaces.insert("CS1", PdfValue::Name(PdfName::new("DeviceRGB")));
+            resources.insert("ColorSpace", PdfValue::Dictionary(colorspaces));
+            dict.insert("Resources", PdfValue::Dictionary(resources));
+        }
+
+        let report = validator.validate(&document);
+        assert!(has_issue(&report, "PDF_A_COLOR_SPACE"));
+    }
+
+    #[test]
     fn test_pdfa_font_validation() {
         let validator = PdfA1bValidator::new().with_strict_mode(false);
         let mut document = create_test_document();
