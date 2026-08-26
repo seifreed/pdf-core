@@ -1,9 +1,8 @@
 # Compliance Scope
 
 The validators in this repository are experimental preflight checks. They are
-not conformance claims and have not been compared against veraPDF. A report
-with no findings means only that the implemented checks did not find a
-violation.
+not conformance claims. A report with no findings means only that the
+implemented checks did not find a violation.
 
 ## Feature Matrix
 
@@ -27,5 +26,7 @@ violation.
 - Add positive and negative fixtures for every published rule.
 - Run the same fixtures through a pinned veraPDF release and record
   pass/fail/divergence results.
+- Use `VERAPDF_BIN=/path/to/verapdf cargo test --test verapdf_tests` to run the
+  optional acceptance comparison against the checked-in corpus.
 - Publish the exact profile, rule coverage, parser mode, and corpus revision
   with every report.
