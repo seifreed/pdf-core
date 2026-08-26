@@ -775,10 +775,7 @@ impl RecoveryStrategy for StructureRepairStrategy {
         // 3. Fix array structures
         modified |= self.repair_arrays(&mut data);
 
-        // 4. Reconstruct missing object headers
-        modified |= self.reconstruct_object_headers(&mut data);
-
-        // 5. Fix cross-reference inconsistencies
+        // 4. Fix cross-reference inconsistencies
         modified |= self.fix_cross_reference_issues(&mut data);
 
         Ok(RecoveryResult {
@@ -920,65 +917,6 @@ impl StructureRepairStrategy {
         }
 
         modified
-    }
-
-    fn reconstruct_object_headers(&self, data: &mut Vec<u8>) -> bool {
-        let mut modified = false;
-        let mut pos = 0;
-
-        while pos < data.len() {
-            // Look for orphaned content that should be objects
-            if let Some(dict_start) = find_pattern(&data[pos..], b"<<") {
-                let abs_pos = pos + dict_start;
-
-                // Check if this dictionary has an object header
-                let check_start = abs_pos.saturating_sub(50);
-                let has_header = find_pattern(&data[check_start..abs_pos], b" obj").is_some();
-
-                if !has_header {
-                    // Generate a synthetic object header
-                    let obj_num = (abs_pos / 100) + 1; // Simple object numbering
-                    let header = format!("{} 0 obj\n", obj_num);
-                    data.splice(abs_pos..abs_pos, header.bytes());
-                    modified = true;
-
-                    // Look for the end of this dictionary and add endobj
-                    if let Some(dict_end) = self.find_dictionary_end(&data[abs_pos..]) {
-                        let end_pos = abs_pos + dict_end;
-                        data.splice(end_pos..end_pos, b"\nendobj\n".iter().cloned());
-                        modified = true;
-                    }
-                }
-
-                pos = abs_pos + 2;
-            } else {
-                break;
-            }
-        }
-
-        modified
-    }
-
-    fn find_dictionary_end(&self, data: &[u8]) -> Option<usize> {
-        let mut dict_depth = 0;
-        let mut pos = 0;
-
-        while pos < data.len().saturating_sub(1) {
-            if pos < data.len() - 1 && data[pos] == b'<' && data[pos + 1] == b'<' {
-                dict_depth += 1;
-                pos += 2;
-            } else if pos < data.len() - 1 && data[pos] == b'>' && data[pos + 1] == b'>' {
-                dict_depth -= 1;
-                if dict_depth == 0 {
-                    return Some(pos + 2);
-                }
-                pos += 2;
-            } else {
-                pos += 1;
-            }
-        }
-
-        None
     }
 
     fn fix_cross_reference_issues(&self, data: &mut Vec<u8>) -> bool {
