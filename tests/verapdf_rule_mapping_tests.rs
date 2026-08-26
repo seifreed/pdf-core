@@ -92,6 +92,10 @@ const PDFUA_CASES: &[(&str, &str, bool)] = &[
 
 const PDFUA_VERAPDF_CASES: &[(&str, &str)] = &[
     (
+        "verapdf-pdfua-1/7.1 General/7.1-t11-fail-a.pdf",
+        "ISO 14289-1:2014:7.1:11",
+    ),
+    (
         "verapdf-pdfua-1/7.3 Graphics/7.3-t01-fail-a.pdf",
         "ISO 14289-1:2014:7.3:1",
     ),
