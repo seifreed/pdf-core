@@ -126,17 +126,7 @@ fn parse_reference(input: &[u8]) -> IResult<&[u8], PdfValue> {
 }
 
 pub fn parse_indirect_object(input: &[u8]) -> IResult<&[u8], (ObjectId, PdfValue)> {
-    let (input, obj_num) = integer(input)?;
-    let (input, _) = skip_whitespace(input)?;
-    let (input, gen_num) = integer(input)?;
-    let (input, _) = skip_whitespace(input)?;
-    let (input, _) = tag(b"obj")(input)?;
-    if obj_num < 0 || gen_num < 0 || obj_num > u32::MAX as i64 || gen_num > u16::MAX as i64 {
-        return Err(nom::Err::Failure(nom::error::Error::new(
-            input,
-            nom::error::ErrorKind::Verify,
-        )));
-    }
+    let (input, obj_id) = parse_indirect_object_header(input)?;
     let (input, _) = skip_whitespace_and_comments(input)?;
     let (input, value) = parse_value(input)?;
     let (input, _) = skip_whitespace_and_comments(input)?;
@@ -152,10 +142,22 @@ pub fn parse_indirect_object(input: &[u8]) -> IResult<&[u8], (ObjectId, PdfValue
     let (input, _) = skip_whitespace_and_comments(input)?;
     let (input, _) = tag(b"endobj")(input)?;
 
-    Ok((
-        input,
-        (ObjectId::new(obj_num as u32, gen_num as u16), value),
-    ))
+    Ok((input, (obj_id, value)))
+}
+
+pub(crate) fn parse_indirect_object_header(input: &[u8]) -> IResult<&[u8], ObjectId> {
+    let (input, obj_num) = integer(input)?;
+    let (input, _) = skip_whitespace(input)?;
+    let (input, gen_num) = integer(input)?;
+    let (input, _) = skip_whitespace(input)?;
+    let (input, _) = tag(b"obj")(input)?;
+    if obj_num < 0 || gen_num < 0 || obj_num > u32::MAX as i64 || gen_num > u16::MAX as i64 {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Verify,
+        )));
+    }
+    Ok((input, ObjectId::new(obj_num as u32, gen_num as u16)))
 }
 
 pub fn parse_indirect_stream_prefix(input: &[u8]) -> IResult<&[u8], (ObjectId, PdfDictionary)> {

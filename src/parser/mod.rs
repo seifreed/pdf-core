@@ -215,6 +215,13 @@ impl PdfParser {
     /// # Errors
     /// Returns `AstError::ParseError` if the object cannot be parsed
     pub fn parse_object(&self, input: &[u8]) -> AstResult<PdfValue> {
+        if self.mode == ParseMode::Strict
+            && object_parser::parse_indirect_object_header(input).is_ok()
+        {
+            return object_parser::parse_indirect_object(input)
+                .map(|(_, (_, value))| value)
+                .map_err(|e| AstError::ParseError(format!("{:?}", e)));
+        }
         if let Ok((_, (_, value))) = object_parser::parse_indirect_object(input) {
             return Ok(value);
         }

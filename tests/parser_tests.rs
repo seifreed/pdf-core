@@ -426,6 +426,14 @@ mod parser_tests {
     }
 
     #[test]
+    fn strict_parse_object_does_not_hide_malformed_indirect_objects() {
+        let error = PdfParser::strict()
+            .parse_object(b"7 0 obj\n42\n")
+            .expect_err("strict mode must reject a truncated indirect object");
+        assert!(!error.to_string().is_empty());
+    }
+
+    #[test]
     fn forensic_mode_preserves_recovery_evidence() {
         let parser = PdfParser::forensic();
         let document = parser
