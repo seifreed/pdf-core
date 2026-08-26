@@ -263,23 +263,38 @@ pub struct GraphDeserializer;
 
 impl GraphDeserializer {
     pub fn deserialize(serialized: SerializableGraph) -> Result<PdfAstGraph, String> {
-        let major = serialized
-            .metadata
-            .serialization_version
-            .split('.')
-            .next()
-            .ok_or_else(|| "Missing serialization version".to_string())?;
-        if major != "1" {
+        if serialized.metadata.serialization_version != AST_SCHEMA_VERSION {
             return Err(format!(
-                "Unsupported AST serialization major version: {}",
-                serialized.metadata.serialization_version
+                "Unsupported AST serialization version: {}; expected {}",
+                serialized.metadata.serialization_version, AST_SCHEMA_VERSION
             ));
         }
+        if serialized.metadata.node_count != serialized.nodes.len() {
+            return Err(format!(
+                "AST node count mismatch: metadata={}, actual={}",
+                serialized.metadata.node_count,
+                serialized.nodes.len()
+            ));
+        }
+        if serialized.metadata.edge_count != serialized.edges.len() {
+            return Err(format!(
+                "AST edge count mismatch: metadata={}, actual={}",
+                serialized.metadata.edge_count,
+                serialized.edges.len()
+            ));
+        }
+
         let mut ast = PdfAstGraph::new();
         let mut id_map: HashMap<usize, NodeId> = HashMap::new();
 
         // First pass: create all nodes
         for serialized_node in &serialized.nodes {
+            if id_map.contains_key(&serialized_node.id) {
+                return Err(format!(
+                    "Duplicate serialized node ID: {}",
+                    serialized_node.id
+                ));
+            }
             let node_type =
                 Self::parse_node_type(&serialized_node.node_type, serialized_node.object_id)?;
             let value = Self::deserialize_value(&serialized_node.value)?;
@@ -303,9 +318,10 @@ impl GraphDeserializer {
 
         // Set root if it exists
         if let Some(root_serial_id) = serialized.root {
-            if let Some(&root_id) = id_map.get(&root_serial_id) {
-                ast.set_root(root_id);
-            }
+            let root_id = id_map
+                .get(&root_serial_id)
+                .ok_or_else(|| format!("Invalid root node ID: {}", root_serial_id))?;
+            ast.set_root(*root_id);
         }
 
         Ok(ast)
@@ -731,6 +747,44 @@ mod tests {
 
         let error = GraphDeserializer::deserialize(graph).unwrap_err();
         assert!(error.contains("missing its object_id"));
+    }
+
+    #[test]
+    fn rejects_unsupported_schema_versions() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.create_node(NodeType::Root, PdfValue::Null);
+        ast.set_root(root_id);
+        let mut graph = SerializableGraph::from_ast(&ast);
+
+        for version in ["1", "1.0.0", "1.2.0", "2.0.0"] {
+            graph.metadata.serialization_version = version.to_string();
+            let error = GraphDeserializer::deserialize(graph.clone()).unwrap_err();
+            assert!(error.contains("Unsupported AST serialization version"));
+        }
+    }
+
+    #[test]
+    fn rejects_inconsistent_graph_metadata_and_topology() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.create_node(NodeType::Root, PdfValue::Null);
+        ast.set_root(root_id);
+        let graph = SerializableGraph::from_ast(&ast);
+
+        let mut count_mismatch = graph.clone();
+        count_mismatch.metadata.node_count += 1;
+        let error = GraphDeserializer::deserialize(count_mismatch).unwrap_err();
+        assert!(error.contains("node count mismatch"));
+
+        let mut duplicate_id = graph.clone();
+        duplicate_id.nodes.push(duplicate_id.nodes[0].clone());
+        duplicate_id.metadata.node_count += 1;
+        let error = GraphDeserializer::deserialize(duplicate_id).unwrap_err();
+        assert!(error.contains("Duplicate serialized node ID"));
+
+        let mut invalid_root = graph;
+        invalid_root.root = Some(99);
+        let error = GraphDeserializer::deserialize(invalid_root).unwrap_err();
+        assert!(error.contains("Invalid root node ID"));
     }
 
     #[test]
