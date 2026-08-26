@@ -1,17 +1,31 @@
 use crate::ast::document::{NameTree, NameTreeNode};
 use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
 use crate::parser::reference_resolver::ObjectNodeMap;
+use crate::performance::ResourceBudget;
 use crate::types::{PdfArray, PdfDictionary, PdfValue};
 use std::collections::BTreeMap;
 
 pub struct NameTreeParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
+    budget: ResourceBudget,
 }
 
 impl<'a> NameTreeParser<'a> {
     pub fn new(ast: &'a mut PdfAstGraph, resolver: &'a ObjectNodeMap) -> Self {
-        NameTreeParser { ast, resolver }
+        Self::new_with_budget(ast, resolver, &ResourceBudget::default())
+    }
+
+    pub fn new_with_budget(
+        ast: &'a mut PdfAstGraph,
+        resolver: &'a ObjectNodeMap,
+        budget: &ResourceBudget,
+    ) -> Self {
+        NameTreeParser {
+            ast,
+            resolver,
+            budget: budget.clone(),
+        }
     }
 
     pub fn parse_names_dictionary(&mut self, names_dict: &PdfDictionary) -> NameTree {
@@ -285,7 +299,7 @@ impl<'a> NameTreeParser<'a> {
                 match &node.value {
                     PdfValue::Stream(stream) => {
                         // JavaScript code in stream
-                        if let Ok(js_code) = stream.decode() {
+                        if let Ok(js_code) = stream.decode_with_budget(&self.budget) {
                             if let Ok(js_str) = String::from_utf8(js_code) {
                                 js_entries.push((name.clone(), js_str));
                             }
@@ -296,7 +310,7 @@ impl<'a> NameTreeParser<'a> {
                         if let Some(PdfValue::String(js)) = dict.get("JS") {
                             js_entries.push((name.clone(), js.to_string_lossy()));
                         } else if let Some(PdfValue::Stream(js_stream)) = dict.get("JS") {
-                            if let Ok(js_code) = js_stream.decode() {
+                            if let Ok(js_code) = js_stream.decode_with_budget(&self.budget) {
                                 if let Ok(js_str) = String::from_utf8(js_code) {
                                     js_entries.push((name.clone(), js_str));
                                 }
@@ -399,6 +413,35 @@ impl<'a> NameTreeParser<'a> {
         }
 
         files
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{AstNode, NodeId};
+
+    #[test]
+    fn javascript_names_use_the_shared_decode_budget() {
+        let mut ast = PdfAstGraph::new();
+        let node_id = ast.add_node(AstNode::new(
+            NodeId(0),
+            NodeType::Unknown,
+            PdfValue::Stream(crate::types::PdfStream::new(
+                PdfDictionary::new(),
+                b"alert".to_vec(),
+            )),
+        ));
+        let tree = NameTreeNode {
+            names: vec![("script".to_string(), node_id)],
+            kids: Vec::new(),
+            limits: None,
+        };
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 4, 4, 10, 1, 1, 1, 1);
+        let mut parser = NameTreeParser::new_with_budget(&mut ast, &resolver, &budget);
+
+        assert!(parser.parse_javascript_names(&tree).is_empty());
     }
 }
 

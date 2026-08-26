@@ -1,5 +1,6 @@
 use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
 use crate::parser::reference_resolver::ObjectNodeMap;
+use crate::performance::ResourceBudget;
 use crate::types::{PdfDictionary, PdfStream, PdfValue};
 
 /// Experimental PDF Function parser for the supported function types.
@@ -51,11 +52,24 @@ pub struct PostScriptFunction {
 pub struct FunctionParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
+    budget: ResourceBudget,
 }
 
 impl<'a> FunctionParser<'a> {
     pub fn new(ast: &'a mut PdfAstGraph, resolver: &'a ObjectNodeMap) -> Self {
-        FunctionParser { ast, resolver }
+        Self::new_with_budget(ast, resolver, &ResourceBudget::default())
+    }
+
+    pub fn new_with_budget(
+        ast: &'a mut PdfAstGraph,
+        resolver: &'a ObjectNodeMap,
+        budget: &ResourceBudget,
+    ) -> Self {
+        FunctionParser {
+            ast,
+            resolver,
+            budget: budget.clone(),
+        }
     }
 
     pub fn parse_function(&mut self, func_value: &PdfValue) -> Option<(NodeId, PdfFunction)> {
@@ -355,7 +369,7 @@ impl<'a> FunctionParser<'a> {
     }
 
     fn parse_samples(&self, stream: &PdfStream, func: &SampledFunction) -> Vec<f64> {
-        let data = match stream.decode() {
+        let data = match stream.decode_with_budget(&self.budget) {
             Ok(d) => d,
             Err(_) => return Vec::new(),
         };
@@ -402,7 +416,7 @@ impl<'a> FunctionParser<'a> {
     }
 
     fn extract_postscript_code(&self, stream: &PdfStream) -> String {
-        match stream.decode() {
+        match stream.decode_with_budget(&self.budget) {
             Ok(data) => String::from_utf8_lossy(&data).to_string(),
             Err(_) => String::new(),
         }

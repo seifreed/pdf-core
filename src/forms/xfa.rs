@@ -140,10 +140,6 @@ fn parse_xfa_packet(
     parse_xfa_from_bytes_with_budget(name, &data, budget)
 }
 
-fn parse_xfa_from_bytes(name: &str, bytes: &[u8]) -> Result<Option<XfaPacket>, String> {
-    parse_xfa_from_bytes_with_budget(name, bytes, &ResourceBudget::default())
-}
-
 fn parse_xfa_from_bytes_with_budget(
     name: &str,
     bytes: &[u8],
@@ -337,9 +333,10 @@ mod tests {
     #[test]
     fn parse_xfa_packet_from_string() {
         let xml = PdfString::new_literal(b"<xfa><data>ok</data></xfa>");
-        let packet = parse_xfa_from_bytes("form", xml.as_bytes())
-            .unwrap()
-            .unwrap();
+        let packet =
+            parse_xfa_from_bytes_with_budget("form", xml.as_bytes(), &ResourceBudget::default())
+                .unwrap()
+                .unwrap();
         assert_eq!(packet.name, "form");
         assert_eq!(packet.root.name, "xfa");
     }
@@ -349,9 +346,10 @@ mod tests {
         let xml = PdfString::new_literal(
             b"<xfa><form><event><script>app.alert('x')</script></event></form></xfa>",
         );
-        let packet = parse_xfa_from_bytes("form", xml.as_bytes())
-            .unwrap()
-            .unwrap();
+        let packet =
+            parse_xfa_from_bytes_with_budget("form", xml.as_bytes(), &ResourceBudget::default())
+                .unwrap()
+                .unwrap();
         let doc = XfaDocument {
             packets: vec![packet],
         };
