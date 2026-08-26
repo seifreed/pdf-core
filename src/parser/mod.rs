@@ -21,7 +21,7 @@ pub mod struct_tree;
 pub mod text_extraction;
 pub mod xref;
 
-use crate::ast::{AstError, AstResult, PdfDocument};
+use crate::ast::{AstError, AstResult, ParseDiagnostic, PdfDocument};
 use crate::performance::PerformanceLimits;
 use crate::types::PdfValue;
 use std::io::{BufRead, Read, Seek};
@@ -242,8 +242,17 @@ impl PdfParser {
     /// # Errors
     /// Returns `AstError` when an object cannot be parsed within the configured error policy.
     pub fn parse_objects(&self, input: &[u8]) -> AstResult<Vec<PdfValue>> {
-        // Parse multiple objects from input
+        self.parse_objects_with_diagnostics(input)
+            .map(|(objects, _)| objects)
+    }
+
+    /// Parses multiple objects and returns structured recovery diagnostics.
+    pub fn parse_objects_with_diagnostics(
+        &self,
+        input: &[u8],
+    ) -> AstResult<(Vec<PdfValue>, Vec<ParseDiagnostic>)> {
         let mut objects = Vec::new();
+        let mut diagnostics = Vec::new();
         let mut remaining = input;
         let mut errors = 0;
 
@@ -271,12 +280,22 @@ impl PdfParser {
                             err
                         )));
                     }
+                    let bytes_consumed = input.len().saturating_sub(remaining.len()) as u64;
+                    diagnostics.push(ParseDiagnostic {
+                        object_id: None,
+                        offset: Some(bytes_consumed),
+                        error_code: "standalone_object_parse".to_string(),
+                        recovery_action: "returned_partial_sequence".to_string(),
+                        confidence: 0.0,
+                        bytes_consumed,
+                        message: format!("Failed to parse object: {:?}", err),
+                    });
                     break;
                 }
             }
         }
 
-        Ok(objects)
+        Ok((objects, diagnostics))
     }
 }
 

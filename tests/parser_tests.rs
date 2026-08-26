@@ -423,6 +423,12 @@ mod parser_tests {
             PdfParser::new().parse_objects(b"1 2 nope").unwrap().len(),
             2
         );
+        let (objects, diagnostics) = PdfParser::new()
+            .parse_objects_with_diagnostics(b"1 2 nope")
+            .unwrap();
+        assert_eq!(objects.len(), 2);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].recovery_action, "returned_partial_sequence");
     }
 
     #[test]
