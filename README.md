@@ -29,7 +29,7 @@
 
 | Feature | Description |
 |---------|-------------|
-| **PDF parser** | Objects, streams, xref tables, linearization, and incremental updates; corpus coverage is still pending |
+| **PDF parser** | Objects, streams, xref tables, linearization, and incremental updates; corpus coverage is limited |
 | **Rich AST** | Typed nodes for common PDF structures; schema/API are experimental |
 | **Security Analysis** | JavaScript, forms, embedded files, and suspicious actions |
 | **PDF/A Validation** | Experimental preflight checks for selected requirements |
