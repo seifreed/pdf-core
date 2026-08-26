@@ -14,6 +14,27 @@ use nom::{
 
 type XRefParseResult<'a> = IResult<&'a [u8], (Vec<(ObjectId, XRefEntry)>, Option<PdfStream>)>;
 
+fn parse_u16(input: &[u8]) -> Result<u16, &'static str> {
+    std::str::from_utf8(input)
+        .map_err(|_| "invalid xref number")?
+        .parse::<u16>()
+        .map_err(|_| "xref number out of range")
+}
+
+fn parse_u32(input: &[u8]) -> Result<u32, &'static str> {
+    std::str::from_utf8(input)
+        .map_err(|_| "invalid xref number")?
+        .parse::<u32>()
+        .map_err(|_| "xref number out of range")
+}
+
+fn parse_u64(input: &[u8]) -> Result<u64, &'static str> {
+    std::str::from_utf8(input)
+        .map_err(|_| "invalid xref number")?
+        .parse::<u64>()
+        .map_err(|_| "xref number out of range")
+}
+
 pub fn parse_xref_table(input: &[u8]) -> IResult<&[u8], Vec<(ObjectId, XRefEntry)>> {
     let (input, _) = tag(b"xref")(input)?;
     let (input, _) = multispace0(input)?;
@@ -44,26 +65,18 @@ fn parse_xref_section(input: &[u8]) -> IResult<&[u8], Vec<(ObjectId, XRefEntry)>
 }
 
 fn parse_xref_subsection_header(input: &[u8]) -> IResult<&[u8], (u32, u32)> {
-    let (input, start_obj) = map_res(digit1, |s: &[u8]| {
-        std::str::from_utf8(s).unwrap().parse::<u32>()
-    })(input)?;
+    let (input, start_obj) = map_res(digit1, parse_u32)(input)?;
     let (input, _) = space1(input)?;
-    let (input, count) = map_res(digit1, |s: &[u8]| {
-        std::str::from_utf8(s).unwrap().parse::<u32>()
-    })(input)?;
+    let (input, count) = map_res(digit1, parse_u32)(input)?;
     let (input, _) = multispace0(input)?;
 
     Ok((input, (start_obj, count)))
 }
 
 fn parse_xref_entry(input: &[u8]) -> IResult<&[u8], XRefEntry> {
-    let (input, offset) = map_res(take_while1(|c: u8| c.is_ascii_digit()), |s: &[u8]| {
-        std::str::from_utf8(s).unwrap().parse::<u64>()
-    })(input)?;
+    let (input, offset) = map_res(take_while1(|c: u8| c.is_ascii_digit()), parse_u64)(input)?;
     let (input, _) = space1(input)?;
-    let (input, generation) = map_res(take_while1(|c: u8| c.is_ascii_digit()), |s: &[u8]| {
-        std::str::from_utf8(s).unwrap().parse::<u16>()
-    })(input)?;
+    let (input, generation) = map_res(take_while1(|c: u8| c.is_ascii_digit()), parse_u16)(input)?;
     let (input, _) = space1(input)?;
     let (input, status) = alt((char('n'), char('f')))(input)?;
     let (input, _) = multispace0(input)?;
@@ -452,7 +465,7 @@ impl XRefEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_xref_stream;
+    use super::{parse_xref_stream, parse_xref_table};
     use crate::performance::PerformanceLimits;
     use crate::types::{PdfArray, PdfDictionary, PdfStream, PdfValue};
 
@@ -512,6 +525,15 @@ mod tests {
         let error = parse_xref_stream(&stream, &PerformanceLimits::default())
             .expect_err("wide field must be rejected");
         assert!(error.contains("8 bytes"));
+    }
+
+    #[test]
+    fn rejects_xref_numeric_overflow_without_panicking() {
+        assert!(
+            parse_xref_table(b"xref\n999999999999999999999999 1\n0000000000 00000 n\n").is_err()
+        );
+        assert!(parse_xref_table(b"xref\n0 1\n999999999999999999999999 00000 n\n").is_err());
+        assert!(parse_xref_table(b"xref\n0 1\n0000000000 99999 n\n").is_err());
     }
 
     #[test]
