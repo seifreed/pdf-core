@@ -79,6 +79,9 @@ fn corpus_acceptance_matches_reference_parsers() {
     let mut checked = 0;
     let started = Instant::now();
     let mut total_bytes = 0u64;
+    let mut core_accepted = 0;
+    let mut qpdf_accepted = 0;
+    let mut mutool_accepted = 0;
 
     let mut divergences = 0;
     for (path, expected_sha256) in files {
@@ -106,6 +109,9 @@ fn corpus_acceptance_matches_reference_parsers() {
             .status()
             .expect("mutool should run")
             .success();
+        core_accepted += core_accepts as usize;
+        qpdf_accepted += qpdf_accepts as usize;
+        mutool_accepted += mutool_accepts as usize;
         if core_accepts != qpdf_accepts || core_accepts != mutool_accepts {
             divergences += 1;
             eprintln!(
@@ -121,9 +127,12 @@ fn corpus_acceptance_matches_reference_parsers() {
 
     assert!(checked > 0, "differential test checked no corpus files");
     eprintln!(
-        "differential metrics: files={}, bytes={}, divergences={}, wall_ms={}",
+        "differential metrics: files={}, bytes={}, pdf_core_accepts={}, qpdf_accepts={}, mutool_accepts={}, divergences={}, wall_ms={}",
         checked,
         total_bytes,
+        core_accepted,
+        qpdf_accepted,
+        mutool_accepted,
         divergences,
         started.elapsed().as_millis()
     );
