@@ -59,4 +59,4 @@ startxref
 
 if __name__ == "__main__":
     test_basic_functionality()
-    print("\n✅ All tests completed!")
+    print("\nAll tests completed!")

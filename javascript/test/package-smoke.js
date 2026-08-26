@@ -9,9 +9,15 @@ const temp = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-ast-package-smoke-"));
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 
 function run(command, args, cwd) {
-  const result = spawnSync(command, args, { cwd, encoding: "utf8" });
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+    shell: process.platform === "win32",
+  });
   if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed:\n${result.stdout}\n${result.stderr}`);
+    throw new Error(
+      `${command} ${args.join(" ")} failed:\n${result.stdout ?? ""}\n${result.stderr ?? result.error ?? ""}`,
+    );
   }
   return result.stdout.trim();
 }
