@@ -73,7 +73,7 @@ then run against those serialized bytes.
 The latest local parser gate (2026-08-26 UTC, corpus commit
 `9979a2a8618dcdf23ad3f20c760c1f06e5b36fe6`) processed 2,809 files and
 161,227,640 bytes without a panic. It recorded 577 controlled parse errors,
-`peak_rss_kib=202240`, and p50/p95/p99 latencies of 3/53/129 ms. Reproduce it
+`peak_rss_kib=197168`, and p50/p95/p99 latencies of 3/57/150 ms. Reproduce it
 with `PDF_EXTERNAL_CORPUS=/path/to/pdf-core-corpus/fixtures PDF_EXTERNAL_MAX_FILES=3000 cargo test --test external_corpus_tests --locked -- --test-threads=1 --nocapture`.
 
 ## Required Before Conformance Claims
