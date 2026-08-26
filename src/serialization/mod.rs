@@ -16,6 +16,8 @@ pub struct SerializableDocument {
     pub xref_entries: HashMap<String, SerializableXRefEntry>,
     #[serde(default)]
     pub revisions: Vec<SerializableRevision>,
+    #[serde(default)]
+    pub diagnostics: Vec<crate::ast::ParseDiagnostic>,
     pub metadata: SerializableDocumentMetadata,
 }
 
@@ -751,6 +753,7 @@ impl SerializableDocument {
                         .collect(),
                 })
                 .collect(),
+            diagnostics: document.diagnostics.clone(),
             metadata: SerializableDocumentMetadata {
                 file_size: document.metadata.file_size,
                 linearized: document.metadata.linearized,
@@ -980,6 +983,15 @@ mod tests {
     fn test_document_serialization() {
         let version = PdfVersion::new(1, 7);
         let mut document = PdfDocument::new(version);
+        document.diagnostics.push(crate::ast::ParseDiagnostic {
+            object_id: Some(ObjectId::new(7, 0)),
+            offset: Some(123),
+            error_code: "xref_missing_object".to_string(),
+            recovery_action: "xref recovery".to_string(),
+            confidence: 0.5,
+            bytes_consumed: 42,
+            message: "recovered missing object".to_string(),
+        });
         document.revisions.push(DocumentRevision {
             revision_number: 1,
             xref_offset: 123,
@@ -999,6 +1011,9 @@ mod tests {
         assert_eq!(deserialized.revisions.len(), 1);
         assert_eq!(deserialized.revisions[0].xref_offset, 123);
         assert_eq!(deserialized.revisions[0].added_objects, vec![(2, 0)]);
+        assert_eq!(deserialized.diagnostics.len(), 1);
+        assert_eq!(deserialized.diagnostics[0].recovery_action, "xref recovery");
+        assert_eq!(deserialized.diagnostics[0].bytes_consumed, 42);
         deserialized.deserialize_ast().unwrap();
 
         let cbor = SerializableDocument::from_document(&document)
