@@ -84,10 +84,11 @@ The same corpus was run through the tolerant parser and the installed qpdf and
 MuPDF reference tools. It processed all 2,809 files and recorded 2,809,
 2,419, and 2,801 accepted files respectively, with 397 observed differences;
 396 were disagreements between the reference tools and one was a consensus
-difference against both. The run took 269,069 ms with p50/p95/p99 latencies of
-33/115/254 ms. These differences are diagnostic evidence, not a conformance
-claim: the corpus intentionally includes malformed files and the tools use
-different recovery policies. Reproduce it with
+difference against both. The latest local run took 660,112 ms with
+`peak_rss_kib=393904` and p50/p95/p99 latencies of 44/274/796 ms. These
+differences are diagnostic evidence, not a conformance claim: the corpus
+intentionally includes malformed files and the tools use different recovery
+policies. Reproduce it with
 `PDF_EXTERNAL_CORPUS=/path/to/pdf-core-corpus/fixtures PDF_EXTERNAL_MAX_FILES=3000 cargo test --test differential_tests --locked -- --test-threads=1 --nocapture`.
 
 The matching local veraPDF 1.30.2 comparison (same date and corpus revision)
