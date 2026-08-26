@@ -443,13 +443,13 @@ impl<'a> CMapParser<'a> {
 
     fn hex_to_bytes(&self, hex: &str) -> Option<Vec<u8>> {
         let hex = hex.trim_start_matches('<').trim_end_matches('>');
-        if !hex.len().is_multiple_of(2) {
+        if !hex.is_ascii() || !hex.len().is_multiple_of(2) {
             return None;
         }
 
-        let mut bytes = Vec::new();
-        for i in (0..hex.len()).step_by(2) {
-            let byte_str = &hex[i..i + 2];
+        let mut bytes = Vec::with_capacity(hex.len() / 2);
+        for pair in hex.as_bytes().chunks_exact(2) {
+            let byte_str = std::str::from_utf8(pair).ok()?;
             if let Ok(byte) = u8::from_str_radix(byte_str, 16) {
                 bytes.push(byte);
             } else {
@@ -627,5 +627,14 @@ mod tests {
         let cmap = parser.parse_cmap_data(data).expect("CMap should parse");
 
         assert_eq!(parser.decode_bytes(&cmap, b"\x01\x02"), "AB");
+    }
+
+    #[test]
+    fn rejects_non_ascii_hex_without_panicking() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let parser = CMapParser::new(&mut ast, &resolver);
+
+        assert!(parser.hex_to_bytes("\u{fffd}0").is_none());
     }
 }
