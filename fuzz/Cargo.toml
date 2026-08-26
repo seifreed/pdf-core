@@ -53,4 +53,39 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "object_streams"
+path = "fuzz_targets/object_streams.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cmap"
+path = "fuzz_targets/cmap.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xmp"
+path = "fuzz_targets/xmp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pkcs7"
+path = "fuzz_targets/pkcs7.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "certificates"
+path = "fuzz_targets/certificates.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
