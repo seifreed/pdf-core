@@ -434,6 +434,16 @@ mod parser_tests {
     }
 
     #[test]
+    fn parse_objects_consumes_indirect_objects_as_units() {
+        let objects = PdfParser::strict()
+            .parse_objects(b"7 0 obj\n42\nendobj\n8 0 obj\nnull\nendobj")
+            .expect("valid indirect objects should parse");
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[0], PdfValue::Integer(42));
+        assert_eq!(objects[1], PdfValue::Null);
+    }
+
+    #[test]
     fn forensic_mode_preserves_recovery_evidence() {
         let parser = PdfParser::forensic();
         let document = parser

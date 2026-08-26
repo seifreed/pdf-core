@@ -215,14 +215,17 @@ impl PdfParser {
     /// # Errors
     /// Returns `AstError::ParseError` if the object cannot be parsed
     pub fn parse_object(&self, input: &[u8]) -> AstResult<PdfValue> {
+        let object_input = crate::parser::lexer::skip_whitespace_and_comments(input)
+            .map(|(remaining, _)| remaining)
+            .unwrap_or(input);
         if self.mode == ParseMode::Strict
-            && object_parser::parse_indirect_object_header(input).is_ok()
+            && object_parser::parse_indirect_object_header(object_input).is_ok()
         {
-            return object_parser::parse_indirect_object(input)
+            return object_parser::parse_indirect_object(object_input)
                 .map(|(_, (_, value))| value)
                 .map_err(|e| AstError::ParseError(format!("{:?}", e)));
         }
-        if let Ok((_, (_, value))) = object_parser::parse_indirect_object(input) {
+        if let Ok((_, (_, value))) = object_parser::parse_indirect_object(object_input) {
             return Ok(value);
         }
         self.parse_value(input)
@@ -245,7 +248,17 @@ impl PdfParser {
         let mut errors = 0;
 
         while !remaining.is_empty() {
-            match object_parser::parse_value(remaining) {
+            let object_input = crate::parser::lexer::skip_whitespace_and_comments(remaining)
+                .map(|(remaining, _)| remaining)
+                .unwrap_or(remaining);
+            let parsed = if object_parser::parse_indirect_object_header(object_input).is_ok() {
+                object_parser::parse_indirect_object(object_input)
+                    .map(|(rest, (_, value))| (rest, value))
+            } else {
+                object_parser::parse_value(remaining)
+            };
+
+            match parsed {
                 Ok((rest, value)) => {
                     objects.push(value);
                     remaining = rest;
