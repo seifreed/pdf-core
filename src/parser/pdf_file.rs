@@ -25,7 +25,6 @@ const HEADER_BUFFER_SIZE: usize = 32;
 const HEADER_SEARCH_BUFFER_SIZE: usize = 1024;
 const XREF_TAIL_BUFFER_SIZE: i64 = 1024;
 const XREF_BUFFER_SIZE: usize = 65536;
-const XREF_LARGE_BUFFER_SIZE: usize = 262144;
 
 // PDF structure constants
 const MIN_PDF_SIZE: usize = 8;
@@ -469,10 +468,27 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn read_xref_buffer(&mut self, offset: u64) -> AstResult<Vec<u8>> {
+        let file_size = Self::read_file_size(&mut self.reader)?;
+        if offset >= file_size {
+            return Err(AstError::ParseError(format!(
+                "Xref offset {} is outside the file",
+                offset
+            )));
+        }
+        let remaining = file_size - offset;
+        if remaining > self.limits.budget.max_input_bytes {
+            return Err(AstError::ParseError(format!(
+                "Xref data exceeds resource limit of {} bytes",
+                self.limits.budget.max_input_bytes
+            )));
+        }
+
         self.reader.seek(SeekFrom::Start(offset))?;
-        let mut buffer = vec![0u8; XREF_LARGE_BUFFER_SIZE];
-        let n = self.reader.read(&mut buffer)?;
-        buffer.truncate(n);
+        let mut buffer = Vec::new();
+        self.reader
+            .by_ref()
+            .take(remaining)
+            .read_to_end(&mut buffer)?;
         Ok(buffer)
     }
 
@@ -2924,5 +2940,21 @@ mod tests {
             panic!("expected stream");
         };
         assert_eq!(stream.raw_data(), Some(stream_data.as_slice()));
+    }
+
+    #[test]
+    fn reads_xref_data_beyond_the_legacy_buffer_size() {
+        let mut data = b"%PDF-1.7\n".to_vec();
+        data.resize(300 * 1024, b'x');
+        let parser = PdfFileParser::new_with_limits(
+            BufReader::new(Cursor::new(data.clone())),
+            ParseMode::Tolerant,
+            100,
+            PerformanceLimits::default(),
+        )
+        .expect("parser should initialize");
+        let mut parser = parser;
+        let buffer = parser.read_xref_buffer(0).expect("xref data should read");
+        assert_eq!(buffer.len(), data.len());
     }
 }
