@@ -333,7 +333,7 @@ impl PdfA1bValidator {
                 if let Some(annot_dict) = node.as_dict() {
                     if let Some(subtype) = annot_dict.get("Subtype").and_then(|v| v.as_name()) {
                         match subtype.without_slash() {
-                            "Movie" | "Sound" | "Screen" | "RichMedia" => {
+                            "3D" | "Movie" | "Sound" | "Screen" | "RichMedia" => {
                                 has_multimedia = true;
                                 break;
                             }

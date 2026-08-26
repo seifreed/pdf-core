@@ -344,6 +344,12 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                     Ok(node_id) => {
                         self.resolved_objects.insert(obj_id);
                         self.object_to_node.insert(obj_id, node_id);
+                        // Newly loaded indirect objects can contain references of their own.
+                        // Queue them immediately so nested resources are resolved transitively.
+                        let value = ast.get_node(node_id).map(|node| node.value.clone());
+                        if let Some(value) = value {
+                            self.collect_references_from_node(node_id, &value);
+                        }
                         node_id
                     }
                     Err(e) => {

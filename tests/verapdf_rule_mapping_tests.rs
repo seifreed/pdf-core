@@ -1,6 +1,10 @@
 use serde_json::Value;
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
+
+use pdf_ast::validation::pdfa::PdfA1bValidator;
+use pdf_ast::PdfParser;
 
 const CASES: &[(&str, &str)] = &[
     (
@@ -14,6 +18,21 @@ const CASES: &[(&str, &str)] = &[
     (
         "PDFA-1b/6.6 Actions/6.6.1 General/isartor-6-6-1-t01-fail-a.pdf",
         "ISO 19005-1:2005:6.6.1:1",
+    ),
+];
+
+const LOCAL_CASES: &[(&str, &str)] = &[
+    (
+        "PDFA-1b/6.3 Fonts/6.3.4 Embedded font programs/isartor-6-3-4-t01-fail-a.pdf",
+        "PDF_A_FONT_EMBEDDING",
+    ),
+    (
+        "PDFA-1b/6.5 Annotations/6.5.2 Annotation types/isartor-6-5-2-t01-fail-a.pdf",
+        "PDF_A_MULTIMEDIA",
+    ),
+    (
+        "PDFA-1b/6.6 Actions/6.6.1 General/isartor-6-6-1-t01-fail-f.pdf",
+        "PDF_A_JAVASCRIPT",
     ),
 ];
 
@@ -86,6 +105,35 @@ fn isartor_rules_match_verapdf_ids() {
                 ) == *expected_rule
             }),
             "veraPDF rule {expected_rule} missing"
+        );
+    }
+}
+
+#[test]
+fn local_pdfa_rules_match_serialized_isartor_cases() {
+    let Some(root) = corpus_root() else {
+        eprintln!("Skipping local PDF/A fixture mapping: corpus root is not configured");
+        return;
+    };
+    let parser = PdfParser::new();
+    let validator = PdfA1bValidator::new().with_strict_mode(false);
+
+    for (relative, expected_code) in LOCAL_CASES {
+        let path = root.join("isartor").join(relative);
+        let bytes = fs::read(&path).unwrap_or_else(|error| {
+            panic!("read local compliance fixture {}: {error}", path.display())
+        });
+        let document = parser.parse_bytes(&bytes).unwrap_or_else(|error| {
+            panic!("parse local compliance fixture {}: {error}", path.display())
+        });
+        let report = validator.validate(&document);
+        assert!(
+            report
+                .issues
+                .iter()
+                .any(|issue| issue.code == *expected_code),
+            "local rule {expected_code} missing for {}",
+            path.display()
         );
     }
 }
