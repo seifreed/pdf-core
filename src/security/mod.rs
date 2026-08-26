@@ -10,6 +10,7 @@ pub mod signatures;
 pub use report_output::{format_security_report, output_format_from_path, SecurityOutputFormat};
 
 use crate::ast::PdfAstGraph;
+use crate::performance::ResourceBudget;
 use serde::{Deserialize, Serialize};
 
 // Re-export hardening module
@@ -155,6 +156,10 @@ impl SecurityAnalyzer {
     /// # Returns
     /// A `SecurityInfo` struct containing validation results for detected indicators of compromise
     pub fn analyze(ast: &PdfAstGraph) -> SecurityInfo {
+        Self::analyze_with_budget(ast, &ResourceBudget::default())
+    }
+
+    pub fn analyze_with_budget(ast: &PdfAstGraph, budget: &ResourceBudget) -> SecurityInfo {
         let mut results = Vec::new();
 
         // Direct node-type indicators
@@ -270,7 +275,7 @@ impl SecurityAnalyzer {
 
             // Stream content scanning (decoded if possible)
             if let Some(stream) = node.value.as_stream() {
-                if let Ok(decoded) = stream.decode() {
+                if let Ok(decoded) = stream.decode_with_budget(budget) {
                     let sample = &decoded[..decoded.len().min(1024 * 1024)];
                     let text = String::from_utf8_lossy(sample);
                     if is_javascript_pattern(&text) {
@@ -393,7 +398,7 @@ impl SecurityAnalyzer {
         reader: &mut R,
         crypto_config: crate::crypto::CryptoConfig,
     ) -> SecurityInfo {
-        let mut info = Self::analyze(&document.ast);
+        let mut info = Self::analyze_with_budget(&document.ast, &document.budget);
         let mut verifier = crate::crypto::signature_verification::SignatureVerifier::new()
             .with_crypto_config(crypto_config);
 

@@ -77,6 +77,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             .map_err(|err| AstError::ParseError(err.to_string()))?;
 
         let mut document = PdfDocument::new(version);
+        document.budget = limits.budget.clone();
         document.metadata.file_size = Some(file_size);
         if mode.is_forensic() {
             document.forensic = Some(Default::default());

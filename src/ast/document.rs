@@ -1,12 +1,14 @@
 use crate::ast::linearization::LinearizationInfo;
 use crate::ast::{NodeId, NodeType, PdfAstGraph};
 use crate::forms::XfaDocument;
+use crate::performance::ResourceBudget;
 use crate::types::{ObjectId, PdfDictionary, PdfValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct PdfDocument {
+    pub budget: ResourceBudget,
     pub ast: PdfAstGraph,
     pub version: PdfVersion,
     pub catalog: Option<NodeId>,
@@ -155,6 +157,7 @@ impl PdfDocument {
     /// A new `PdfDocument` with an empty AST graph and default metadata
     pub fn new(version: PdfVersion) -> Self {
         PdfDocument {
+            budget: ResourceBudget::default(),
             ast: PdfAstGraph::new(),
             version,
             catalog: None,
