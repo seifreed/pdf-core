@@ -133,8 +133,9 @@ fn convert_issue(issue: ValidationIssue, document: &PdfDocument) -> Violation {
         .and_then(|id| document.ast.get_node(id))
         .and_then(|node| node.metadata.offset);
     let standard_reference = match issue.code.as_str() {
-        "PDF_A_FONT_EMBEDDING" => Some("ISO 19005-1:2005, 6.3.5"),
-        "PDF_A_MULTIMEDIA" | "PDF_A_JAVASCRIPT" => Some("ISO 19005-1:2005, 6.6"),
+        "PDF_A_FONT_EMBEDDING" => Some("ISO 19005-1:2005, 6.3.4"),
+        "PDF_A_MULTIMEDIA" => Some("ISO 19005-1:2005, 6.5.2"),
+        "PDF_A_JAVASCRIPT" => Some("ISO 19005-1:2005, 6.6.1"),
         "NO_TAGGED_STRUCTURE" | "STRUCT_ELEM_MISSING" => Some("ISO 14289-1:2014, 7.1"),
         "LANG_MISSING" | "LANG_EMPTY" => Some("ISO 14289-1:2014, 7.2"),
         _ => None,
@@ -225,7 +226,7 @@ mod tests {
         assert_eq!(violation.expected.as_deref(), Some("Embed the font"));
         assert_eq!(
             violation.standard_reference.as_deref(),
-            Some("ISO 19005-1:2005, 6.3.5")
+            Some("ISO 19005-1:2005, 6.3.4")
         );
     }
 }

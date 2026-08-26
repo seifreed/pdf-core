@@ -98,26 +98,37 @@ mod validation_tests {
         let has_embed_error = report2
             .issues
             .iter()
-            .any(|issue| issue.code.contains("FONT") && issue.message.contains("embed"));
+            .any(|issue| issue.code == "PDF_A_FONT_EMBEDDING");
         assert!(has_embed_error);
+    }
+
+    #[test]
+    fn fixture_pdfa_multimedia_rule_has_positive_and_negative_cases() {
+        let validator = PdfA1bValidator::new().with_strict_mode(false);
+        let clean_report = validator.validate(&create_test_document());
+        assert!(!has_issue(&clean_report, "PDF_A_MULTIMEDIA"));
+
+        let mut multimedia = create_test_document();
+        add_multimedia_annotation(&mut multimedia);
+        let report = validator.validate(&multimedia);
+        assert!(has_issue(&report, "PDF_A_MULTIMEDIA"));
     }
 
     #[test]
     fn test_pdfa_javascript_validation() {
         let validator = PdfA1bValidator::new().with_strict_mode(false);
-        let mut document = create_test_document();
+        let clean_report = validator.validate(&create_test_document());
+        assert!(!has_issue(&clean_report, "PDF_A_JAVASCRIPT"));
 
         // Add JavaScript action (should fail PDF/A-1b)
+        let mut document = create_test_document();
         add_javascript_action(&mut document);
 
         let report = validator.validate(&document);
         assert!(!report.is_valid);
 
         // Should have JavaScript-related error
-        let has_js_error = report.issues.iter().any(|issue| {
-            issue.code.contains("JAVASCRIPT") || issue.message.to_lowercase().contains("javascript")
-        });
-        assert!(has_js_error);
+        assert!(has_issue(&report, "PDF_A_JAVASCRIPT"));
     }
 
     #[test]
@@ -320,7 +331,63 @@ mod validation_tests {
         assert!(has_alt_issue, "Expected missing Alt text to be flagged");
     }
 
+    #[test]
+    fn fixture_pdfua_structure_rule_has_positive_and_negative_cases() {
+        let registry = SchemaRegistry::new();
+
+        let untagged = registry
+            .validate(&create_test_document(), "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(has_issue(&untagged, "NO_TAGGED_STRUCTURE"));
+
+        let mut missing_elements = create_test_document();
+        add_marked_struct_tree(&mut missing_elements);
+        let missing_elements = registry
+            .validate(&missing_elements, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(has_issue(&missing_elements, "STRUCT_ELEM_MISSING"));
+
+        let mut valid = create_test_document();
+        add_marked_struct_tree(&mut valid);
+        add_struct_elem_figure(&mut valid, true);
+        set_catalog_lang(&mut valid, b"en-US");
+        let valid = registry
+            .validate(&valid, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(!has_issue(&valid, "NO_TAGGED_STRUCTURE"));
+        assert!(!has_issue(&valid, "STRUCT_ELEM_MISSING"));
+    }
+
+    #[test]
+    fn fixture_pdfua_language_rule_has_positive_and_negative_cases() {
+        let registry = SchemaRegistry::new();
+
+        let missing = registry
+            .validate(&create_test_document(), "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(has_issue(&missing, "LANG_MISSING"));
+
+        let mut empty_document = create_test_document();
+        set_catalog_lang(&mut empty_document, b"");
+        let empty = registry
+            .validate(&empty_document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(has_issue(&empty, "LANG_EMPTY"));
+
+        let mut valid_document = create_test_document();
+        set_catalog_lang(&mut valid_document, b"en-US");
+        let valid = registry
+            .validate(&valid_document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(!has_issue(&valid, "LANG_MISSING"));
+        assert!(!has_issue(&valid, "LANG_EMPTY"));
+    }
+
     // Helper functions for creating test scenarios
+
+    fn has_issue(report: &pdf_ast::validation::ValidationReport, code: &str) -> bool {
+        report.issues.iter().any(|issue| issue.code == code)
+    }
 
     fn create_test_document() -> PdfDocument {
         let version = PdfVersion { major: 1, minor: 4 };
@@ -497,6 +564,38 @@ mod validation_tests {
             document
                 .ast
                 .add_edge(catalog_id, action_id, crate::ast::EdgeType::Reference);
+        }
+    }
+
+    fn add_multimedia_annotation(document: &mut PdfDocument) {
+        let annotation_value = PdfValue::Dictionary({
+            let mut dict = PdfDictionary::new();
+            dict.insert("Type", PdfValue::Name(PdfName::new("Annot")));
+            dict.insert("Subtype", PdfValue::Name(PdfName::new("Movie")));
+            dict
+        });
+        let annotation_id = document
+            .ast
+            .create_node(NodeType::Annotation, annotation_value);
+
+        if let Some(catalog_id) = document.catalog {
+            document
+                .ast
+                .add_edge(catalog_id, annotation_id, crate::ast::EdgeType::Reference);
+        }
+    }
+
+    fn set_catalog_lang(document: &mut PdfDocument, language: &[u8]) {
+        let catalog_id = document.catalog.expect("Catalog should exist");
+        let catalog = document
+            .ast
+            .get_node_mut(catalog_id)
+            .expect("Catalog node should exist");
+        if let PdfValue::Dictionary(dict) = &mut catalog.value {
+            dict.insert(
+                "Lang",
+                PdfValue::String(PdfString::new_literal(language.to_vec())),
+            );
         }
     }
 
