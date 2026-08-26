@@ -330,43 +330,9 @@ impl<'a> TextExtractor<'a> {
     }
 
     fn decode_with_cmap(&self, text_bytes: &[u8], cmap: &CMap) -> String {
-        let mut result = String::new();
-        let mut i = 0;
-
-        while i < text_bytes.len() {
-            // Try 2-byte code first
-            if i + 1 < text_bytes.len() {
-                let code = &text_bytes[i..i + 2];
-                if let Some(unicode) = CMapParser::new(
-                    &mut PdfAstGraph::new(),
-                    &crate::parser::reference_resolver::ObjectNodeMap::new(),
-                )
-                .map_code_to_unicode(cmap, code)
-                {
-                    result.push_str(&unicode);
-                    i += 2;
-                    continue;
-                }
-            }
-
-            // Try 1-byte code
-            let code = &text_bytes[i..i + 1];
-            if let Some(unicode) = CMapParser::new(
-                &mut PdfAstGraph::new(),
-                &crate::parser::reference_resolver::ObjectNodeMap::new(),
-            )
-            .map_code_to_unicode(cmap, code)
-            {
-                result.push_str(&unicode);
-            } else {
-                // Fallback to direct mapping
-                result.push(text_bytes[i] as char);
-            }
-
-            i += 1;
-        }
-
-        result
+        let mut ast = PdfAstGraph::new();
+        let resolver = crate::parser::reference_resolver::ObjectNodeMap::new();
+        CMapParser::new(&mut ast, &resolver).decode_bytes(cmap, text_bytes)
     }
 
     fn decode_win_ansi(&self, text_bytes: &[u8]) -> String {

@@ -495,6 +495,58 @@ impl<'a> CMapParser<'a> {
         }
     }
 
+    /// Decode a text byte sequence using the CMap code-space widths.
+    pub fn decode_bytes(&self, cmap: &CMap, text: &[u8]) -> String {
+        let mut lengths: Vec<usize> = cmap
+            .code_space_ranges
+            .iter()
+            .map(|range| range.start.len())
+            .filter(|length| *length > 0)
+            .collect();
+        if lengths.is_empty() {
+            lengths.extend([4, 3, 2, 1]);
+        }
+        lengths.sort_unstable_by(|left, right| right.cmp(left));
+        lengths.dedup();
+
+        let mut result = String::new();
+        let mut offset = 0;
+        while offset < text.len() {
+            let mut decoded = None;
+            let mut consumed = 0;
+
+            for length in &lengths {
+                let end = offset.saturating_add(*length);
+                if end > text.len() {
+                    continue;
+                }
+                let code = &text[offset..end];
+                if !cmap.code_space_ranges.is_empty()
+                    && !cmap.code_space_ranges.iter().any(|range| {
+                        range.start.len() == code.len()
+                            && self.in_range(code, &range.start, &range.end)
+                    })
+                {
+                    continue;
+                }
+                if let Some(unicode) = self.map_code_to_unicode(cmap, code) {
+                    decoded = Some(unicode);
+                    consumed = *length;
+                    break;
+                }
+            }
+
+            if let Some(unicode) = decoded {
+                result.push_str(&unicode);
+                offset += consumed;
+            } else {
+                result.push(text[offset] as char);
+                offset += 1;
+            }
+        }
+        result
+    }
+
     fn in_range(&self, code: &[u8], start: &[u8], end: &[u8]) -> bool {
         if code.len() != start.len() || code.len() != end.len() {
             return false;
@@ -524,20 +576,14 @@ impl<'a> CMapParser<'a> {
     }
 
     fn bytes_to_unicode(&self, bytes: &[u8]) -> Option<String> {
-        // Interpret bytes as UTF-16BE Unicode value
-        if bytes.len() == 2 {
-            let value = ((bytes[0] as u32) << 8) | (bytes[1] as u32);
-            char::from_u32(value).map(|c| c.to_string())
-        } else if bytes.len() == 4 {
-            // Surrogate pair or direct UTF-32
-            let value = ((bytes[0] as u32) << 24)
-                | ((bytes[1] as u32) << 16)
-                | ((bytes[2] as u32) << 8)
-                | (bytes[3] as u32);
-            char::from_u32(value).map(|c| c.to_string())
-        } else {
-            None
+        if bytes.is_empty() || !bytes.len().is_multiple_of(2) {
+            return None;
         }
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect();
+        String::from_utf16(&units).ok()
     }
 
     fn bytes_to_u32(&self, bytes: &[u8]) -> Option<u32> {
@@ -551,5 +597,35 @@ impl<'a> CMapParser<'a> {
         }
 
         Some(value)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CMapMappings, CMapParser};
+    use crate::ast::PdfAstGraph;
+    use crate::parser::reference_resolver::ObjectNodeMap;
+
+    #[test]
+    fn decodes_code_space_widths_and_utf16_surrogates() {
+        let data = b"/CMapName /Test def\n1 begincodespacerange\n<0000> <FFFF>\nendcodespacerange\n2 beginbfchar\n<0041> <0041>\n<0042> <D83DDE00>\nendbfchar";
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let parser = CMapParser::new(&mut ast, &resolver);
+        let cmap = parser.parse_cmap_data(data).expect("CMap should parse");
+
+        assert!(matches!(cmap.mappings, CMapMappings::Char(_)));
+        assert_eq!(parser.decode_bytes(&cmap, b"\x00A\x00B"), "A😀");
+    }
+
+    #[test]
+    fn decodes_bfrange_destinations() {
+        let data = b"/CMapName /Test def\n1 begincodespacerange\n<01> <02>\nendcodespacerange\n1 beginbfrange\n<01> <02> <0041>\nendbfrange";
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let parser = CMapParser::new(&mut ast, &resolver);
+        let cmap = parser.parse_cmap_data(data).expect("CMap should parse");
+
+        assert_eq!(parser.decode_bytes(&cmap, b"\x01\x02"), "AB");
     }
 }
