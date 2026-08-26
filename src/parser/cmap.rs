@@ -1,5 +1,6 @@
 use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
 use crate::parser::reference_resolver::ObjectNodeMap;
+use crate::performance::ResourceBudget;
 use crate::types::{PdfStream, PdfValue};
 use std::collections::HashMap;
 
@@ -64,15 +65,28 @@ pub struct CIDRangeMapping {
 pub struct CMapParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
+    budget: ResourceBudget,
 }
 
 impl<'a> CMapParser<'a> {
     pub fn new(ast: &'a mut PdfAstGraph, resolver: &'a ObjectNodeMap) -> Self {
-        CMapParser { ast, resolver }
+        Self::new_with_budget(ast, resolver, &ResourceBudget::default())
+    }
+
+    pub fn new_with_budget(
+        ast: &'a mut PdfAstGraph,
+        resolver: &'a ObjectNodeMap,
+        budget: &ResourceBudget,
+    ) -> Self {
+        CMapParser {
+            ast,
+            resolver,
+            budget: budget.clone(),
+        }
     }
 
     pub fn parse_cmap_stream(&mut self, stream: &PdfStream) -> Option<(NodeId, CMap)> {
-        let data = stream.decode().ok()?;
+        let data = stream.decode_with_budget(&self.budget).ok()?;
         let cmap = self.parse_cmap_data(&data)?;
 
         // Create CMap node
@@ -106,7 +120,7 @@ impl<'a> CMapParser<'a> {
     }
 
     pub fn parse_tounicode_stream(&mut self, stream: &PdfStream) -> Option<NodeId> {
-        let data = stream.decode().ok()?;
+        let data = stream.decode_with_budget(&self.budget).ok()?;
         let cmap = self.parse_cmap_data(&data)?;
 
         // Create ToUnicode node

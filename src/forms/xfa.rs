@@ -1,3 +1,4 @@
+use crate::performance::ResourceBudget;
 use crate::types::{PdfDictionary, PdfStream, PdfValue};
 use quick_xml::events::Event;
 use quick_xml::Reader;
@@ -37,6 +38,14 @@ impl XfaDocument {
         Ok(Self { packets })
     }
 
+    pub fn from_acroform_with_budget(
+        acroform: &PdfDictionary,
+        budget: &ResourceBudget,
+    ) -> Result<Self, String> {
+        let packets = parse_xfa_packets_with_budget(acroform, budget)?;
+        Ok(Self { packets })
+    }
+
     pub fn is_empty(&self) -> bool {
         self.packets.is_empty()
     }
@@ -56,6 +65,13 @@ impl XfaDocument {
 }
 
 pub fn parse_xfa_packets(acroform: &PdfDictionary) -> Result<Vec<XfaPacket>, String> {
+    parse_xfa_packets_with_budget(acroform, &ResourceBudget::default())
+}
+
+fn parse_xfa_packets_with_budget(
+    acroform: &PdfDictionary,
+    budget: &ResourceBudget,
+) -> Result<Vec<XfaPacket>, String> {
     let xfa_value = match acroform.get("XFA") {
         Some(value) => value,
         None => return Ok(Vec::new()),
@@ -65,7 +81,7 @@ pub fn parse_xfa_packets(acroform: &PdfDictionary) -> Result<Vec<XfaPacket>, Str
 
     match xfa_value {
         PdfValue::Stream(stream) => {
-            if let Some(packet) = parse_xfa_packet("xfa", stream)? {
+            if let Some(packet) = parse_xfa_packet("xfa", stream, budget)? {
                 packets.push(packet);
             }
         }
@@ -79,7 +95,7 @@ pub fn parse_xfa_packets(acroform: &PdfDictionary) -> Result<Vec<XfaPacket>, Str
                 };
 
                 if let Some(packet_value) = iter.next() {
-                    if let Some(packet) = parse_xfa_value(&packet_name, packet_value)? {
+                    if let Some(packet) = parse_xfa_value(&packet_name, packet_value, budget)? {
                         packets.push(packet);
                     }
                 }
@@ -91,18 +107,30 @@ pub fn parse_xfa_packets(acroform: &PdfDictionary) -> Result<Vec<XfaPacket>, Str
     Ok(packets)
 }
 
-fn parse_xfa_value(name: &str, value: &PdfValue) -> Result<Option<XfaPacket>, String> {
+fn parse_xfa_value(
+    name: &str,
+    value: &PdfValue,
+    budget: &ResourceBudget,
+) -> Result<Option<XfaPacket>, String> {
     match value {
-        PdfValue::Stream(stream) => parse_xfa_packet(name, stream),
+        PdfValue::Stream(stream) => parse_xfa_packet(name, stream, budget),
         PdfValue::String(s) => parse_xfa_from_bytes(name, s.as_bytes()),
         _ => Ok(None),
     }
 }
 
-fn parse_xfa_packet(name: &str, stream: &PdfStream) -> Result<Option<XfaPacket>, String> {
-    let data = match stream.decode() {
+fn parse_xfa_packet(
+    name: &str,
+    stream: &PdfStream,
+    budget: &ResourceBudget,
+) -> Result<Option<XfaPacket>, String> {
+    let data = match stream.decode_with_budget(budget) {
         Ok(decoded) => decoded,
-        Err(_) => stream.raw_data().map(|d| d.to_vec()).unwrap_or_default(),
+        Err(_) => stream
+            .raw_data()
+            .filter(|data| budget.consume_decoded(data.len() as u64).is_ok())
+            .map(|data| data.to_vec())
+            .unwrap_or_default(),
     };
     parse_xfa_from_bytes(name, &data)
 }

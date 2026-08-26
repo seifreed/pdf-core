@@ -1149,7 +1149,11 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
         let map = self.object_to_node.clone();
         let resolver_map = ObjectNodeMap::from_map(map);
-        let mut cmap_parser = crate::parser::cmap::CMapParser::new(ast, &resolver_map);
+        let mut cmap_parser = crate::parser::cmap::CMapParser::new_with_budget(
+            ast,
+            &resolver_map,
+            &self.limits.budget,
+        );
         if let Some(node_id) = cmap_parser.parse_tounicode_stream(&stream) {
             ast.add_edge(font_id, node_id, EdgeType::Child);
         }

@@ -1347,7 +1347,8 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn process_xfa_document(&mut self, acro_dict: &PdfDictionary) -> AstResult<()> {
-        if let Ok(xfa_doc) = XfaDocument::from_acroform(acro_dict) {
+        if let Ok(xfa_doc) = XfaDocument::from_acroform_with_budget(acro_dict, &self.limits.budget)
+        {
             if !xfa_doc.is_empty() {
                 self.document.metadata.has_xfa = true;
                 self.document.metadata.xfa_packets = xfa_doc.packets.len();
