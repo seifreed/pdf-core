@@ -1,5 +1,5 @@
 use crate::threats::ThreatType;
-use crate::{Severity, Threat, Warning};
+use crate::{Severity, Threat};
 use pdf_ast::{PdfDictionary, PdfValue};
 use regex::Regex;
 

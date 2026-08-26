@@ -1,4 +1,4 @@
-use crate::{InfoItem, ScanResult, Severity, Threat, Warning};
+use crate::{InfoItem, ScanResult, Severity, Threat};
 use serde_json;
 use std::collections::HashMap;
 

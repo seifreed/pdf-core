@@ -8,7 +8,7 @@ use pdf_ast_core::parser::PdfParser;
 use pdf_ast_core::plugins::api::PluginManager;
 use pdf_ast_core::validation::{SchemaRegistry, ValidationReport};
 
-#[pyclass(name = "PdfDocument")]
+#[pyclass(name = "PdfDocument", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyPdfDocument {
     inner: Arc<PdfDocument>,
@@ -153,7 +153,7 @@ impl PyPdfDocument {
     }
 }
 
-#[pyclass(name = "AstNode")]
+#[pyclass(name = "AstNode", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyAstNode {
     inner: AstNode,
@@ -209,7 +209,7 @@ impl PyAstNode {
     }
 }
 
-#[pyclass(name = "ValidationReport")]
+#[pyclass(name = "ValidationReport", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyValidationReport {
     inner: ValidationReport,
@@ -263,7 +263,7 @@ impl PyValidationReport {
     }
 }
 
-#[pyclass(name = "ValidationIssue")]
+#[pyclass(name = "ValidationIssue", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyValidationIssue {
     inner: pdf_ast_core::validation::ValidationIssue,

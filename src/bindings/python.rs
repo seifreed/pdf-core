@@ -10,7 +10,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Python wrapper for PdfDocument
-#[pyclass(name = "PdfDocument")]
+#[pyclass(name = "PdfDocument", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyPdfDocument {
     inner: Arc<PdfDocument>,
@@ -170,7 +170,7 @@ impl PyPdfDocument {
 }
 
 /// Python wrapper for AstNode
-#[pyclass(name = "AstNode")]
+#[pyclass(name = "AstNode", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyAstNode {
     inner: AstNode,
@@ -235,7 +235,7 @@ impl PyAstNode {
 }
 
 /// Python wrapper for ValidationReport
-#[pyclass(name = "ValidationReport")]
+#[pyclass(name = "ValidationReport", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyValidationReport {
     inner: ValidationReport,
@@ -297,7 +297,7 @@ impl PyValidationReport {
 }
 
 /// Python wrapper for ValidationIssue
-#[pyclass(name = "ValidationIssue")]
+#[pyclass(name = "ValidationIssue", skip_from_py_object)]
 #[derive(Clone)]
 pub struct PyValidationIssue {
     inner: crate::validation::ValidationIssue,

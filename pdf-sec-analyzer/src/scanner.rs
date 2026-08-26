@@ -1,8 +1,6 @@
 use crate::threats::ThreatType;
 use crate::{InfoItem, ScanMetadata, ScanResult, Severity, Threat, Warning};
-use pdf_ast::{
-    AstNode, NodeType, PdfDictionary, PdfDocument, PdfString, PdfValue, Visitor, VisitorAction,
-};
+use pdf_ast::{AstNode, PdfDictionary, PdfDocument, PdfValue, Visitor, VisitorAction};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub struct SecurityScanner {
@@ -210,7 +208,7 @@ impl SecurityScanner {
 }
 
 impl Visitor for SecurityScanner {
-    fn visit_node(&mut self, node: &AstNode) -> VisitorAction {
+    fn visit_node(&mut self, _node: &AstNode) -> VisitorAction {
         self.nodes_scanned += 1;
         VisitorAction::Continue
     }
@@ -336,7 +334,7 @@ impl Visitor for SecurityScanner {
                 // Check for JavaScript in widget
                 if let Some(PdfValue::Dictionary(aa_dict)) = dict.get("AA") {
                     // Additional Actions dictionary
-                    for (key, value) in aa_dict.iter() {
+                    for (_key, value) in aa_dict.iter() {
                         if let PdfValue::Dictionary(action_dict) = value {
                             if let Some(PdfValue::Name(action_type)) = action_dict.get("S") {
                                 if action_type.without_slash() == "JavaScript" {

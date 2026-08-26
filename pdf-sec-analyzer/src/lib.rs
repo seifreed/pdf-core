@@ -3,9 +3,8 @@ pub mod rules;
 pub mod scanner;
 pub mod threats;
 
-use pdf_ast::{AstNode, NodeType, PdfDictionary, PdfDocument, PdfValue, Visitor, VisitorAction};
+use pdf_ast::PdfDocument;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 
 pub use report::SecurityReport;
 pub use scanner::SecurityScanner;
@@ -98,7 +97,7 @@ pub fn quick_security_check(document: &PdfDocument) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pdf_ast::{NodeType, PdfName, PdfVersion};
+    use pdf_ast::PdfVersion;
 
     #[test]
     fn test_basic_scan() {
