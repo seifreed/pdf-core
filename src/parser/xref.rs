@@ -32,7 +32,10 @@ fn parse_xref_section(input: &[u8]) -> IResult<&[u8], Vec<(ObjectId, XRefEntry)>
 
     let mut entries = Vec::new();
     for (i, entry) in raw_entries.into_iter().take(count as usize).enumerate() {
-        let obj_id = ObjectId::new(start_obj + i as u32, entry.generation());
+        let object_number = start_obj.checked_add(i as u32).ok_or_else(|| {
+            nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
+        })?;
+        let obj_id = ObjectId::new(object_number, entry.generation());
         entries.push((obj_id, entry));
     }
 
@@ -91,27 +94,58 @@ pub fn parse_xref_stream(stream: &PdfStream) -> Result<Vec<(ObjectId, XRefEntry)
         return Err("W array must have exactly 3 elements".to_string());
     }
 
-    let w1 = w_array[0].as_integer().unwrap_or(0) as usize; // Type field width
-    let w2 = w_array[1].as_integer().unwrap_or(0) as usize; // Field 2 width
-    let w3 = w_array[2].as_integer().unwrap_or(0) as usize; // Field 3 width
+    let width = |index: usize| -> Result<usize, String> {
+        let value = w_array[index]
+            .as_integer()
+            .ok_or_else(|| format!("XRef /W[{}] must be an integer", index))?;
+        usize::try_from(value).map_err(|_| format!("XRef /W[{}] must be non-negative", index))
+    };
+    let w1 = width(0)?; // Type field width
+    let w2 = width(1)?; // Field 2 width
+    let w3 = width(2)?; // Field 3 width
 
-    if w1 + w2 + w3 == 0 {
+    if [w1, w2, w3].iter().any(|&width| width > 8) {
+        return Err("XRef field widths cannot exceed 8 bytes".to_string());
+    }
+
+    let entry_size = w1
+        .checked_add(w2)
+        .and_then(|size| size.checked_add(w3))
+        .ok_or_else(|| "XRef entry width overflow".to_string())?;
+    if entry_size == 0 {
         return Err("Invalid W array - all widths are zero".to_string());
     }
 
     // Get Index array (or default to [0, Size])
-    let index_array = dict
-        .get("Index")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_integer())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_else(|| {
-            let size = dict.get("Size").and_then(|v| v.as_integer()).unwrap_or(0);
-            vec![0, size]
-        });
+    let index_array = if let Some(value) = dict.get("Index") {
+        let array = value
+            .as_array()
+            .ok_or_else(|| "XRef /Index must be an array".to_string())?;
+        array
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let value = value
+                    .as_integer()
+                    .ok_or_else(|| format!("XRef /Index[{}] must be an integer", index))?;
+                u64::try_from(value)
+                    .map_err(|_| format!("XRef /Index[{}] must be non-negative", index))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        let size = dict
+            .get("Size")
+            .and_then(|v| v.as_integer())
+            .ok_or("Missing XRef /Size")?;
+        vec![
+            0,
+            u64::try_from(size).map_err(|_| "XRef /Size must be non-negative")?,
+        ]
+    };
+
+    if index_array.len() % 2 != 0 {
+        return Err("XRef /Index must contain start/count pairs".to_string());
+    }
 
     // Decode the stream data
     let filters = stream.get_filters();
@@ -131,7 +165,7 @@ pub fn parse_xref_stream(stream: &PdfStream) -> Result<Vec<(ObjectId, XRefEntry)
     };
 
     let mut entries = Vec::new();
-    let mut data_offset = 0;
+    let mut data_offset: usize = 0;
     let entry_size = w1 + w2 + w3;
 
     // Process each subsection defined in Index array
@@ -140,18 +174,26 @@ pub fn parse_xref_stream(stream: &PdfStream) -> Result<Vec<(ObjectId, XRefEntry)
             continue;
         }
 
-        let start = chunk[0] as u32;
-        let count = chunk[1] as u32;
+        let start = u32::try_from(chunk[0]).map_err(|_| "XRef object number overflow")?;
+        let count = u32::try_from(chunk[1]).map_err(|_| "XRef object count overflow")?;
 
         for i in 0..count {
-            if data_offset + entry_size > decoded_data.len() {
+            let end = data_offset
+                .checked_add(entry_size)
+                .ok_or_else(|| "XRef data offset overflow".to_string())?;
+            if end > decoded_data.len() {
                 break; // Not enough data for another entry
             }
 
-            let entry_data = &decoded_data[data_offset..data_offset + entry_size];
+            let entry_data = decoded_data
+                .get(data_offset..end)
+                .ok_or_else(|| "XRef entry is outside decoded data".to_string())?;
 
             let entry = parse_xref_stream_entry(entry_data, w1, w2, w3)?;
-            let obj_id = ObjectId::new(start + i, entry.generation());
+            let object_number = start
+                .checked_add(i)
+                .ok_or_else(|| "XRef object number overflow".to_string())?;
+            let obj_id = ObjectId::new(object_number, entry.generation());
 
             entries.push((obj_id, entry));
             data_offset += entry_size;
@@ -168,11 +210,25 @@ fn parse_xref_stream_entry(
     w2: usize,
     w3: usize,
 ) -> Result<XRefEntry, String> {
-    let mut offset = 0;
+    let entry_size = w1
+        .checked_add(w2)
+        .and_then(|size| size.checked_add(w3))
+        .ok_or_else(|| "XRef entry width overflow".to_string())?;
+    if [w1, w2, w3].iter().any(|&width| width > 8) || data.len() < entry_size {
+        return Err("XRef entry has invalid field widths or length".to_string());
+    }
+
+    let mut offset: usize = 0;
 
     // Field 1: Type (0 = free, 1 = normal, 2 = compressed)
     let type_field = if w1 > 0 {
-        read_int_field(&data[offset..offset + w1])
+        let end = offset
+            .checked_add(w1)
+            .ok_or_else(|| "XRef type field offset overflow".to_string())?;
+        read_int_field(
+            data.get(offset..end)
+                .ok_or_else(|| "XRef type field is outside entry".to_string())?,
+        )
     } else {
         1 // Default type is 1 (normal object)
     };
@@ -180,7 +236,13 @@ fn parse_xref_stream_entry(
 
     // Field 2: Object number or offset
     let field2 = if w2 > 0 {
-        read_int_field(&data[offset..offset + w2])
+        let end = offset
+            .checked_add(w2)
+            .ok_or_else(|| "XRef field 2 offset overflow".to_string())?;
+        read_int_field(
+            data.get(offset..end)
+                .ok_or_else(|| "XRef field 2 is outside entry".to_string())?,
+        )
     } else {
         0
     };
@@ -188,7 +250,13 @@ fn parse_xref_stream_entry(
 
     // Field 3: Generation or index
     let field3 = if w3 > 0 {
-        read_int_field(&data[offset..offset + w3])
+        let end = offset
+            .checked_add(w3)
+            .ok_or_else(|| "XRef field 3 offset overflow".to_string())?;
+        read_int_field(
+            data.get(offset..end)
+                .ok_or_else(|| "XRef field 3 is outside entry".to_string())?,
+        )
     } else {
         0
     };
@@ -363,5 +431,66 @@ impl XRefEntry {
             XRefEntry::InUse { offset, .. } => Some(*offset),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_xref_stream;
+    use crate::types::{PdfArray, PdfDictionary, PdfStream, PdfValue};
+
+    fn xref_stream(w: Vec<PdfValue>, index: Option<Vec<PdfValue>>) -> PdfStream {
+        let mut dict = PdfDictionary::new();
+        dict.insert("W", PdfValue::Array(PdfArray::from(w)));
+        dict.insert("Size", PdfValue::Integer(1));
+        if let Some(index) = index {
+            dict.insert("Index", PdfValue::Array(PdfArray::from(index)));
+        }
+        PdfStream::new(dict, vec![1, 0, 0, 0, 0, 0, 0, 0, 0])
+    }
+
+    #[test]
+    fn rejects_negative_xref_widths() {
+        let stream = xref_stream(
+            vec![
+                PdfValue::Integer(-1),
+                PdfValue::Integer(1),
+                PdfValue::Integer(1),
+            ],
+            None,
+        );
+
+        let error = parse_xref_stream(&stream).expect_err("negative width must be rejected");
+        assert!(error.contains("non-negative"));
+    }
+
+    #[test]
+    fn rejects_negative_xref_index_values() {
+        let stream = xref_stream(
+            vec![
+                PdfValue::Integer(1),
+                PdfValue::Integer(1),
+                PdfValue::Integer(1),
+            ],
+            Some(vec![PdfValue::Integer(-1), PdfValue::Integer(1)]),
+        );
+
+        let error = parse_xref_stream(&stream).expect_err("negative index must be rejected");
+        assert!(error.contains("non-negative"));
+    }
+
+    #[test]
+    fn rejects_xref_fields_wider_than_u64() {
+        let stream = xref_stream(
+            vec![
+                PdfValue::Integer(9),
+                PdfValue::Integer(0),
+                PdfValue::Integer(0),
+            ],
+            None,
+        );
+
+        let error = parse_xref_stream(&stream).expect_err("wide field must be rejected");
+        assert!(error.contains("8 bytes"));
     }
 }
