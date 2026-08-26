@@ -70,6 +70,12 @@ IDs when `VERAPDF_BIN` and `PDF_COMPLIANCE_CORPUS` are configured:
 `6.3.4:1`, `6.5.2:1`, and `6.6.1:1`; the local PDF/A and PDF/UA validators are
 then run against those serialized bytes.
 
+The latest local parser gate (2026-08-26 UTC, corpus commit
+`bb9d353181797cf61e81294c071737a09f155d6d`) processed 2,809 files and
+161,227,640 bytes without a panic. It recorded 577 controlled parse errors,
+`peak_rss_kib=202240`, and p50/p95/p99 latencies of 3/53/129 ms. Reproduce it
+with `PDF_EXTERNAL_CORPUS=/path/to/pdf-core-corpus/fixtures PDF_EXTERNAL_MAX_FILES=3000 cargo test --test external_corpus_tests --locked -- --test-threads=1 --nocapture`.
+
 ## Required Before Conformance Claims
 
 - The local positive/negative fixture branch is covered by the matrix above;
