@@ -32,6 +32,7 @@ jobs:
       - name: Run differential corpus test
         env:
           PDF_EXTERNAL_CORPUS: ${{ runner.temp }}/verapdf-corpus
+          PDF_EXTERNAL_MAX_FILES: "3000"
         run: |
           set -o pipefail
           /usr/bin/time -v cargo test --test differential_tests --locked -- --test-threads=1 \
