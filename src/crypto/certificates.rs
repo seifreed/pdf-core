@@ -43,11 +43,9 @@ impl CertificateChainValidator {
             config: config.clone(),
         };
 
-        // Load default system trust store if available
+        // Trust anchors are opt-in; parsing a PDF must not load platform state.
         if let Some(trust_store_path) = &config.trust_store_path {
             validator.add_trust_store_from_path(trust_store_path)?;
-        } else {
-            validator.add_system_trust_store()?;
         }
 
         Ok(validator)

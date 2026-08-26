@@ -105,8 +105,7 @@ impl Default for SignatureVerifier {
 
 impl SignatureVerifier {
     pub fn new() -> Self {
-        let trust_store = TrustStore::system_default()
-            .unwrap_or_else(|_| TrustStore::new("Default Trust Store".to_string()));
+        let trust_store = TrustStore::new("No trust store configured".to_string());
         SignatureVerifier {
             trust_store,
             config: CryptoConfig::default(),
