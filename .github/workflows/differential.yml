@@ -1,0 +1,29 @@
+name: Differential Corpus
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reference-parsers:
+    name: Compare with qpdf and MuPDF
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable
+        with:
+          toolchain: stable
+      - name: Install reference parsers
+        run: sudo apt-get update && sudo apt-get install -y qpdf mupdf-tools
+      - name: Run differential corpus test
+        run: cargo test --test differential_tests

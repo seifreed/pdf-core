@@ -13,9 +13,19 @@ permissions:
 
 jobs:
   parser:
-    name: Parser fuzz smoke test
+    name: Fuzz ${{ matrix.target }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - pdf_parse
+          - object_values
+          - content_stream
+          - filters
+          - xref
+          - serialization
     steps:
       - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
         with:
@@ -25,5 +35,5 @@ jobs:
           toolchain: stable
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
-      - name: Run bounded parser campaign
-        run: cargo fuzz run pdf_parse -- -runs=1000
+      - name: Run bounded campaign
+        run: cargo fuzz run ${{ matrix.target }} -- -runs=1000

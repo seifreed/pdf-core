@@ -18,4 +18,39 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "object_values"
+path = "fuzz_targets/object_values.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "content_stream"
+path = "fuzz_targets/content_stream.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "filters"
+path = "fuzz_targets/filters.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xref"
+path = "fuzz_targets/xref.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "serialization"
+path = "fuzz_targets/serialization.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
