@@ -1,0 +1,34 @@
+name: External PDF Corpus
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 4 * * 0"
+
+permissions:
+  contents: read
+
+jobs:
+  verapdf-corpus:
+    name: veraPDF corpus smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-01-01
+        with:
+          toolchain: stable
+
+      - name: Fetch pinned external corpus
+        run: tools/fetch-verapdf-corpus.sh "PDF_A-1b" "$RUNNER_TEMP/verapdf-corpus"
+
+      - name: Run panic regression test
+        env:
+          PDF_EXTERNAL_CORPUS: ${{ runner.temp }}/verapdf-corpus
+          PDF_EXTERNAL_MAX_FILES: "1000"
+        run: cargo test --test external_corpus_tests --locked -- --test-threads=1
