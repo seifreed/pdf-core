@@ -282,7 +282,7 @@ pub unsafe extern "C" fn pdf_ast_get_node_info(
 pub unsafe extern "C" fn pdf_ast_get_children(
     document: *const CPdfDocument,
     parent_node: *const CAstNode,
-    children: *mut *mut CAstNode,
+    children: *mut *mut *mut CAstNode,
     count: *mut usize,
 ) -> CResult {
     if document.is_null() || parent_node.is_null() || children.is_null() || count.is_null() {
@@ -307,7 +307,7 @@ pub unsafe extern "C" fn pdf_ast_get_children(
         let children_array = child_nodes.into_boxed_slice();
         unsafe {
             *count = children_array.len();
-            *children = children_array.as_ptr() as *mut CAstNode;
+            *children = children_array.as_ptr() as *mut *mut CAstNode;
             std::mem::forget(children_array);
         }
     } else {
@@ -469,9 +469,17 @@ pub extern "C" fn pdf_ast_version() -> *const c_char {
     VERSION.as_ptr() as *const c_char
 }
 
+/// Get the version of the C ABI contract, encoded as `(major << 16) | minor`.
+#[no_mangle]
+pub extern "C" fn pdf_ast_abi_version() -> u32 {
+    (1 << 16) | 0
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{pdf_ast_free_children, pdf_ast_init, pdf_ast_version, CErrorCode};
+    use super::{
+        pdf_ast_abi_version, pdf_ast_free_children, pdf_ast_init, pdf_ast_version, CErrorCode,
+    };
     use std::ffi::CStr;
 
     #[test]
@@ -479,6 +487,7 @@ mod tests {
         assert_eq!(pdf_ast_init().error_code, CErrorCode::Success);
         let version = unsafe { CStr::from_ptr(pdf_ast_version()) };
         assert_eq!(version.to_str().unwrap(), env!("CARGO_PKG_VERSION"));
+        assert_eq!(pdf_ast_abi_version(), 0x0001_0000);
         unsafe { pdf_ast_free_children(std::ptr::null_mut(), 0) };
     }
 }

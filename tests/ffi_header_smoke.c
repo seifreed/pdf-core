@@ -14,6 +14,10 @@ int main(void) {
         pdf_ast_free_result(&result);
         return 1;
     }
+    if (pdf_ast_abi_version() !=
+        ((PDF_AST_ABI_VERSION_MAJOR << 16) | PDF_AST_ABI_VERSION_MINOR)) {
+        return 5;
+    }
     result = pdf_ast_parse_file(path, &document);
     if (result.error_code != PDF_AST_SUCCESS || document == NULL) {
         pdf_ast_free_result(&result);
@@ -32,6 +36,22 @@ int main(void) {
         pdf_ast_free_document(document);
         return 4;
     }
+
+    CAstNode **children = NULL;
+    size_t child_count = 0;
+    result = pdf_ast_get_children(document, root, NULL, &child_count);
+    if (result.error_code != PDF_AST_NULL_POINTER) {
+        pdf_ast_free_node(root);
+        pdf_ast_free_document(document);
+        return 6;
+    }
+    result = pdf_ast_get_children(document, root, &children, &child_count);
+    if (result.error_code != PDF_AST_SUCCESS) {
+        pdf_ast_free_node(root);
+        pdf_ast_free_document(document);
+        return 7;
+    }
+    pdf_ast_free_children(children, child_count);
 
     printf("pdf-ast %s: nodes=%zu root=%llu\n", pdf_ast_version(),
            pdf_ast_get_node_count(document), (unsigned long long)info.id);

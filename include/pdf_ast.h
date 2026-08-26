@@ -13,6 +13,11 @@ extern "C" {
 typedef struct CPdfDocument CPdfDocument;
 typedef struct CAstNode CAstNode;
 
+// C ABI contract version. Numeric values are part of the ABI and only change
+// when the ABI contract changes.
+#define PDF_AST_ABI_VERSION_MAJOR 1u
+#define PDF_AST_ABI_VERSION_MINOR 0u
+
 // Error codes
 typedef enum {
     PDF_AST_SUCCESS = 0,
@@ -26,7 +31,7 @@ typedef enum {
 // Result structure
 typedef struct {
     pdf_ast_error_t error_code;
-    char* message;
+    char* message; /* caller frees with pdf_ast_free_result */
 } pdf_ast_result_t;
 
 // Node information
@@ -87,7 +92,7 @@ pdf_ast_result_t pdf_ast_parse_file(const char* path, CPdfDocument** document);
 
 /**
  * Get number of nodes in document
- * @param document Document handle
+ * @param document Document handle, borrowed for the duration of the call
  * @return Number of nodes
  */
 size_t pdf_ast_get_node_count(const CPdfDocument* document);
@@ -102,14 +107,14 @@ size_t pdf_ast_get_edge_count(const CPdfDocument* document);
 /**
  * Get root node of document
  * @param document Document handle
- * @param node Output parameter for root node handle
+ * @param node Output parameter for an owned node handle
  * @return Result indicating success or failure
  */
 pdf_ast_result_t pdf_ast_get_root_node(const CPdfDocument* document, CAstNode** node);
 
 /**
  * Get node information
- * @param node Node handle
+ * @param node Owned node handle
  * @param info Output parameter for node information
  * @return Result indicating success or failure
  */
@@ -119,14 +124,14 @@ pdf_ast_result_t pdf_ast_get_node_info(const CAstNode* node, pdf_ast_node_info_t
  * Get child nodes
  * @param document Document handle
  * @param parent_node Parent node handle
- * @param children Output parameter for array of child node handles
+ * @param children Output parameter for an owned array of owned child handles
  * @param count Output parameter for number of children
  * @return Result indicating success or failure
  */
 pdf_ast_result_t pdf_ast_get_children(
     const CPdfDocument* document,
     const CAstNode* parent_node,
-    CAstNode** children,
+    CAstNode*** children,
     size_t* count
 );
 
@@ -139,7 +144,7 @@ void pdf_ast_free_children(CAstNode** children, size_t count);
 /**
  * Serialize document to JSON
  * @param document Document handle
- * @param json_str Output parameter for JSON string
+ * @param json_str Output parameter for an owned JSON string
  * @return Result indicating success or failure
  */
 pdf_ast_result_t pdf_ast_to_json(const CPdfDocument* document, char** json_str);
@@ -173,6 +178,12 @@ void pdf_ast_free_result(pdf_ast_result_t* result);
  * @return Version string (do not free)
  */
 const char* pdf_ast_version(void);
+
+/**
+ * Get the C ABI version as (major << 16) | minor.
+ * @return ABI version encoded as a 32-bit integer (1.0 is 0x00010000)
+ */
+uint32_t pdf_ast_abi_version(void);
 
 #ifdef __cplusplus
 }
