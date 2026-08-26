@@ -1155,6 +1155,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
     }
 
     fn load_object_value(&mut self, obj_id: ObjectId) -> Option<PdfValue> {
+        self.limits.budget.consume_object().ok()?;
         let offset = self.xref_table.get(&obj_id).copied()?;
         self.reader.seek(SeekFrom::Start(offset)).ok()?;
         let mut buffer = Vec::new();
