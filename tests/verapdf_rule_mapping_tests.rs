@@ -53,7 +53,11 @@ fn isartor_rules_match_verapdf_ids() {
         .map(|(relative, _)| root.join("isartor").join(relative))
         .collect();
     for path in &files {
-        assert!(path.is_file(), "missing compliance fixture: {}", path.display());
+        assert!(
+            path.is_file(),
+            "missing compliance fixture: {}",
+            path.display()
+        );
     }
 
     let output = Command::new(verapdf)
