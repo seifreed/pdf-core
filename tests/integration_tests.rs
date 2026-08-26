@@ -90,6 +90,38 @@ mod integration_tests {
         }
     }
 
+    #[test]
+    fn test_page_resources_are_inherited_from_pages_node() {
+        let document = PdfParser::new()
+            .parse_bytes(&create_pdf_with_inherited_resources())
+            .expect("inherited resource PDF should parse");
+        let page_id = document
+            .ast
+            .find_nodes_by_type(NodeType::Page)
+            .into_iter()
+            .next()
+            .expect("page node");
+        let page = document.ast.get_node(page_id).expect("page node exists");
+
+        assert_eq!(
+            page.metadata.properties.get("has_inherited_resources"),
+            Some(&"true".to_string())
+        );
+        let resources = page
+            .as_dict()
+            .and_then(|dict| dict.get("Resources"))
+            .and_then(PdfValue::as_dict)
+            .expect("effective resources");
+        assert!(resources.contains_key("Font"));
+        assert!(document.ast.get_references(page_id).iter().any(|child_id| {
+            document
+                .ast
+                .get_node(*child_id)
+                .map(|node| node.node_type == NodeType::Font)
+                .unwrap_or(false)
+        }));
+    }
+
     /// Test filter decoding
     #[test]
     fn test_filter_decoding() {
@@ -287,6 +319,34 @@ startxref
         pdf.extend_from_slice(xref_start.to_string().as_bytes());
         pdf.extend_from_slice(b"\n%%EOF");
 
+        pdf
+    }
+
+    fn create_pdf_with_inherited_resources() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 /Resources 4 0 R >>\nendobj\n"
+                .as_slice(),
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>\nendobj\n"
+                .as_slice(),
+            b"4 0 obj\n<< /Font << /F1 5 0 R >> >>\nendobj\n".as_slice(),
+            b"5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 6\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
         pdf
     }
 

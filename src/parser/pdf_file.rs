@@ -1806,10 +1806,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         pages_ref: &PdfReference,
         parent_id: crate::ast::NodeId,
     ) -> AstResult<()> {
-        let mut stack = vec![(*pages_ref, parent_id)];
+        let mut stack = vec![(*pages_ref, parent_id, PdfDictionary::new())];
         let mut visited = std::collections::HashSet::new();
 
-        while let Some((current_ref, current_parent)) = stack.pop() {
+        while let Some((current_ref, current_parent, inherited_resources)) = stack.pop() {
             let obj_id = current_ref.id();
             if !visited.insert(obj_id) {
                 continue;
@@ -1817,6 +1817,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
             let pages_value = self.load_object(&obj_id)?;
             if let PdfValue::Dictionary(ref pages_dict) = pages_value {
+                let own_resources =
+                    self.resolve_resource_dictionary(pages_dict.get("Resources"))?;
+                let effective_resources =
+                    Self::merge_resource_dictionaries(&inherited_resources, &own_resources);
                 let node_type = if let Some(type_name) = pages_dict.get_type() {
                     match type_name.without_slash() {
                         "Pages" => NodeType::Pages,
@@ -1828,13 +1832,31 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 };
 
                 let is_page = node_type == NodeType::Page;
-                let pages_id = self.add_to_ast(pages_value.clone(), node_type)?;
+                let mut node_value = pages_value.clone();
+                if !inherited_resources.is_empty() {
+                    if let PdfValue::Dictionary(node_dict) = &mut node_value {
+                        node_dict.insert(
+                            "Resources",
+                            PdfValue::Dictionary(effective_resources.clone()),
+                        );
+                    }
+                }
+                let pages_id = self.add_to_ast(node_value, node_type)?;
                 self.add_edge(current_parent, pages_id, crate::ast::EdgeType::Child)?;
+
+                if !inherited_resources.is_empty() {
+                    if let Some(node) = self.document.ast.get_node_mut(pages_id) {
+                        node.metadata.set_property(
+                            "has_inherited_resources".to_string(),
+                            "true".to_string(),
+                        );
+                    }
+                }
 
                 if let Some(PdfValue::Array(kids)) = pages_dict.get("Kids") {
                     for kid in kids.iter() {
                         if let Some(kid_ref) = kid.as_reference() {
-                            stack.push((*kid_ref, pages_id));
+                            stack.push((*kid_ref, pages_id, effective_resources.clone()));
                         }
                     }
                 }
@@ -1849,6 +1871,57 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         }
 
         Ok(())
+    }
+
+    fn resolve_resource_dictionary(
+        &mut self,
+        value: Option<&PdfValue>,
+    ) -> AstResult<PdfDictionary> {
+        let Some(value) = value else {
+            return Ok(PdfDictionary::new());
+        };
+        let resolved = match value {
+            PdfValue::Reference(reference) => self.load_object(&reference.id())?,
+            value => value.clone(),
+        };
+        Ok(match resolved {
+            PdfValue::Dictionary(dict) => dict,
+            _ => PdfDictionary::new(),
+        })
+    }
+
+    fn merge_resource_dictionaries(parent: &PdfDictionary, child: &PdfDictionary) -> PdfDictionary {
+        const CATEGORIES: &[&str] = &[
+            "ColorSpace",
+            "ExtGState",
+            "Font",
+            "Pattern",
+            "Properties",
+            "Shading",
+            "XObject",
+        ];
+
+        let mut merged = parent.clone();
+        for (name, value) in child.iter() {
+            if CATEGORIES.contains(&name.as_str()) {
+                let mut category = parent
+                    .get(name.as_str())
+                    .and_then(PdfValue::as_dict)
+                    .cloned()
+                    .unwrap_or_default();
+                if let Some(child_category) = value.as_dict() {
+                    for (resource_name, resource_value) in child_category {
+                        category.insert(resource_name.clone(), resource_value.clone());
+                    }
+                    merged.insert(name.clone(), PdfValue::Dictionary(category));
+                } else {
+                    merged.insert(name.clone(), value.clone());
+                }
+            } else {
+                merged.insert(name.clone(), value.clone());
+            }
+        }
+        merged
     }
 
     fn load_object(&mut self, obj_id: &ObjectId) -> AstResult<PdfValue> {
