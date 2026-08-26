@@ -345,7 +345,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 .budget
                 .consume_edge()
                 .map_err(|err| err.to_string())?;
-            ast.add_edge(source_node, target_node, EdgeType::Reference);
+            self.add_edge(ast, source_node, target_node, EdgeType::Reference)?;
             debug!(
                 "Created reference edge from {:?} to {:?} for object {}",
                 source_node, target_node, obj_id
@@ -408,7 +408,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 for (cs_name, cs_value) in colorspaces.iter() {
                     let mut parser = ColorSpaceParser::new(ast, &resolver_map, &self.limits);
                     if let Some(cs_id) = parser.parse_colorspace(cs_value) {
-                        ast.add_edge(node_id, cs_id, EdgeType::Resource);
+                        self.add_edge(ast, node_id, cs_id, EdgeType::Resource)?;
                         if let Some(cs_node) = ast.get_node_mut(cs_id) {
                             cs_node
                                 .metadata
@@ -548,11 +548,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
                     // Create node with proper type
                     let node_type = self.determine_node_type(&value, obj_id);
-                    self.limits
-                        .budget
-                        .consume_node()
-                        .map_err(|err| err.to_string())?;
-                    let node_id = ast.create_node(node_type, value);
+                    let node_id = self.create_node(ast, node_type, value)?;
 
                     // Add metadata
                     if let Some(node) = ast.get_node_mut(node_id) {
@@ -584,11 +580,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                     if self.tolerant {
                         if let Some(recovered) = self.parse_object_value_fallback(&buffer) {
                             let node_type = self.determine_node_type(&recovered, obj_id);
-                            self.limits
-                                .budget
-                                .consume_node()
-                                .map_err(|err| err.to_string())?;
-                            let node_id = ast.create_node(node_type, recovered);
+                            let node_id = self.create_node(ast, node_type, recovered)?;
                             if let Some(node) = ast.get_node_mut(node_id) {
                                 node.metadata.offset = Some(offset);
                                 node.metadata.size = Some(buffer.len());
@@ -604,11 +596,8 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                             return Ok(node_id);
                         }
 
-                        self.limits
-                            .budget
-                            .consume_node()
-                            .map_err(|err| err.to_string())?;
-                        let node_id = ast.create_node(NodeType::Object(obj_id), PdfValue::Null);
+                        let node_id =
+                            self.create_node(ast, NodeType::Object(obj_id), PdfValue::Null)?;
                         if let Some(node) = ast.get_node_mut(node_id) {
                             node.metadata.offset = Some(offset);
                             node.metadata.size = Some(buffer.len());
@@ -640,11 +629,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 .resolve_compressed_object(stream_object, index)
                 .map_err(|e| format!("Compressed object {} error: {}", obj_id.number, e))?;
             let node_type = self.determine_node_type(&value, obj_id);
-            self.limits
-                .budget
-                .consume_node()
-                .map_err(|err| err.to_string())?;
-            let node_id = ast.create_node(node_type, value);
+            let node_id = self.create_node(ast, node_type, value)?;
 
             if let Some(node) = ast.get_node_mut(node_id) {
                 node.metadata.offset = meta.file_offset;
@@ -681,11 +666,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
             Ok(node_id)
         } else if self.tolerant {
-            self.limits
-                .budget
-                .consume_node()
-                .map_err(|err| err.to_string())?;
-            let node_id = ast.create_node(NodeType::Object(obj_id), PdfValue::Null);
+            let node_id = self.create_node(ast, NodeType::Object(obj_id), PdfValue::Null)?;
             if let Some(node) = ast.get_node_mut(node_id) {
                 node.metadata.errors.push(crate::ast::node::ParseError {
                     code: crate::ast::node::ErrorCode::MissingObject,
@@ -988,8 +969,8 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                         if indexed.is_empty() {
                             // fallback to operator list only
                             for (i, op) in operators.iter().enumerate() {
-                                let op_node_id = self.create_operator_node(ast, op, i);
-                                ast.add_edge(stream_node_id, op_node_id, EdgeType::Child);
+                                let op_node_id = self.create_operator_node(ast, op, i)?;
+                                self.add_edge(ast, stream_node_id, op_node_id, EdgeType::Child)?;
                             }
                             info!(
                                 "Created {} operator nodes for stream {:?}",
@@ -998,7 +979,8 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                             );
                         } else {
                             for (i, item) in indexed.iter().enumerate() {
-                                let op_node_id = self.create_operator_node(ast, &item.operator, i);
+                                let op_node_id =
+                                    self.create_operator_node(ast, &item.operator, i)?;
                                 if let Some(node) = ast.get_node_mut(op_node_id) {
                                     node.metadata.offset = Some(item.offset as u64);
                                     node.metadata.properties.insert(
@@ -1010,7 +992,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                                         i.to_string(),
                                     );
                                 }
-                                ast.add_edge(stream_node_id, op_node_id, EdgeType::Child);
+                                self.add_edge(ast, stream_node_id, op_node_id, EdgeType::Child)?;
                             }
                             info!(
                                 "Created {} operator nodes with offsets for stream {:?}",
@@ -1056,8 +1038,8 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 value => value.clone(),
             };
 
-            let js_id = ast.create_node(NodeType::JavaScript, resolved);
-            ast.add_edge(node_id, js_id, EdgeType::Child);
+            let js_id = self.create_node(ast, NodeType::JavaScript, resolved)?;
+            self.add_edge(ast, node_id, js_id, EdgeType::Child)?;
         }
 
         Ok(())
@@ -1095,12 +1077,12 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             }
 
             if let Some(cid_info) = dict.get("CIDSystemInfo") {
-                let cid_id = ast.create_node(NodeType::Metadata, cid_info.clone());
+                let cid_id = self.create_node(ast, NodeType::Metadata, cid_info.clone())?;
                 if let Some(node) = ast.get_node_mut(cid_id) {
                     node.metadata
                         .set_property("metadata_kind".to_string(), "cid_system_info".to_string());
                 }
-                ast.add_edge(font_id, cid_id, EdgeType::Child);
+                self.add_edge(ast, font_id, cid_id, EdgeType::Child)?;
             }
         }
 
@@ -1118,12 +1100,12 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             _ => value.clone(),
         };
 
-        let encoding_id = ast.create_node(NodeType::Encoding, resolved);
+        let encoding_id = self.create_node(ast, NodeType::Encoding, resolved)?;
         if let Some(node) = ast.get_node_mut(encoding_id) {
             node.metadata
                 .set_property("metadata_kind".to_string(), "font_encoding".to_string());
         }
-        ast.add_edge(font_id, encoding_id, EdgeType::Child);
+        self.add_edge(ast, font_id, encoding_id, EdgeType::Child)?;
         Ok(())
     }
 
@@ -1141,8 +1123,8 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         let stream = match resolved {
             PdfValue::Stream(stream) => stream,
             _ => {
-                let node_id = ast.create_node(NodeType::ToUnicode, resolved);
-                ast.add_edge(font_id, node_id, EdgeType::Child);
+                let node_id = self.create_node(ast, NodeType::ToUnicode, resolved)?;
+                self.add_edge(ast, font_id, node_id, EdgeType::Child)?;
                 return Ok(());
             }
         };
@@ -1155,7 +1137,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             &self.limits.budget,
         );
         if let Some(node_id) = cmap_parser.parse_tounicode_stream(&stream) {
-            ast.add_edge(font_id, node_id, EdgeType::Child);
+            self.add_edge(ast, font_id, node_id, EdgeType::Child)?;
         }
         Ok(())
     }
@@ -1190,7 +1172,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         ast: &mut PdfAstGraph,
         operator: &content_stream::ContentOperator,
         index: usize,
-    ) -> NodeId {
+    ) -> Result<NodeId, String> {
         use content_stream::ContentOperator;
 
         // Create appropriate value for the operator
@@ -1219,7 +1201,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             }
         };
 
-        let node_id = ast.create_node(NodeType::ContentOperator, value);
+        let node_id = self.create_node(ast, NodeType::ContentOperator, value)?;
 
         // Add metadata
         if let Some(node) = ast.get_node_mut(node_id) {
@@ -1231,7 +1213,38 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 .insert("index".to_string(), index.to_string());
         }
 
-        node_id
+        Ok(node_id)
+    }
+
+    fn create_node(
+        &self,
+        ast: &mut PdfAstGraph,
+        node_type: NodeType,
+        value: PdfValue,
+    ) -> Result<NodeId, String> {
+        self.limits
+            .budget
+            .consume_node()
+            .map_err(|err| err.to_string())?;
+        Ok(ast.create_node(node_type, value))
+    }
+
+    fn add_edge(
+        &self,
+        ast: &mut PdfAstGraph,
+        from: NodeId,
+        to: NodeId,
+        edge_type: EdgeType,
+    ) -> Result<(), String> {
+        self.limits
+            .budget
+            .consume_edge()
+            .map_err(|err| err.to_string())?;
+        if ast.add_edge(from, to, edge_type) {
+            Ok(())
+        } else {
+            Err("Cannot add AST edge: node endpoint is missing".to_string())
+        }
     }
 }
 
