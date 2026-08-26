@@ -34,6 +34,7 @@
 | **Security Analysis** | JavaScript, forms, embedded files, and suspicious actions |
 | **PDF/A Validation** | Experimental preflight checks for selected requirements |
 | **Stream Decoding** | Flate, LZW, CCITT, DCT, and JPX container inspection; some codecs are partial |
+| **C ABI** | Versioned ABI 1.0 with opaque handles and ownership-checked smoke test |
 | **XFA + AcroForm** | XML packets, scripts, and field trees |
 | **Signature Support** | CMS/PKCS#7 parsing and optional crypto verification; experimental |
 | **CLI + Library** | Use from the command line or embed in Rust apps |
@@ -66,6 +67,8 @@ isolation and an application-level resource policy.
 - **Project:** `pdf-core`.
 - **Crate:** `pdf-ast` for compatibility with existing consumers.
 - **AST schema:** experimental `1.1.0`; see [COMPATIBILITY.md](COMPATIBILITY.md).
+- **Rust API:** `0.2.0-alpha.1`; semver audit is checked against published `0.1.0`.
+- **C ABI:** `1.0`; see [COMPATIBILITY.md](COMPATIBILITY.md) for ownership rules.
 
 ---
 
