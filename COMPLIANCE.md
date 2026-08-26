@@ -15,6 +15,11 @@ https://github.com/seifreed/pdf-core-corpus and pinned by the corpus workflow;
 the current PDF/A-1b selection contains 569 upstream fixtures plus three local
 parser regressions.
 
+The clause-level ISO 32000 inventory is maintained in
+[ISO-32000-MATRIX.md](ISO-32000-MATRIX.md). It records implementation scope
+and known boundaries for both PDF 1.7 and PDF 2.0; it is not a conformance
+certificate.
+
 ## Feature Matrix
 
 | Standard area | Rule or feature | Status | Evidence |
