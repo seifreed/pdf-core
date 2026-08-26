@@ -84,7 +84,7 @@ isolation and an application-level resource policy.
 
 ## Installation
 
-Use the repository as a Git dependency (registry publication is not enabled yet):
+Use the repository as a Git dependency while registry publication is pending:
 
 ```toml
 [dependencies]
@@ -96,6 +96,10 @@ Or with Cargo:
 ```bash
 cargo add --git https://github.com/seifreed/pdf-core pdf-ast
 ```
+
+Signed releases publish the Rust crate, Python wheels, and the Node package
+with platform-specific native packages. The release workflow requires the
+`PUBLISH_REGISTRIES=true` repository variable plus registry credentials.
 
 ### Feature Flags
 

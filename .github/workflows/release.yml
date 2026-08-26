@@ -21,10 +21,19 @@ jobs:
         include:
           - os: ubuntu-latest
             target: linux-x86_64
+            npm_package: pdf-ast-linux-x64
+            npm_os: linux
+            npm_cpu: x64
           - os: macos-latest
             target: macos-arm64
+            npm_package: pdf-ast-darwin-arm64
+            npm_os: darwin
+            npm_cpu: arm64
           - os: windows-latest
             target: windows-x86_64
+            npm_package: pdf-ast-win32-x64
+            npm_os: win32
+            npm_cpu: x64
     steps:
       - name: Checkout signed tag
         uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
@@ -36,6 +45,16 @@ jobs:
         uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-01-01
         with:
           toolchain: stable
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -60,10 +79,33 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm run build-release
-          mkdir -p "$GITHUB_WORKSPACE/dist/node-package"
-          cp index.node index.d.ts README.md package.json "$GITHUB_WORKSPACE/dist/node-package/"
-          tar -czf "$GITHUB_WORKSPACE/dist/pdf-ast-node-${{ matrix.target }}.tar.gz" \
-            -C "$GITHUB_WORKSPACE/dist/node-package" .
+          mkdir -p "$GITHUB_WORKSPACE/dist/node-package-${{ matrix.target }}"
+          cp index.node "$GITHUB_WORKSPACE/dist/node-package-${{ matrix.target }}/"
+          NPM_PACKAGE_DIR="$GITHUB_WORKSPACE/dist/node-package-${{ matrix.target }}" \
+          NPM_PACKAGE_NAME="${{ matrix.npm_package }}" \
+          NPM_OS="${{ matrix.npm_os }}" \
+          NPM_CPU="${{ matrix.npm_cpu }}" \
+          node <<'NODE'
+          const fs = require("node:fs");
+          const base = JSON.parse(fs.readFileSync("package.json", "utf8"));
+          const packageJson = {
+            name: process.env.NPM_PACKAGE_NAME,
+            version: base.version,
+            description: `${base.description} native binary`,
+            main: "index.node",
+            license: base.license,
+            repository: base.repository,
+            os: [process.env.NPM_OS],
+            cpu: [process.env.NPM_CPU],
+            files: ["index.node"],
+          };
+          fs.writeFileSync(
+            `${process.env.NPM_PACKAGE_DIR}/package.json`,
+            `${JSON.stringify(packageJson, null, 2)}\n`,
+          );
+          NODE
+          npm pack "$GITHUB_WORKSPACE/dist/node-package-${{ matrix.target }}" \
+            --pack-destination "$GITHUB_WORKSPACE/dist"
 
       - name: Upload binding artifacts
         uses: actions/upload-artifact@v4
@@ -71,7 +113,7 @@ jobs:
           name: binding-${{ matrix.target }}
           path: |
             dist/python/*.whl
-            dist/pdf-ast-node-${{ matrix.target }}.tar.gz
+            dist/pdf-ast-*.tgz
           if-no-files-found: error
 
   release:
@@ -139,9 +181,63 @@ jobs:
           find dist/bindings -type f -exec cp {} dist/ \;
           rm -rf dist/bindings dist/node-package dist/python
 
+      - name: Prepare main Node package
+        shell: bash
+        run: |
+          mkdir -p dist/node-main
+          cp javascript/index.js javascript/index.d.ts javascript/README.md dist/node-main/
+          node <<'NODE'
+          const fs = require("node:fs");
+          const base = JSON.parse(fs.readFileSync("javascript/package.json", "utf8"));
+          delete base.devDependencies;
+          delete base.scripts;
+          delete base.optionalDependencies;
+          base.main = "index.js";
+          base.optionalDependencies = {
+            "pdf-ast-darwin-arm64": base.version,
+            "pdf-ast-linux-x64": base.version,
+            "pdf-ast-win32-x64": base.version,
+          };
+          base.files = ["index.js", "index.d.ts", "README.md"];
+          fs.writeFileSync(
+            "dist/node-main/package.json",
+            `${JSON.stringify(base, null, 2)}\n`,
+          );
+          NODE
+          npm pack dist/node-main --pack-destination dist
+
+      - name: Publish Rust crate
+        if: ${{ vars.PUBLISH_REGISTRIES == 'true' }}
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          test -n "$CARGO_REGISTRY_TOKEN"
+          cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
+
+      - name: Publish Python wheels
+        if: ${{ vars.PUBLISH_REGISTRIES == 'true' }}
+        env:
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          test -n "$PYPI_API_TOKEN"
+          python -m pip install --disable-pip-version-check twine
+          python -m twine upload --non-interactive --username __token__ --password "$PYPI_API_TOKEN" dist/*.whl
+
+      - name: Publish Node packages
+        if: ${{ vars.PUBLISH_REGISTRIES == 'true' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          test -n "$NODE_AUTH_TOKEN"
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$RUNNER_TEMP/npmrc"
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npmrc" npm publish dist/pdf-ast-darwin-arm64-*.tgz --access public
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npmrc" npm publish dist/pdf-ast-linux-x64-*.tgz --access public
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npmrc" npm publish dist/pdf-ast-win32-x64-*.tgz --access public
+          NPM_CONFIG_USERCONFIG="$RUNNER_TEMP/npmrc" npm publish dist/pdf-ast-[0-9]*.tgz --access public
+
       - name: Write checksums
         working-directory: dist
-        run: sha256sum -- *.tar.gz *.whl *.json > SHA256SUMS
+        run: sha256sum -- *.tar.gz *.tgz *.whl *.json > SHA256SUMS
 
       - name: Attest release archive
         uses: actions/attest@v4
@@ -157,4 +253,4 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.whl dist/*.json dist/SHA256SUMS --verify-tag --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.tgz dist/*.whl dist/*.json dist/SHA256SUMS --verify-tag --generate-notes

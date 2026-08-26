@@ -2,7 +2,7 @@
   "name": "pdf-ast",
   "version": "0.2.0-alpha.1",
   "description": "Experimental PDF AST bindings for structural and security analysis",
-  "main": "index.node",
+  "main": "index.js",
   "types": "index.d.ts",
   "scripts": {
     "build": "cargo-cp-artifact -nc index.node -- cargo build --message-format=json-render-diagnostics --features javascript",
@@ -45,18 +45,9 @@
     "node": ">=14.0.0"
   },
   "files": [
-    "index.node",
+    "index.js",
     "index.d.ts",
     "README.md",
     "CHANGELOG.md"
-  ],
-  "os": [
-    "darwin",
-    "linux",
-    "win32"
-  ],
-  "cpu": [
-    "x64",
-    "arm64"
   ]
 }

@@ -1,5 +1,5 @@
 const assert = require("node:assert/strict");
-const pdfAst = require("../index.node");
+const pdfAst = require("..");
 
 const minimalPdf = Buffer.from(`%PDF-1.4
 1 0 obj
