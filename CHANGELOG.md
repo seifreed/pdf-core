@@ -19,3 +19,9 @@ All notable changes to `pdf-core` are documented here.
 - Versioned AST serialization as 1.1.0, restored object identity on
   deserialization, and qualified compliance output as experimental preflight.
 - Upgraded audited dependencies and verified cargo audit --deny warnings.
+- Added an optional veraPDF acceptance-comparison harness for the checked-in
+  corpus.
+- Removed fabricated JBIG2, signature, parallel-analysis, and cipher results;
+  unsupported paths now return explicit errors or diagnostics.
+- Replaced non-empty-password authentication with derived PDF R2-R4 password
+  verification and propagated OS randomness failures from AES encryption.
