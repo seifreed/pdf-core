@@ -1020,8 +1020,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             PdfValue::Dictionary(dict) => self.resolve_jbig2_globals_dict(dict, ast),
             PdfValue::Array(values) => values
                 .iter_mut()
-                .map(|value| self.resolve_jbig2_globals_value(value, ast))
-                .any(|changed| changed),
+                .any(|value| self.resolve_jbig2_globals_value(value, ast)),
             _ => false,
         }
     }

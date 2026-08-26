@@ -472,7 +472,7 @@ pub extern "C" fn pdf_ast_version() -> *const c_char {
 /// Get the version of the C ABI contract, encoded as `(major << 16) | minor`.
 #[no_mangle]
 pub extern "C" fn pdf_ast_abi_version() -> u32 {
-    (1 << 16) | 0
+    1 << 16
 }
 
 #[cfg(test)]
