@@ -61,7 +61,7 @@ fn peak_rss_kib() -> Option<u64> {
             .find(|line| line.starts_with("VmHWM:"))?
             .split_whitespace()
             .nth(1)?;
-        return value.parse().ok();
+        value.parse().ok()
     }
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
