@@ -1034,7 +1034,11 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             }
 
             let resolved = match js_value {
-                PdfValue::Reference(r) => self.load_object_value(r.id()).unwrap_or(PdfValue::Null),
+                PdfValue::Reference(r) => match self.load_object_value(r.id()) {
+                    Some(value) => value,
+                    None if self.tolerant => PdfValue::Null,
+                    None => return Err(format!("Failed to resolve JavaScript object {}", r.id())),
+                },
                 value => value.clone(),
             };
 
@@ -1096,7 +1100,11 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         value: &PdfValue,
     ) -> Result<(), String> {
         let resolved = match value {
-            PdfValue::Reference(r) => self.load_object_value(r.id()).unwrap_or(PdfValue::Null),
+            PdfValue::Reference(r) => match self.load_object_value(r.id()) {
+                Some(value) => value,
+                None if self.tolerant => PdfValue::Null,
+                None => return Err(format!("Failed to resolve font encoding object {}", r.id())),
+            },
             _ => value.clone(),
         };
 
@@ -1116,7 +1124,11 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         value: &PdfValue,
     ) -> Result<(), String> {
         let resolved = match value {
-            PdfValue::Reference(r) => self.load_object_value(r.id()).unwrap_or(PdfValue::Null),
+            PdfValue::Reference(r) => match self.load_object_value(r.id()) {
+                Some(value) => value,
+                None if self.tolerant => PdfValue::Null,
+                None => return Err(format!("Failed to resolve ToUnicode object {}", r.id())),
+            },
             _ => value.clone(),
         };
 

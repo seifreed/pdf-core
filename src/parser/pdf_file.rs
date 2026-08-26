@@ -1311,7 +1311,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         };
 
         let acroform_loaded = match acroform_value {
-            PdfValue::Reference(acro_ref) => self.load_object(&acro_ref.id()).ok(),
+            PdfValue::Reference(acro_ref) => Some(self.load_object(&acro_ref.id())?),
             PdfValue::Dictionary(_) => Some(acroform_value.clone()),
             _ => None,
         };
@@ -1324,7 +1324,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         self.document.metadata.has_forms = true;
 
         if let Some(xfa_value) = acro_dict.get("XFA").cloned() {
-            let resolved = self.resolve_xfa_value(&xfa_value);
+            let resolved = self.resolve_xfa_value(&xfa_value)?;
             acro_dict.insert("XFA", resolved);
         }
 
@@ -1373,7 +1373,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         };
 
         let dss_resolved = match dss_value {
-            PdfValue::Reference(reference) => self.load_object(&reference.id()).ok(),
+            PdfValue::Reference(reference) => Some(self.load_object(&reference.id())?),
             _ => Some(dss_value.clone()),
         };
 
@@ -1390,19 +1390,17 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         Ok(())
     }
 
-    fn resolve_xfa_value(&mut self, value: &PdfValue) -> PdfValue {
+    fn resolve_xfa_value(&mut self, value: &PdfValue) -> AstResult<PdfValue> {
         match value {
-            PdfValue::Reference(reference) => {
-                self.load_object(&reference.id()).unwrap_or(PdfValue::Null)
-            }
+            PdfValue::Reference(reference) => self.load_object(&reference.id()),
             PdfValue::Array(items) => {
                 let mut resolved = PdfArray::new();
                 for item in items.iter() {
-                    resolved.push(self.resolve_xfa_value(item));
+                    resolved.push(self.resolve_xfa_value(item)?);
                 }
-                PdfValue::Array(resolved)
+                Ok(PdfValue::Array(resolved))
             }
-            _ => value.clone(),
+            _ => Ok(value.clone()),
         }
     }
 
