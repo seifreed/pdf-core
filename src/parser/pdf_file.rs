@@ -1345,16 +1345,21 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn process_xfa_document(&mut self, acro_dict: &PdfDictionary) -> AstResult<()> {
-        if let Ok(xfa_doc) = XfaDocument::from_acroform_with_budget(acro_dict, &self.limits.budget)
-        {
-            if !xfa_doc.is_empty() {
-                self.document.metadata.has_xfa = true;
-                self.document.metadata.xfa_packets = xfa_doc.packets.len();
-                let stats = xfa_doc.script_stats();
-                self.document.metadata.has_xfa_scripts = stats.has_scripts;
-                self.document.metadata.xfa_script_nodes = stats.script_nodes;
-                self.document.xfa = Some(xfa_doc);
+        match XfaDocument::from_acroform_with_budget(acro_dict, &self.limits.budget) {
+            Ok(xfa_doc) => {
+                if !xfa_doc.is_empty() {
+                    self.document.metadata.has_xfa = true;
+                    self.document.metadata.xfa_packets = xfa_doc.packets.len();
+                    let stats = xfa_doc.script_stats();
+                    self.document.metadata.has_xfa_scripts = stats.has_scripts;
+                    self.document.metadata.xfa_script_nodes = stats.script_nodes;
+                    self.document.xfa = Some(xfa_doc);
+                }
             }
+            Err(err) if self.tolerant => {
+                log::warn!("Failed to parse XFA data (tolerant): {}", err);
+            }
+            Err(err) => return Err(AstError::ParseError(err)),
         }
         Ok(())
     }
