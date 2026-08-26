@@ -1,4 +1,5 @@
 use pdf_ast::parser::PdfParser;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
@@ -31,6 +32,46 @@ fn percentile_ms(samples: &mut [u128], percentile: usize) -> u128 {
     samples[index]
 }
 
+fn verify_checksums(root: &Path) -> usize {
+    let checksum_path = root.join("SHA256SUMS");
+    let Ok(checksums) = fs::read_to_string(&checksum_path) else {
+        return 0;
+    };
+
+    let mut checked = 0;
+    for line in checksums.lines().filter(|line| !line.trim().is_empty()) {
+        let (expected, relative_path) = line
+            .split_once("  ")
+            .unwrap_or_else(|| panic!("invalid checksum line: {line}"));
+        let relative_path = relative_path.strip_prefix("./").unwrap_or(relative_path);
+        let relative_path = Path::new(relative_path);
+        assert!(
+            !relative_path.is_absolute(),
+            "checksum path must be relative"
+        );
+        assert!(
+            !relative_path
+                .components()
+                .any(|component| component == std::path::Component::ParentDir),
+            "checksum path must stay inside corpus"
+        );
+
+        let bytes = fs::read(root.join(relative_path)).unwrap_or_else(|err| {
+            panic!("read checksum target {}: {err}", relative_path.display())
+        });
+        let actual = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(
+            actual,
+            expected,
+            "checksum mismatch for {}",
+            relative_path.display()
+        );
+        checked += 1;
+    }
+
+    checked
+}
+
 #[test]
 fn external_corpus_has_no_parser_panics() {
     let Some(root) = std::env::var_os("PDF_EXTERNAL_CORPUS") else {
@@ -48,6 +89,7 @@ fn external_corpus_has_no_parser_panics() {
     files.truncate(max_files);
 
     assert!(!files.is_empty(), "external corpus contains no PDF files");
+    let hashes_verified = verify_checksums(Path::new(&root));
 
     let parser = PdfParser::new();
     let started = Instant::now();
@@ -71,8 +113,9 @@ fn external_corpus_has_no_parser_panics() {
     let p95_ms = percentile_ms(&mut durations_ms, 95);
     let p99_ms = percentile_ms(&mut durations_ms, 99);
     eprintln!(
-        "external corpus metrics: files={}, bytes={}, parse_errors={}, wall_ms={}, p50_ms={}, p95_ms={}, p99_ms={}",
+        "external corpus metrics: files={}, hashes_verified={}, bytes={}, parse_errors={}, wall_ms={}, p50_ms={}, p95_ms={}, p99_ms={}",
         files.len(),
+        hashes_verified,
         total_bytes,
         parse_errors,
         started.elapsed().as_millis(),
