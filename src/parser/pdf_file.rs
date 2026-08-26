@@ -532,7 +532,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             PdfDictionary,
         )>,
     > {
-        let (obj_id, stream) = match object_parser::parse_indirect_object(buffer) {
+        let (obj_id, stream) = match object_parser::parse_indirect_object_with_max_depth(
+            buffer,
+            self.limits.max_depth,
+        ) {
             Ok((_, (id, PdfValue::Stream(s)))) => (id, s),
             _ => return Ok(None),
         };
@@ -572,7 +575,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     )> {
         let buffer = self.read_xref_buffer(offset)?;
 
-        let (obj_id, stream) = match object_parser::parse_indirect_object(&buffer) {
+        let (obj_id, stream) = match object_parser::parse_indirect_object_with_max_depth(
+            &buffer,
+            self.limits.max_depth,
+        ) {
             Ok((_, (id, PdfValue::Stream(s)))) => (id, s),
             _ => return Err(AstError::ParseError("Invalid xref stream".to_string())),
         };
@@ -1042,7 +1048,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 let trailer_data = Self::skip_whitespace(trailer_data);
 
                 if let Ok((_, PdfValue::Dictionary(dict))) =
-                    object_parser::parse_value(trailer_data)
+                    object_parser::parse_value_with_max_depth(trailer_data, self.limits.max_depth)
                 {
                     self.document.set_trailer(dict);
                 }
@@ -1054,7 +1060,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
     fn parse_xref_stream(&mut self, data: &[u8]) -> AstResult<()> {
         // Parse as indirect object
-        match object_parser::parse_indirect_object(data) {
+        match object_parser::parse_indirect_object_with_max_depth(data, self.limits.max_depth) {
             Ok((_, (obj_id, value))) => {
                 if let PdfValue::Stream(stream) = value {
                     // Decode stream data
@@ -1991,19 +1997,27 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 XRefEntry::InUse { offset, .. } => {
                     let buffer = self.read_object_buffer(offset)?;
 
-                    let parsed = match object_parser::parse_indirect_stream_prefix(&buffer) {
+                    let parsed = match object_parser::parse_indirect_stream_prefix_with_max_depth(
+                        &buffer,
+                        self.limits.max_depth,
+                    ) {
                         Ok((_, (_, dict))) => {
                             if let Some(PdfValue::Reference(length_ref)) = dict.get("Length") {
                                 match self.load_object(&length_ref.id()) {
                                     Ok(PdfValue::Integer(length)) if length >= 0 => {
                                         match usize::try_from(length) {
                                             Ok(length) => {
-                                                object_parser::parse_indirect_object_with_stream_length(
-                                                    &buffer, length,
+                                                object_parser::parse_indirect_object_with_stream_length_and_max_depth(
+                                                    &buffer,
+                                                    length,
+                                                    self.limits.max_depth,
                                                 )
                                             }
                                             Err(_) if self.tolerant => {
-                                                object_parser::parse_indirect_object(&buffer)
+                                                object_parser::parse_indirect_object_with_max_depth(
+                                                    &buffer,
+                                                    self.limits.max_depth,
+                                                )
                                             }
                                             Err(_) => {
                                                 return Err(AstError::ParseError(
@@ -2013,7 +2027,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                                         }
                                     }
                                     Ok(_) if self.tolerant => {
-                                        object_parser::parse_indirect_object(&buffer)
+                                        object_parser::parse_indirect_object_with_max_depth(
+                                            &buffer,
+                                            self.limits.max_depth,
+                                        )
                                     }
                                     Ok(_) => {
                                         return Err(AstError::ParseError(
@@ -2026,15 +2043,24 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                                             obj_id.number,
                                             err
                                         );
-                                        object_parser::parse_indirect_object(&buffer)
+                                        object_parser::parse_indirect_object_with_max_depth(
+                                            &buffer,
+                                            self.limits.max_depth,
+                                        )
                                     }
                                     Err(err) => return Err(err),
                                 }
                             } else {
-                                object_parser::parse_indirect_object(&buffer)
+                                object_parser::parse_indirect_object_with_max_depth(
+                                    &buffer,
+                                    self.limits.max_depth,
+                                )
                             }
                         }
-                        Err(_) => object_parser::parse_indirect_object(&buffer),
+                        Err(_) => object_parser::parse_indirect_object_with_max_depth(
+                            &buffer,
+                            self.limits.max_depth,
+                        ),
                     };
 
                     match parsed {
@@ -2344,7 +2370,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let obj_data = data
             .get(obj_offset..next_offset)
             .ok_or_else(|| AstError::ParseError("Invalid object stream offsets".to_string()))?;
-        match object_parser::parse_value(obj_data) {
+        match object_parser::parse_value_with_max_depth(obj_data, self.limits.max_depth) {
             Ok((_, value)) => Ok(value),
             Err(err) if self.tolerant => {
                 log::warn!("Failed to parse compressed object: {:?}", err);
