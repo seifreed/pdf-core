@@ -167,18 +167,20 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             if let Ok((_, (_obj_id, PdfValue::Stream(stream)))) =
                 object_parser::parse_indirect_object(&buffer)
             {
-                return crate::parser::xref::parse_xref_stream(&stream, limits).map(|entries| {
-                    entries
-                        .into_iter()
-                        .filter_map(|(id, entry)| {
-                            if let XRefEntry::InUse { offset, .. } = entry {
-                                Some((id, offset))
-                            } else {
-                                None
-                            }
-                        })
-                        .collect()
-                });
+                return crate::parser::xref::parse_xref_stream_with_limits(&stream, limits).map(
+                    |entries| {
+                        entries
+                            .into_iter()
+                            .filter_map(|(id, entry)| {
+                                if let XRefEntry::InUse { offset, .. } = entry {
+                                    Some((id, offset))
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect()
+                    },
+                );
             }
         }
 
@@ -419,7 +421,8 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
             if let Some(PdfValue::Dictionary(colorspaces)) = resources.get("ColorSpace") {
                 for (cs_name, cs_value) in colorspaces.iter() {
-                    let mut parser = ColorSpaceParser::new(ast, &resolver_map, &self.limits);
+                    let mut parser =
+                        ColorSpaceParser::new_with_limits(ast, &resolver_map, &self.limits);
                     if let Some(cs_id) = parser.parse_colorspace(cs_value) {
                         self.add_edge(ast, node_id, cs_id, EdgeType::Resource)?;
                         if let Some(cs_node) = ast.get_node_mut(cs_id) {

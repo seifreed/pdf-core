@@ -55,7 +55,11 @@ pub struct PdfFileParser<R: Read + Seek + BufRead> {
 }
 
 impl<R: Read + Seek + BufRead> PdfFileParser<R> {
-    pub fn new(
+    pub fn new(reader: R, mode: ParseMode, max_errors: usize) -> AstResult<Self> {
+        Self::new_with_limits(reader, mode, max_errors, PerformanceLimits::default())
+    }
+
+    pub fn new_with_limits(
         mut reader: R,
         mode: ParseMode,
         max_errors: usize,
@@ -2787,7 +2791,7 @@ mod tests {
         let length_offset = data.len() as u64;
         data.extend_from_slice(b"5 0 obj\n15\nendobj\n");
 
-        let mut parser = Parser::new(
+        let mut parser = Parser::new_with_limits(
             BufReader::new(Cursor::new(data)),
             ParseMode::Strict,
             0,

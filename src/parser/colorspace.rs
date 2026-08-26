@@ -9,19 +9,23 @@ use crate::types::{PdfArray, PdfDictionary, PdfValue};
 pub struct ColorSpaceParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
-    limits: &'a PerformanceLimits,
+    limits: PerformanceLimits,
 }
 
 impl<'a> ColorSpaceParser<'a> {
-    pub fn new(
+    pub fn new(ast: &'a mut PdfAstGraph, resolver: &'a ObjectNodeMap) -> Self {
+        Self::new_with_limits(ast, resolver, &PerformanceLimits::default())
+    }
+
+    pub fn new_with_limits(
         ast: &'a mut PdfAstGraph,
         resolver: &'a ObjectNodeMap,
-        limits: &'a PerformanceLimits,
+        limits: &PerformanceLimits,
     ) -> Self {
         ColorSpaceParser {
             ast,
             resolver,
-            limits,
+            limits: limits.clone(),
         }
     }
 
@@ -659,7 +663,7 @@ mod tests {
             ))])),
         ];
 
-        let mut parser = ColorSpaceParser::new(&mut ast, &resolver, &limits);
+        let mut parser = ColorSpaceParser::new_with_limits(&mut ast, &resolver, &limits);
         for value in malformed {
             assert!(parser.parse_colorspace(&value).is_none());
         }

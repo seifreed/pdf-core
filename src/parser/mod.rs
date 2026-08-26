@@ -163,7 +163,7 @@ impl PdfParser {
     /// # Errors
     /// Returns `AstError::ParseError` if the PDF cannot be parsed
     pub fn parse<R: Read + Seek + BufRead>(&self, reader: R) -> AstResult<PdfDocument> {
-        let parser = document_parser::DocumentParser::new(
+        let parser = document_parser::DocumentParser::new_with_limits(
             reader,
             self.mode,
             self.max_errors,

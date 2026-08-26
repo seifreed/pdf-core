@@ -11,7 +11,16 @@ pub struct DocumentParser<R: Read + Seek + BufRead> {
 }
 
 impl<R: Read + Seek + BufRead> DocumentParser<R> {
-    pub fn new(reader: R, mode: ParseMode, max_errors: usize, limits: PerformanceLimits) -> Self {
+    pub fn new(reader: R, mode: ParseMode, max_errors: usize) -> Self {
+        Self::new_with_limits(reader, mode, max_errors, PerformanceLimits::default())
+    }
+
+    pub fn new_with_limits(
+        reader: R,
+        mode: ParseMode,
+        max_errors: usize,
+        limits: PerformanceLimits,
+    ) -> Self {
         DocumentParser {
             reader,
             mode,
@@ -21,7 +30,8 @@ impl<R: Read + Seek + BufRead> DocumentParser<R> {
     }
 
     pub fn parse(self) -> AstResult<PdfDocument> {
-        let parser = PdfFileParser::new(self.reader, self.mode, self.max_errors, self.limits)?;
+        let parser =
+            PdfFileParser::new_with_limits(self.reader, self.mode, self.max_errors, self.limits)?;
         parser.parse()
     }
 }

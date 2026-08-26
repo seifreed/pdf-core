@@ -63,3 +63,8 @@ The next release will be cut after the full CI and signed-tag checklist passes.
 - veraPDF comparison now runs as one batch over the pinned corpus and separates
   tolerant parsing from strict-mode rejection metrics.
 - Fixed the corpus benchmark to ignore non-PDF metadata files.
+- Preserved the pre-0.1.0 public constructor signatures for xref, color-space,
+  document, and file parsers while retaining the bounded `*_with_limits` APIs.
+- Added a semver audit against the published `0.1.0` baseline; public struct
+  field additions remain an intentional API-freeze blocker for the next major
+  compatibility milestone.

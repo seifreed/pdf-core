@@ -95,7 +95,11 @@ fn parse_xref_entry(input: &[u8]) -> IResult<&[u8], XRefEntry> {
 
 /// Parse XRef Stream (PDF 1.5+)
 /// XRef streams are compressed streams that contain the cross-reference information
-pub fn parse_xref_stream(
+pub fn parse_xref_stream(stream: &PdfStream) -> Result<Vec<(ObjectId, XRefEntry)>, String> {
+    parse_xref_stream_with_limits(stream, &PerformanceLimits::default())
+}
+
+pub fn parse_xref_stream_with_limits(
     stream: &PdfStream,
     limits: &PerformanceLimits,
 ) -> Result<Vec<(ObjectId, XRefEntry)>, String> {
@@ -495,8 +499,7 @@ mod tests {
             None,
         );
 
-        let error = parse_xref_stream(&stream, &PerformanceLimits::default())
-            .expect_err("negative width must be rejected");
+        let error = parse_xref_stream(&stream).expect_err("negative width must be rejected");
         assert!(error.contains("non-negative"));
     }
 
@@ -511,8 +514,7 @@ mod tests {
             Some(vec![PdfValue::Integer(-1), PdfValue::Integer(1)]),
         );
 
-        let error = parse_xref_stream(&stream, &PerformanceLimits::default())
-            .expect_err("negative index must be rejected");
+        let error = parse_xref_stream(&stream).expect_err("negative index must be rejected");
         assert!(error.contains("non-negative"));
     }
 
@@ -527,8 +529,7 @@ mod tests {
             None,
         );
 
-        let error = parse_xref_stream(&stream, &PerformanceLimits::default())
-            .expect_err("wide field must be rejected");
+        let error = parse_xref_stream(&stream).expect_err("wide field must be rejected");
         assert!(error.contains("8 bytes"));
     }
 
@@ -564,7 +565,7 @@ mod tests {
         };
         limits.refresh_budget();
 
-        let error = parse_xref_stream(&stream, &limits)
+        let error = super::parse_xref_stream_with_limits(&stream, &limits)
             .expect_err("xref data over the shared budget must be rejected");
         assert!(error.contains("DecodedBytes"));
     }
