@@ -53,4 +53,5 @@ The next release will be cut after the full CI and signed-tag checklist passes.
 - Hardened color-space and page-tree array parsing against malformed input without unchecked indexing.
 - Hardened predictor dimension arithmetic against zero values and integer overflow.
 - Rejected overflowing ASCII85 tuples and fuzzed every stream-filter variant.
+- Preserved AST node source offsets and sizes through graph serialization.
 - Fixed the corpus benchmark to ignore non-PDF metadata files.

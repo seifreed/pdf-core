@@ -78,6 +78,10 @@ pub struct SerializableNode {
     pub node_type: String,
     pub value: SerializableValue,
     pub object_id: Option<(u32, u16)>,
+    #[serde(default)]
+    pub offset: Option<u64>,
+    #[serde(default)]
+    pub size: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,6 +180,8 @@ impl GraphSerializer {
                 node_type: node_type_name(&node.node_type).to_string(),
                 value: Self::serialize_value(&node.value),
                 object_id,
+                offset: node.metadata.offset,
+                size: node.metadata.size,
             };
 
             self.nodes.push(serialized_node);
@@ -300,6 +306,11 @@ impl GraphDeserializer {
                 Self::parse_node_type(&serialized_node.node_type, serialized_node.object_id)?;
             let value = Self::deserialize_value(&serialized_node.value)?;
             let node_id = ast.create_node(node_type, value);
+            let node = ast
+                .get_node_mut(node_id)
+                .ok_or_else(|| format!("Failed to restore node {}", serialized_node.id))?;
+            node.metadata.offset = serialized_node.offset;
+            node.metadata.size = serialized_node.size;
 
             id_map.insert(serialized_node.id, node_id);
         }
@@ -756,6 +767,8 @@ mod tests {
                 node_type: "Object".to_string(),
                 value: SerializableValue::Null,
                 object_id: None,
+                offset: None,
+                size: None,
             }],
             edges: Vec::new(),
             root: Some(0),
@@ -796,6 +809,24 @@ mod tests {
 
         let restored = GraphDeserializer::deserialize(graph).unwrap();
         assert!(restored.get_node_by_object(object_id).is_some());
+    }
+
+    #[test]
+    fn preserves_node_source_metadata_across_round_trip() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.create_node(NodeType::Root, PdfValue::Null);
+        ast.set_root(root_id);
+        ast.get_node_mut(root_id).unwrap().metadata.offset = Some(123);
+        ast.get_node_mut(root_id).unwrap().metadata.size = Some(45);
+
+        let serialized = SerializableGraph::from_ast(&ast);
+        assert_eq!(serialized.nodes[0].offset, Some(123));
+        assert_eq!(serialized.nodes[0].size, Some(45));
+
+        let restored = GraphDeserializer::deserialize(serialized).unwrap();
+        let restored_node = restored.get_node(restored.root.unwrap()).unwrap();
+        assert_eq!(restored_node.metadata.offset, Some(123));
+        assert_eq!(restored_node.metadata.size, Some(45));
     }
 
     #[test]

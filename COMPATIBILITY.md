@@ -24,8 +24,8 @@ documented migration note.
 The AST serialization schema is currently `1.1.0` and is experimental. The
 deserializer migrates the historical `1.0` envelope when object identities are
 complete; unknown, inconsistent, or incomplete versions are rejected. Serialized
-object identities, node types, edge types, and schema version must remain
-self-describing rather than inventing values.
+object identities, node types, edge types, source offsets, source sizes, and
+schema version must remain self-describing rather than inventing values.
 
 ## Security Scope
 
