@@ -60,6 +60,13 @@
 This project is not production-ready for untrusted PDFs without process
 isolation and an application-level resource policy.
 
+## Compatibility
+
+- **MSRV:** Rust 1.85.0.
+- **Project:** `pdf-core`.
+- **Crate:** `pdf-ast` for compatibility with existing consumers.
+- **AST schema:** experimental `1.1.0`; see [COMPATIBILITY.md](COMPATIBILITY.md).
+
 ---
 
 ## Supported Use Cases
