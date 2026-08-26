@@ -13,3 +13,14 @@ fn reject_no_codestream() {
     ];
     assert!(decode_jpx_to_codestream(&data).is_err());
 }
+
+#[test]
+fn reject_extended_length_that_exceeds_platform_size() {
+    let mut data = vec![
+        0x00, 0x00, 0x00, 0x0C, b'j', b'P', b' ', b' ', 0x0D, 0x0A, 0x87, 0x0A,
+    ];
+    data.extend_from_slice(&[0, 0, 0, 1, b'j', b'p', b'2', b'c']);
+    data.extend_from_slice(&u64::MAX.to_be_bytes());
+
+    assert!(decode_jpx_to_codestream(&data).is_err());
+}

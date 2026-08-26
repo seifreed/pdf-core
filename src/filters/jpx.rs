@@ -21,38 +21,44 @@ pub fn decode_jpx_to_codestream(data: &[u8]) -> Result<Vec<u8>, FilterError> {
     let mut codestreams = Vec::new();
     let mut saw_signature = false;
 
-    while pos + 8 <= data.len() {
-        let length = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
-        let box_type = &data[pos + 4..pos + 8];
-        pos += 8;
+    while pos <= data.len().saturating_sub(8) {
+        let header_end = pos
+            .checked_add(8)
+            .ok_or_else(|| FilterError::InvalidData("JP2 header offset overflow".to_string()))?;
+        let header = data
+            .get(pos..header_end)
+            .ok_or_else(|| FilterError::InvalidData("JP2 header outside buffer".to_string()))?;
+        let length = u32::from_be_bytes([header[0], header[1], header[2], header[3]]);
+        let box_type = &header[4..8];
+        pos = header_end;
 
         let (box_len, header_extra) = if length == 1 {
-            if pos + 8 > data.len() {
-                return Err(FilterError::InvalidData(
-                    "JP2 box missing extended length".to_string(),
-                ));
-            }
+            let ext_end = pos.checked_add(8).ok_or_else(|| {
+                FilterError::InvalidData("JP2 extended length offset overflow".to_string())
+            })?;
+            let ext = data.get(pos..ext_end).ok_or_else(|| {
+                FilterError::InvalidData("JP2 box missing extended length".to_string())
+            })?;
             let ext_len = u64::from_be_bytes([
-                data[pos],
-                data[pos + 1],
-                data[pos + 2],
-                data[pos + 3],
-                data[pos + 4],
-                data[pos + 5],
-                data[pos + 6],
-                data[pos + 7],
+                ext[0], ext[1], ext[2], ext[3], ext[4], ext[5], ext[6], ext[7],
             ]);
-            pos += 8;
+            pos = ext_end;
             if ext_len < 16 {
                 return Err(FilterError::InvalidData(
                     "JP2 box extended length invalid".to_string(),
                 ));
             }
-            (ext_len as usize, 16)
+            let box_len = usize::try_from(ext_len).map_err(|_| {
+                FilterError::InvalidData("JP2 box length exceeds platform size".to_string())
+            })?;
+            (box_len, 16)
         } else if length == 0 {
             // box extends to end of file
             let remaining = data.len().saturating_sub(pos);
-            (remaining + 8, 8)
+            let box_len = remaining
+                .checked_add(8)
+                .ok_or_else(|| FilterError::InvalidData("JP2 box length overflow".to_string()))?;
+            (box_len, 8)
         } else {
             (length as usize, 8)
         };
@@ -64,14 +70,14 @@ pub fn decode_jpx_to_codestream(data: &[u8]) -> Result<Vec<u8>, FilterError> {
         }
 
         let payload_len = box_len - header_extra;
-        if pos + payload_len > data.len() {
-            return Err(FilterError::InvalidData(
-                "JP2 box length exceeds buffer".to_string(),
-            ));
-        }
+        let payload_end = pos
+            .checked_add(payload_len)
+            .ok_or_else(|| FilterError::InvalidData("JP2 payload offset overflow".to_string()))?;
 
-        let payload = &data[pos..pos + payload_len];
-        pos += payload_len;
+        let payload = data
+            .get(pos..payload_end)
+            .ok_or_else(|| FilterError::InvalidData("JP2 box length exceeds buffer".to_string()))?;
+        pos = payload_end;
 
         match box_type {
             b"jP  " => {
