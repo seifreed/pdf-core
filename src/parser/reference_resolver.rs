@@ -406,7 +406,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
             if let Some(PdfValue::Dictionary(colorspaces)) = resources.get("ColorSpace") {
                 for (cs_name, cs_value) in colorspaces.iter() {
-                    let mut parser = ColorSpaceParser::new(ast, &resolver_map);
+                    let mut parser = ColorSpaceParser::new(ast, &resolver_map, &self.limits);
                     if let Some(cs_id) = parser.parse_colorspace(cs_value) {
                         ast.add_edge(node_id, cs_id, EdgeType::Resource);
                         if let Some(cs_node) = ast.get_node_mut(cs_id) {

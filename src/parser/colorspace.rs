@@ -2,17 +2,27 @@ use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
 use crate::filters::decode_stream_with_limits;
 use crate::metadata::icc::parse_icc_profile;
 use crate::parser::reference_resolver::ObjectNodeMap;
+use crate::performance::PerformanceLimits;
 use crate::types::primitive::PdfName;
 use crate::types::{PdfArray, PdfDictionary, PdfValue};
 
 pub struct ColorSpaceParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
+    limits: &'a PerformanceLimits,
 }
 
 impl<'a> ColorSpaceParser<'a> {
-    pub fn new(ast: &'a mut PdfAstGraph, resolver: &'a ObjectNodeMap) -> Self {
-        ColorSpaceParser { ast, resolver }
+    pub fn new(
+        ast: &'a mut PdfAstGraph,
+        resolver: &'a ObjectNodeMap,
+        limits: &'a PerformanceLimits,
+    ) -> Self {
+        ColorSpaceParser {
+            ast,
+            resolver,
+            limits,
+        }
     }
 
     pub fn parse_colorspace(&mut self, value: &PdfValue) -> Option<NodeId> {
@@ -159,8 +169,21 @@ impl<'a> ColorSpaceParser<'a> {
         };
 
         let filters = stream.get_filters();
-        let decoded = decode_stream_with_limits(raw, &filters, 10 * 1024 * 1024, 50)
-            .unwrap_or_else(|_| raw.to_vec());
+        let decoded = decode_stream_with_limits(
+            raw,
+            &filters,
+            self.limits.max_object_size_mb.saturating_mul(1024 * 1024),
+            self.limits.max_stream_decode_ratio,
+        )
+        .ok()
+        .and_then(|decoded| {
+            self.limits
+                .budget
+                .consume_decoded(decoded.len() as u64)
+                .ok()
+                .map(|_| decoded)
+        })
+        .unwrap_or_default();
 
         let info = match parse_icc_profile(&decoded) {
             Some(info) => info,
