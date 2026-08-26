@@ -14,7 +14,7 @@ fn list_corpus_files(limit: usize) -> Vec<PathBuf> {
         .expect("pdfs dir should exist")
         .filter_map(|entry| entry.ok())
         .map(|entry| entry.path())
-        .filter(|path| path.is_file() && path.file_name().unwrap_or_default() != "CORPUS.json")
+        .filter(|path| path.is_file() && path.extension() == Some(std::ffi::OsStr::new("pdf")))
         .collect();
     files.sort();
     files.truncate(limit);
