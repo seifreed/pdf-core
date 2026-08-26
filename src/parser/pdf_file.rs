@@ -182,36 +182,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             return None;
         }
 
-        Some(Self::extract_linearization_info(&dict))
-    }
-
-    fn extract_linearization_info(
-        dict: &PdfDictionary,
-    ) -> crate::ast::linearization::LinearizationInfo {
-        use crate::ast::linearization::LinearizationInfo;
-
-        let hint_array = dict.get("H").and_then(|v| v.as_array());
-
-        LinearizationInfo {
-            version: dict
-                .get("Linearized")
-                .and_then(|v| v.as_real())
-                .unwrap_or(1.0),
-            file_length: dict.get("L").and_then(|v| v.as_integer()).unwrap_or(0) as u64,
-            hint_stream_offset: hint_array
-                .and_then(|arr| arr.get(0))
-                .and_then(|v| v.as_integer())
-                .unwrap_or(0) as u64,
-            hint_stream_length: hint_array
-                .and_then(|arr| arr.get(1))
-                .and_then(|v| v.as_integer())
-                .map(|l| l as u64),
-            object_count: dict.get("N").and_then(|v| v.as_integer()).unwrap_or(0) as u32,
-            first_page_object_number: dict.get("O").and_then(|v| v.as_integer()).unwrap_or(0)
-                as u32,
-            first_page_end_offset: dict.get("E").and_then(|v| v.as_integer()).unwrap_or(0) as u64,
-            main_xref_table_entries: dict.get("T").and_then(|v| v.as_integer()).unwrap_or(0) as u32,
-        }
+        let stream = PdfStream::new(dict, Vec::new());
+        let linearization = crate::parser::xref::parse_linearization_dict(&stream).ok()?;
+        linearization.validate().ok()?;
+        Some(linearization)
     }
 
     fn read_header(reader: &mut R, tolerant: bool) -> AstResult<PdfVersion> {
@@ -2956,5 +2930,17 @@ mod tests {
         let mut parser = parser;
         let buffer = parser.read_xref_buffer(0).expect("xref data should read");
         assert_eq!(buffer.len(), data.len());
+    }
+
+    #[test]
+    fn ignores_invalid_linearization_dictionaries() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let negative_length =
+            b"1 0 obj\n<< /Linearized 1.0 /L -1 /H [0 0] /O 1 /E 1 /N 1 /T 1 >>\nendobj\n";
+        let missing_length =
+            b"1 0 obj\n<< /Linearized 1.0 /H [0 0] /O 1 /E 1 /N 1 /T 1 >>\nendobj\n";
+
+        assert!(Parser::try_parse_linearization_dict(negative_length).is_none());
+        assert!(Parser::try_parse_linearization_dict(missing_length).is_none());
     }
 }
