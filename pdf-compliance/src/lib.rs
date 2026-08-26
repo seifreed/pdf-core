@@ -138,6 +138,7 @@ fn convert_issue(issue: ValidationIssue, document: &PdfDocument) -> Violation {
         "PDF_A_JAVASCRIPT" => Some("ISO 19005-1:2005, 6.6.1"),
         "NO_TAGGED_STRUCTURE" | "STRUCT_ELEM_MISSING" => Some("ISO 14289-1:2014, 7.1"),
         "LANG_MISSING" | "LANG_EMPTY" => Some("ISO 14289-1:2014, 7.2"),
+        "ALT_TEXT_MISSING" => Some("ISO 14289-1:2014, 7.3"),
         _ => None,
     };
 
@@ -227,6 +228,26 @@ mod tests {
         assert_eq!(
             violation.standard_reference.as_deref(),
             Some("ISO 19005-1:2005, 6.3.4")
+        );
+    }
+
+    #[test]
+    fn preserves_pdfua_alt_text_reference() {
+        let violation = convert_issue(
+            ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "ALT_TEXT_MISSING".to_string(),
+                message: "missing alternative text".to_string(),
+                node_id: None,
+                location: None,
+                suggestion: None,
+            },
+            &PdfDocument::new(PdfVersion::new(1, 7)),
+        );
+
+        assert_eq!(
+            violation.standard_reference.as_deref(),
+            Some("ISO 14289-1:2014, 7.3")
         );
     }
 }
