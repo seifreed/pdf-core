@@ -868,10 +868,16 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         let mut pos = 0;
         let mut count = 0usize;
+        let mut covered_end = 0usize;
         while pos < content.len() {
             if let Some(obj_pos) = Self::find_next_object(&content[pos..]) {
                 let absolute_pos = pos + obj_pos;
+                self.record_forensic_residual(covered_end, absolute_pos);
                 if let Ok((_, obj_id)) = Self::parse_object_header(&content[absolute_pos..]) {
+                    let object_end = object_parser::parse_indirect_object(&content[absolute_pos..])
+                        .ok()
+                        .map(|(remaining, _)| content.len() - remaining.len())
+                        .unwrap_or_else(|| absolute_pos.saturating_add(1));
                     let entry = XRefEntry::InUse {
                         offset: absolute_pos as u64,
                         generation: obj_id.generation,
@@ -888,12 +894,16 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                         forensic.recovered_xref.insert(obj_id, entry);
                     }
                     count += 1;
+                    covered_end = covered_end.max(object_end);
+                    pos = object_end.max(absolute_pos.saturating_add(1));
+                } else {
+                    pos = absolute_pos.saturating_add(1);
                 }
-                pos = absolute_pos + 1;
             } else {
                 break;
             }
         }
+        self.record_forensic_residual(covered_end, content.len());
 
         if count == 0 {
             return Err(AstError::ParseError(
@@ -908,6 +918,22 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         )?;
 
         Ok(())
+    }
+
+    fn record_forensic_residual(&mut self, start: usize, end: usize) {
+        if start >= end {
+            return;
+        }
+        if let Some(forensic) = self.document.forensic.as_mut() {
+            let range = (start as u64, end as u64);
+            if let Some((_, previous_end)) = forensic.residual_ranges.last_mut() {
+                if *previous_end == range.0 {
+                    *previous_end = range.1;
+                    return;
+                }
+            }
+            forensic.residual_ranges.push(range);
+        }
     }
 
     fn record_anomaly(&mut self, code: &str, message: &str, offset: Option<u64>) -> AstResult<()> {

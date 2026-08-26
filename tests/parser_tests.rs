@@ -465,6 +465,12 @@ mod parser_tests {
             .unwrap()
             .recovered_xref
             .contains_key(&ObjectId::new(1, 0)));
+        assert!(!document
+            .forensic
+            .as_ref()
+            .unwrap()
+            .residual_ranges
+            .is_empty());
     }
 
     #[test]
