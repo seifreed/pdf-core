@@ -1,6 +1,6 @@
 [package]
 name = "pdf-ast-python"
-version = "0.1.0"
+version = "0.1.1-alpha"
 edition = "2021"
 authors = ["Marc Rivero <mriverolopez@gmail.com>"]
 description = "Python bindings for PDF-AST"

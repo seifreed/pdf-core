@@ -4,6 +4,10 @@ All notable changes to `pdf-core` are documented here.
 
 ## Unreleased
 
+The next release will be cut after the full CI and signed-tag checklist passes.
+
+## 0.1.1-alpha
+
 - Consolidate the repository under `pdf-core` while keeping the `pdf-ast`
   crate name for compatibility.
 - Mark parser, schema, compliance, bindings, and auxiliary tools as

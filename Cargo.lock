@@ -1462,7 +1462,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-ast"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1522,7 +1522,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-ast-python"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "pdf-ast",
  "pyo3",
