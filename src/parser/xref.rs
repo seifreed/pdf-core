@@ -349,15 +349,31 @@ pub fn parse_linearization_dict(stream: &PdfStream) -> Result<LinearizationInfo,
         .and_then(|v| v.as_integer())
         .ok_or("Missing /T (main xref table entries) in linearization dict")?;
 
+    let non_negative = |value: i64, name: &str| {
+        u64::try_from(value).map_err(|_| format!("Linearization /{} must be non-negative", name))
+    };
+    let length = non_negative(length, "L")?;
+    let hint_offset = non_negative(hint_offset, "H")?;
+    let hint_length = hint_length
+        .map(|value| non_negative(value, "H"))
+        .transpose()?;
+    let object_count = u32::try_from(non_negative(object_count, "N")?)
+        .map_err(|_| "Linearization /N exceeds u32".to_string())?;
+    let first_page_offset = u32::try_from(non_negative(first_page_offset, "O")?)
+        .map_err(|_| "Linearization /O exceeds u32".to_string())?;
+    let first_page_end = non_negative(first_page_end, "E")?;
+    let main_xref_entries = u32::try_from(non_negative(main_xref_entries, "T")?)
+        .map_err(|_| "Linearization /T exceeds u32".to_string())?;
+
     Ok(LinearizationInfo {
         version: linearized_version,
-        file_length: length as u64,
-        hint_stream_offset: hint_offset as u64,
-        hint_stream_length: hint_length.map(|l| l as u64),
-        object_count: object_count as u32,
-        first_page_object_number: first_page_offset as u32,
-        first_page_end_offset: first_page_end as u64,
-        main_xref_table_entries: main_xref_entries as u32,
+        file_length: length,
+        hint_stream_offset: hint_offset,
+        hint_stream_length: hint_length,
+        object_count,
+        first_page_object_number: first_page_offset,
+        first_page_end_offset: first_page_end,
+        main_xref_table_entries: main_xref_entries,
     })
 }
 
@@ -492,5 +508,28 @@ mod tests {
 
         let error = parse_xref_stream(&stream).expect_err("wide field must be rejected");
         assert!(error.contains("8 bytes"));
+    }
+
+    #[test]
+    fn rejects_negative_linearization_offsets() {
+        let mut dict = PdfDictionary::new();
+        dict.insert("Linearized", PdfValue::Real(1.0));
+        dict.insert("L", PdfValue::Integer(-1));
+        dict.insert(
+            "H",
+            PdfValue::Array(PdfArray::from(vec![
+                PdfValue::Integer(0),
+                PdfValue::Integer(0),
+            ])),
+        );
+        dict.insert("N", PdfValue::Integer(1));
+        dict.insert("O", PdfValue::Integer(1));
+        dict.insert("E", PdfValue::Integer(1));
+        dict.insert("T", PdfValue::Integer(1));
+        let stream = PdfStream::new(dict, Vec::new());
+
+        let error = super::parse_linearization_dict(&stream)
+            .expect_err("negative linearization length must be rejected");
+        assert!(error.contains("non-negative"));
     }
 }
