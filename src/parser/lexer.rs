@@ -8,6 +8,39 @@ use nom::{
     IResult,
 };
 
+fn parse_u8(input: &[u8]) -> Result<u8, &'static str> {
+    std::str::from_utf8(input)
+        .map_err(|_| "invalid numeric token")?
+        .parse::<u8>()
+        .map_err(|_| "numeric token out of range")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{integer, pdf_header, real};
+
+    #[test]
+    fn numeric_overflow_is_a_parse_error() {
+        assert!(integer(b"999999999999999999999999").is_err());
+        assert!(real(b"1e999999999999999999999").is_err());
+        assert!(pdf_header(b"%PDF-999.0").is_err());
+    }
+}
+
+fn parse_i64(input: &[u8]) -> Result<i64, &'static str> {
+    std::str::from_utf8(input)
+        .map_err(|_| "invalid numeric token")?
+        .parse::<i64>()
+        .map_err(|_| "numeric token out of range")
+}
+
+fn parse_f64(input: &[u8]) -> Result<f64, &'static str> {
+    std::str::from_utf8(input)
+        .map_err(|_| "invalid numeric token")?
+        .parse::<f64>()
+        .map_err(|_| "invalid real number")
+}
+
 pub fn skip_whitespace(input: &[u8]) -> IResult<&[u8], ()> {
     value((), multispace0)(input)
 }
@@ -25,13 +58,9 @@ pub fn comment(input: &[u8]) -> IResult<&[u8], &[u8]> {
 
 pub fn pdf_header(input: &[u8]) -> IResult<&[u8], (u8, u8)> {
     let (input, _) = tag(b"%PDF-")(input)?;
-    let (input, major) = map_res(digit1, |s: &[u8]| {
-        std::str::from_utf8(s).unwrap().parse::<u8>()
-    })(input)?;
+    let (input, major) = map_res(digit1, parse_u8)(input)?;
     let (input, _) = char('.')(input)?;
-    let (input, minor) = map_res(digit1, |s: &[u8]| {
-        std::str::from_utf8(s).unwrap().parse::<u8>()
-    })(input)?;
+    let (input, minor) = map_res(digit1, parse_u8)(input)?;
     Ok((input, (major, minor)))
 }
 
@@ -77,9 +106,7 @@ pub fn keyword(input: &[u8]) -> IResult<&[u8], &[u8]> {
 }
 
 pub fn integer(input: &[u8]) -> IResult<&[u8], i64> {
-    map_res(recognize(pair(opt(one_of("+-")), digit1)), |s: &[u8]| {
-        std::str::from_utf8(s).unwrap().parse::<i64>()
-    })(input)
+    map_res(recognize(pair(opt(one_of("+-")), digit1)), parse_i64)(input)
 }
 
 pub fn real(input: &[u8]) -> IResult<&[u8], f64> {
@@ -91,7 +118,7 @@ pub fn real(input: &[u8]) -> IResult<&[u8], f64> {
                 recognize(tuple((opt(digit1), char('.'), digit1))),
             )),
         ))),
-        |s: &[u8]| std::str::from_utf8(s).unwrap().parse::<f64>(),
+        parse_f64,
     )(input)
 }
 
@@ -161,7 +188,10 @@ fn octal_escape(input: &[u8]) -> IResult<&[u8], u8> {
             opt(one_of("01234567")),
             opt(one_of("01234567")),
         ))),
-        |s: &[u8]| u8::from_str_radix(std::str::from_utf8(s).unwrap(), 8),
+        |s: &[u8]| {
+            let text = std::str::from_utf8(s).map_err(|_| "invalid octal escape")?;
+            u8::from_str_radix(text, 8).map_err(|_| "octal escape out of range")
+        },
     )(input)
 }
 
