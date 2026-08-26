@@ -21,6 +21,8 @@ pub struct PdfDocument {
     pub outlines: Option<OutlineTree>,
     pub struct_tree: Option<StructureTree>,
     pub optional_content: Option<OptionalContentConfig>,
+    pub diagnostics: Vec<ParseDiagnostic>,
+    pub forensic: Option<ForensicSnapshot>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -35,6 +37,28 @@ pub struct CrossReferenceTable {
     pub streams: Vec<XRefStream>,
     pub prev_offset: Option<u64>,
     pub hybrid_mode: bool,
+}
+
+/// Structured parser finding retained for tolerant and forensic consumers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ParseDiagnostic {
+    pub object_id: Option<ObjectId>,
+    pub offset: Option<u64>,
+    pub error_code: String,
+    pub recovery_action: String,
+    pub confidence: f32,
+    pub bytes_consumed: u64,
+    pub message: String,
+}
+
+/// Raw xref evidence kept when forensic parsing is requested.
+#[derive(Debug, Clone, Default)]
+pub struct ForensicSnapshot {
+    pub declared_xref: HashMap<ObjectId, XRefEntry>,
+    pub recovered_xref: HashMap<ObjectId, XRefEntry>,
+    pub duplicate_objects: Vec<ObjectId>,
+    pub overwritten_objects: Vec<ObjectId>,
+    pub residual_ranges: Vec<(u64, u64)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -145,6 +169,8 @@ impl PdfDocument {
             outlines: None,
             struct_tree: None,
             optional_content: None,
+            diagnostics: Vec::new(),
+            forensic: None,
         }
     }
 

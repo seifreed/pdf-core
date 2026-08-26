@@ -10,6 +10,7 @@ use crate::multimedia::threed::extract_threed_info;
 use crate::parser::lexer::*;
 use crate::parser::object_parser;
 use crate::parser::xref::parse_xref_table;
+use crate::parser::ParseMode;
 use crate::performance::PerformanceLimits;
 use crate::security::ltv::extract_ltv_info;
 use crate::types::*;
@@ -43,7 +44,9 @@ const XREF_RECOVERY_SEARCH_RADIUS: u64 = 2048;
 #[allow(dead_code)]
 pub struct PdfFileParser<R: Read + Seek + BufRead> {
     reader: R,
+    mode: ParseMode,
     tolerant: bool,
+    max_errors: usize,
     document: PdfDocument,
     object_cache: HashMap<ObjectId, PdfValue>,
     xref_offset: Option<u64>,
@@ -52,7 +55,13 @@ pub struct PdfFileParser<R: Read + Seek + BufRead> {
 }
 
 impl<R: Read + Seek + BufRead> PdfFileParser<R> {
-    pub fn new(mut reader: R, tolerant: bool, limits: PerformanceLimits) -> AstResult<Self> {
+    pub fn new(
+        mut reader: R,
+        mode: ParseMode,
+        max_errors: usize,
+        limits: PerformanceLimits,
+    ) -> AstResult<Self> {
+        let tolerant = mode.is_tolerant();
         let version = Self::read_header(&mut reader, tolerant)?;
         let file_size = Self::read_file_size(&mut reader)?;
         if file_size > (limits.max_file_size_mb as u64) * 1024 * 1024 {
@@ -69,10 +78,15 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         let mut document = PdfDocument::new(version);
         document.metadata.file_size = Some(file_size);
+        if mode.is_forensic() {
+            document.forensic = Some(Default::default());
+        }
 
         Ok(PdfFileParser {
             reader,
+            mode,
             tolerant,
+            max_errors,
             document,
             object_cache: HashMap::new(),
             xref_offset: None,
@@ -313,7 +327,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     "xref_prev_cycle",
                     "Detected cycle in xref /Prev chain",
                     Some(offset),
-                );
+                )?;
                 break;
             }
 
@@ -325,7 +339,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                             "xref_parse_failed",
                             "Failed to parse xref section; falling back to scan",
                             Some(offset),
-                        );
+                        )?;
                         self.recover_xref_by_scan()?;
                         break;
                     } else {
@@ -336,6 +350,15 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             let (added, modified, deleted) = self.compute_revision_deltas(&aggregated, &entries);
 
             for (obj_id, entry) in &entries {
+                if let Some(previous_entry) = aggregated.get(obj_id) {
+                    if previous_entry != entry {
+                        if let Some(forensic) = self.document.forensic.as_mut() {
+                            if !forensic.overwritten_objects.contains(obj_id) {
+                                forensic.overwritten_objects.push(*obj_id);
+                            }
+                        }
+                    }
+                }
                 if !self.document.xref.entries.contains_key(obj_id) {
                     self.document.add_xref_entry(*obj_id, *entry);
                 }
@@ -395,6 +418,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 false,
             ),
         };
+        let mut recovered = false;
 
         if !parsed {
             if let Some((fallback_entries, fallback_trailer)) =
@@ -403,11 +427,12 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 entries.extend(fallback_entries);
                 trailer = fallback_trailer;
                 parsed = true;
+                recovered = true;
                 self.record_anomaly(
                     "xref_recovered_near_offset",
                     "Recovered xref by scanning near declared offset",
                     Some(offset),
-                );
+                )?;
             }
         }
 
@@ -419,6 +444,15 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         if entries.is_empty() && self.tolerant {
             self.recover_xref_by_scan()?;
+        }
+
+        if let Some(forensic) = self.document.forensic.as_mut() {
+            let target = if recovered {
+                &mut forensic.recovered_xref
+            } else {
+                &mut forensic.declared_xref
+            };
+            target.extend(entries.iter().map(|(id, entry)| (*id, *entry)));
         }
 
         Ok((entries, trailer))
@@ -547,7 +581,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn decode_xref_stream_entries(
-        &self,
+        &mut self,
         stream: &PdfStream,
     ) -> AstResult<std::collections::HashMap<ObjectId, XRefEntry>> {
         let mut entries = std::collections::HashMap::new();
@@ -565,7 +599,24 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             self.limits.max_stream_decode_ratio,
         ) {
             Ok(data) => data,
-            Err(_) => return Ok(entries),
+            Err(err) => {
+                if self.tolerant {
+                    self.record_diagnostic(
+                        None,
+                        None,
+                        "xref_stream_decode",
+                        "continued with empty xref entries",
+                        0.9,
+                        raw_data.len() as u64,
+                        &err.to_string(),
+                    )?;
+                    return Ok(entries);
+                }
+                return Err(AstError::ParseError(format!(
+                    "Failed to decode xref stream: {}",
+                    err
+                )));
+            }
         };
 
         let parsed_entries = self.parse_xref_stream_entries(&decoded, &stream.dict)?;
@@ -582,9 +633,12 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         dict: &PdfDictionary,
     ) -> AstResult<Vec<(ObjectId, XRefEntry)>> {
         let widths = Self::extract_xref_field_widths(dict)?;
-        let index = Self::extract_xref_index_ranges(dict);
+        let index = Self::extract_xref_index_ranges(dict)?;
 
-        let entry_size: usize = widths.iter().sum();
+        let entry_size = widths
+            .iter()
+            .try_fold(0usize, |total, width| total.checked_add(*width))
+            .ok_or_else(|| AstError::ParseError("Xref entry size overflow".to_string()))?;
         if entry_size == 0 {
             return Ok(Vec::new());
         }
@@ -600,17 +654,21 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         let mut widths = [0usize; 3];
         for (i, w) in w_array.iter().take(3).enumerate() {
-            widths[i] = w.as_integer().unwrap_or(0) as usize;
+            let width = w
+                .as_integer()
+                .ok_or_else(|| AstError::ParseError("Invalid xref field width".to_string()))?;
+            widths[i] = usize::try_from(width)
+                .map_err(|_| AstError::ParseError("Xref field width is too large".to_string()))?;
         }
         Ok(widths)
     }
 
-    fn extract_xref_index_ranges(dict: &PdfDictionary) -> Vec<(u32, u32)> {
-        let default_range = || {
-            vec![(
-                0,
-                dict.get("Size").and_then(|v| v.as_integer()).unwrap_or(0) as u32,
-            )]
+    fn extract_xref_index_ranges(dict: &PdfDictionary) -> AstResult<Vec<(u32, u32)>> {
+        let default_range = || -> AstResult<Vec<(u32, u32)>> {
+            let size = dict.get("Size").and_then(|v| v.as_integer()).unwrap_or(0);
+            let size = u32::try_from(size)
+                .map_err(|_| AstError::ParseError("Invalid xref Size".to_string()))?;
+            Ok(vec![(0, size)])
         };
 
         let index_array = match dict.get("Index").and_then(|v| v.as_array()) {
@@ -621,18 +679,28 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let mut pairs = Vec::new();
         let mut iter = index_array.iter();
         while let Some(start) = iter.next() {
-            if let Some(count) = iter.next() {
-                pairs.push((
-                    start.as_integer().unwrap_or(0) as u32,
-                    count.as_integer().unwrap_or(0) as u32,
-                ));
-            }
+            let count = iter.next().ok_or_else(|| {
+                AstError::ParseError("Xref Index must contain start/count pairs".to_string())
+            })?;
+            let start = u32::try_from(
+                start
+                    .as_integer()
+                    .ok_or_else(|| AstError::ParseError("Invalid xref Index start".to_string()))?,
+            )
+            .map_err(|_| AstError::ParseError("Invalid xref Index start".to_string()))?;
+            let count = u32::try_from(
+                count
+                    .as_integer()
+                    .ok_or_else(|| AstError::ParseError("Invalid xref Index count".to_string()))?,
+            )
+            .map_err(|_| AstError::ParseError("Invalid xref Index count".to_string()))?;
+            pairs.push((start, count));
         }
 
         if pairs.is_empty() {
             default_range()
         } else {
-            pairs
+            Ok(pairs)
         }
     }
 
@@ -644,18 +712,24 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         index: &[(u32, u32)],
     ) -> AstResult<Vec<(ObjectId, XRefEntry)>> {
         let mut entries = Vec::new();
-        let mut offset = 0;
+        let mut offset = 0usize;
 
         for (start, count) in index {
             for i in 0..*count {
-                if offset + entry_size > data.len() {
+                let end = offset.checked_add(entry_size).ok_or_else(|| {
+                    AstError::ParseError("Xref entry offset overflow".to_string())
+                })?;
+                if end > data.len() {
                     break;
                 }
-                let obj_id = ObjectId::new(start + i, 0);
-                let entry_data = &data[offset..offset + entry_size];
+                let object_number = start.checked_add(i).ok_or_else(|| {
+                    AstError::ParseError("Xref object number overflow".to_string())
+                })?;
+                let obj_id = ObjectId::new(object_number, 0);
+                let entry_data = &data[offset..end];
                 let entry = self.parse_xref_stream_entry(entry_data, widths)?;
                 entries.push((obj_id, entry));
-                offset += entry_size;
+                offset = end;
             }
         }
 
@@ -788,13 +862,21 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             if let Some(obj_pos) = Self::find_next_object(&content[pos..]) {
                 let absolute_pos = pos + obj_pos;
                 if let Ok((_, obj_id)) = Self::parse_object_header(&content[absolute_pos..]) {
-                    self.document.xref.entries.insert(
-                        obj_id,
-                        XRefEntry::InUse {
-                            offset: absolute_pos as u64,
-                            generation: obj_id.generation,
-                        },
-                    );
+                    let entry = XRefEntry::InUse {
+                        offset: absolute_pos as u64,
+                        generation: obj_id.generation,
+                    };
+                    if self.document.xref.entries.contains_key(&obj_id) {
+                        if let Some(forensic) = self.document.forensic.as_mut() {
+                            if !forensic.duplicate_objects.contains(&obj_id) {
+                                forensic.duplicate_objects.push(obj_id);
+                            }
+                        }
+                    }
+                    self.document.xref.entries.insert(obj_id, entry);
+                    if let Some(forensic) = self.document.forensic.as_mut() {
+                        forensic.recovered_xref.insert(obj_id, entry);
+                    }
                     count += 1;
                 }
                 pos = absolute_pos + 1;
@@ -813,12 +895,13 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             "xref_recovered_by_scan",
             "Recovered xref entries by scanning for objects",
             None,
-        );
+        )?;
 
         Ok(())
     }
 
-    fn record_anomaly(&mut self, code: &str, message: &str, offset: Option<u64>) {
+    fn record_anomaly(&mut self, code: &str, message: &str, offset: Option<u64>) -> AstResult<()> {
+        self.record_diagnostic(None, offset, code, "xref recovery", 0.5, 0, message)?;
         let node_id = self
             .document
             .ast
@@ -834,6 +917,35 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 .properties
                 .insert("anomaly_code".to_string(), code.to_string());
         }
+        Ok(())
+    }
+
+    fn record_diagnostic(
+        &mut self,
+        object_id: Option<ObjectId>,
+        offset: Option<u64>,
+        error_code: &str,
+        recovery_action: &str,
+        confidence: f32,
+        bytes_consumed: u64,
+        message: &str,
+    ) -> AstResult<()> {
+        if self.document.diagnostics.len() >= self.max_errors {
+            return Err(AstError::ParseError(format!(
+                "Maximum parser diagnostics exceeded: {}",
+                self.max_errors
+            )));
+        }
+        self.document.diagnostics.push(crate::ast::ParseDiagnostic {
+            object_id,
+            offset,
+            error_code: error_code.to_string(),
+            recovery_action: recovery_action.to_string(),
+            confidence: confidence.clamp(0.0, 1.0),
+            bytes_consumed,
+            message: message.to_string(),
+        });
+        Ok(())
     }
 
     fn find_next_object(data: &[u8]) -> Option<usize> {
@@ -912,8 +1024,22 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                             Ok(decoded) => {
                                 self.parse_xref_stream_data(&decoded, &stream.dict)?;
                             }
-                            Err(_) => {
-                                // Failed to decode stream data
+                            Err(err) if self.tolerant => {
+                                self.record_diagnostic(
+                                    Some(obj_id),
+                                    self.xref_offset,
+                                    "xref_stream_decode",
+                                    "continued with empty xref entries",
+                                    0.9,
+                                    raw_data.len() as u64,
+                                    &err.to_string(),
+                                )?;
+                            }
+                            Err(err) => {
+                                return Err(AstError::ParseError(format!(
+                                    "Failed to decode xref stream: {}",
+                                    err
+                                )));
                             }
                         }
                     }
@@ -941,37 +1067,19 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn parse_xref_stream_data(&mut self, data: &[u8], dict: &PdfDictionary) -> AstResult<()> {
-        // Get W array (widths of fields)
-        let w_array = dict
-            .get("W")
-            .and_then(|v| v.as_array())
-            .ok_or_else(|| AstError::ParseError("Missing W in xref stream".to_string()))?;
-
-        let mut widths = [0usize; 3];
-        for (i, w) in w_array.iter().take(3).enumerate() {
-            widths[i] = w.as_integer().unwrap_or(0) as usize;
-        }
+        let widths = Self::extract_xref_field_widths(dict)?;
 
         // Get Index array (object number ranges)
-        let index = Self::extract_xref_index_ranges(dict);
+        let index = Self::extract_xref_index_ranges(dict)?;
 
-        // Parse entries
-        let entry_size = widths[0] + widths[1] + widths[2];
-        let mut offset = 0;
-
-        for (start_obj, count) in index {
-            for i in 0..count {
-                if offset + entry_size > data.len() {
-                    break;
-                }
-
-                let entry_data = &data[offset..offset + entry_size];
-                offset += entry_size;
-
-                let entry = self.parse_xref_stream_entry(entry_data, &widths)?;
-                let obj_id = ObjectId::new(start_obj + i, 0);
-                self.document.add_xref_entry(obj_id, entry);
-            }
+        let entry_size = widths
+            .iter()
+            .try_fold(0usize, |total, width| total.checked_add(*width))
+            .ok_or_else(|| AstError::ParseError("Xref entry size overflow".to_string()))?;
+        for (obj_id, entry) in
+            self.parse_xref_entries_from_data(data, &widths, entry_size, &index)?
+        {
+            self.document.add_xref_entry(obj_id, entry);
         }
 
         Ok(())
@@ -980,9 +1088,20 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     fn parse_xref_stream_entry(&self, data: &[u8], widths: &[usize; 3]) -> AstResult<XRefEntry> {
         let mut offset = 0;
 
+        let width_total = widths
+            .iter()
+            .try_fold(0usize, |total, width| total.checked_add(*width))
+            .ok_or_else(|| AstError::ParseError("Xref entry size overflow".to_string()))?;
+        if data.len() < width_total {
+            return Err(AstError::ParseError(
+                "Truncated xref stream entry".to_string(),
+            ));
+        }
+
         // Field 1: Type
         let entry_type = if widths[0] > 0 {
-            Self::read_integer(&data[offset..offset + widths[0]])
+            let end = offset + widths[0];
+            Self::read_integer(&data[offset..end])
         } else {
             1 // Default type
         };
@@ -990,7 +1109,8 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         // Field 2: Second field
         let field2 = if widths[1] > 0 {
-            Self::read_integer(&data[offset..offset + widths[1]])
+            let end = offset + widths[1];
+            Self::read_integer(&data[offset..end])
         } else {
             0
         };
@@ -998,7 +1118,8 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         // Field 3: Third field
         let field3 = if widths[2] > 0 {
-            Self::read_integer(&data[offset..offset + widths[2]])
+            let end = offset + widths[2];
+            Self::read_integer(&data[offset..end])
         } else {
             0
         };
@@ -1695,6 +1816,15 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             if self.object_load_depth > self.limits.max_depth {
                 self.object_load_depth -= 1;
                 if self.tolerant {
+                    self.record_diagnostic(
+                        Some(*obj_id),
+                        None,
+                        "max_depth",
+                        "returned Null",
+                        1.0,
+                        0,
+                        "Maximum object resolution depth exceeded",
+                    )?;
                     return Ok(PdfValue::Null);
                 }
                 return Err(AstError::ParseError(format!(
@@ -1728,6 +1858,15 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                             obj_id.number, obj_id.generation
                         )));
                     }
+                    self.record_diagnostic(
+                        Some(*obj_id),
+                        None,
+                        "missing_xref",
+                        "returned Null",
+                        1.0,
+                        0,
+                        "No cross-reference entry exists for the requested object",
+                    )?;
                     return Ok(PdfValue::Null);
                 }
             };
@@ -1745,6 +1884,15 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                                         if !self.tolerant {
                                             return Err(err);
                                         }
+                                        self.record_diagnostic(
+                                            Some(*obj_id),
+                                            Some(offset),
+                                            "stream_length",
+                                            "kept observed stream bytes",
+                                            0.8,
+                                            stream.data.len() as u64,
+                                            &err.to_string(),
+                                        )?;
                                         log::warn!(
                                             "Failed to resolve stream length for object {}: {}",
                                             obj_id.number,
@@ -1754,6 +1902,21 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                                 }
                                 value
                             } else if self.tolerant {
+                                self.record_diagnostic(
+                                    Some(*obj_id),
+                                    Some(offset),
+                                    "object_id_mismatch",
+                                    "returned Null",
+                                    1.0,
+                                    buffer.len() as u64,
+                                    &format!(
+                                        "Object ID mismatch: expected {} {}, got {} {}",
+                                        obj_id.number,
+                                        obj_id.generation,
+                                        parsed_id.number,
+                                        parsed_id.generation
+                                    ),
+                                )?;
                                 PdfValue::Null
                             } else {
                                 return Err(AstError::ParseError(format!(
@@ -1766,6 +1929,15 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                             }
                         }
                         Err(err) if self.tolerant => {
+                            self.record_diagnostic(
+                                Some(*obj_id),
+                                Some(offset),
+                                "object_parse",
+                                "returned Null",
+                                1.0,
+                                buffer.len() as u64,
+                                &format!("Failed to parse object: {:?}", err),
+                            )?;
                             log::warn!("Failed to parse object {}: {:?}", obj_id.number, err);
                             PdfValue::Null
                         }
@@ -1880,7 +2052,22 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                             .budget
                             .consume_decoded(decoded.len() as u64)
                             .map_err(|err| AstError::ParseError(err.to_string()))?;
-                        return self.parse_object_from_stream(&decoded, index, &stream.dict);
+                        return match self.parse_object_from_stream(&decoded, index, &stream.dict) {
+                            Ok(value) => Ok(value),
+                            Err(err) if self.tolerant => {
+                                self.record_diagnostic(
+                                    Some(ObjectId::new(stream_obj, 0)),
+                                    None,
+                                    "object_stream_parse",
+                                    "returned Null",
+                                    1.0,
+                                    decoded.len() as u64,
+                                    &err.to_string(),
+                                )?;
+                                Ok(PdfValue::Null)
+                            }
+                            Err(err) => Err(err),
+                        };
                     }
                     Err(err) if !self.tolerant => {
                         return Err(AstError::ParseError(format!(
@@ -1888,17 +2075,47 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                             err
                         )));
                     }
-                    Err(_) => {}
+                    Err(err) => {
+                        self.record_diagnostic(
+                            Some(ObjectId::new(stream_obj, 0)),
+                            None,
+                            "object_stream_decode",
+                            "returned Null",
+                            1.0,
+                            0,
+                            &err.to_string(),
+                        )?;
+                    }
                 }
             } else if !self.tolerant {
                 return Err(AstError::ParseError(
                     "Object stream has no raw data".to_string(),
                 ));
+            } else {
+                self.record_diagnostic(
+                    Some(ObjectId::new(stream_obj, 0)),
+                    None,
+                    "object_stream_data",
+                    "returned Null",
+                    1.0,
+                    0,
+                    "Object stream has no raw data",
+                )?;
             }
         } else if !self.tolerant {
             return Err(AstError::ParseError(
                 "Xref compressed entry is not an object stream".to_string(),
             ));
+        } else {
+            self.record_diagnostic(
+                Some(ObjectId::new(stream_obj, 0)),
+                None,
+                "object_stream_type",
+                "returned Null",
+                1.0,
+                0,
+                "Compressed xref entry does not reference an object stream",
+            )?;
         }
 
         Ok(PdfValue::Null)

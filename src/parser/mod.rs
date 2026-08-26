@@ -34,8 +34,12 @@ pub enum ParseMode {
 }
 
 impl ParseMode {
-    fn is_tolerant(self) -> bool {
+    pub(crate) fn is_tolerant(self) -> bool {
         !matches!(self, Self::Strict)
+    }
+
+    pub(crate) fn is_forensic(self) -> bool {
+        matches!(self, Self::Forensic)
     }
 }
 
@@ -99,6 +103,11 @@ impl PdfParser {
         self
     }
 
+    pub fn with_max_errors(mut self, max_errors: usize) -> Self {
+        self.max_errors = max_errors;
+        self
+    }
+
     pub fn forensic() -> Self {
         Self {
             mode: ParseMode::Forensic,
@@ -156,7 +165,8 @@ impl PdfParser {
     pub fn parse<R: Read + Seek + BufRead>(&self, reader: R) -> AstResult<PdfDocument> {
         let parser = document_parser::DocumentParser::new(
             reader,
-            self.mode.is_tolerant(),
+            self.mode,
+            self.max_errors,
             self.limits.clone(),
         );
         parser.parse()
@@ -205,7 +215,9 @@ impl PdfParser {
     /// # Errors
     /// Returns `AstError::ParseError` if the object cannot be parsed
     pub fn parse_object(&self, input: &[u8]) -> AstResult<PdfValue> {
-        // For now, delegate to parse_value
+        if let Ok((_, (_, value))) = object_parser::parse_indirect_object(input) {
+            return Ok(value);
+        }
         self.parse_value(input)
     }
 

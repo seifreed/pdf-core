@@ -424,4 +424,31 @@ mod parser_tests {
             2
         );
     }
+
+    #[test]
+    fn forensic_mode_preserves_recovery_evidence() {
+        let parser = PdfParser::forensic();
+        let document = parser
+            .parse_bytes(b"%PDF-1.7\n1 0 obj\n42\nendobj\n")
+            .expect("forensic parser should return a controlled result");
+
+        assert!(!document.diagnostics.is_empty());
+        assert!(document.forensic.is_some());
+        assert!(document
+            .forensic
+            .as_ref()
+            .unwrap()
+            .recovered_xref
+            .contains_key(&ObjectId::new(1, 0)));
+    }
+
+    #[test]
+    fn parse_object_accepts_an_indirect_object() {
+        assert_eq!(
+            PdfParser::strict()
+                .parse_object(b"7 2 obj\n42\nendobj")
+                .unwrap(),
+            PdfValue::Integer(42)
+        );
+    }
 }
