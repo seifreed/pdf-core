@@ -30,4 +30,5 @@ jobs:
       - name: Run differential corpus test
         env:
           PDF_EXTERNAL_CORPUS: ${{ runner.temp }}/verapdf-corpus
-        run: cargo test --test differential_tests
+        run: |
+          /usr/bin/time -v cargo test --test differential_tests --locked -- --test-threads=1
