@@ -1264,15 +1264,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     .load_object(&open_action_ref.id())
                     .unwrap_or(PdfValue::Null);
                 let action_id = self.add_to_ast(action_value, NodeType::Action)?;
-                self.document
-                    .ast
-                    .add_edge(catalog_id, action_id, crate::ast::EdgeType::Reference);
+                self.add_edge(catalog_id, action_id, crate::ast::EdgeType::Reference)?;
             }
             PdfValue::Dictionary(_) => {
                 let action_id = self.add_to_ast(open_action.clone(), NodeType::Action)?;
-                self.document
-                    .ast
-                    .add_edge(catalog_id, action_id, crate::ast::EdgeType::Child);
+                self.add_edge(catalog_id, action_id, crate::ast::EdgeType::Child)?;
             }
             _ => {}
         }
@@ -1338,9 +1334,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         let acro_id =
             self.add_to_ast(PdfValue::Dictionary(acro_dict.clone()), NodeType::AcroForm)?;
-        self.document
-            .ast
-            .add_edge(catalog_id, acro_id, crate::ast::EdgeType::Child);
+        self.add_edge(catalog_id, acro_id, crate::ast::EdgeType::Child)?;
 
         self.parse_form_fields(&acro_dict, acro_id)?;
 
@@ -1450,9 +1444,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             PdfValue::Dictionary(dict) => {
                 let node_id =
                     self.add_to_ast(PdfValue::Dictionary(dict.clone()), NodeType::Field)?;
-                self.document
-                    .ast
-                    .add_edge(parent_id, node_id, crate::ast::EdgeType::Child);
+                self.add_edge(parent_id, node_id, crate::ast::EdgeType::Child)?;
 
                 if let Some(name) = dict.get("T").and_then(|v| v.as_string()) {
                     if let Some(node) = self.document.ast.get_node_mut(node_id) {
@@ -1527,9 +1519,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let node_type = Self::annotation_subtype_to_node_type(&subtype);
 
         let annot_id = self.add_to_ast(PdfValue::Dictionary(dict.clone()), node_type)?;
-        self.document
-            .ast
-            .add_edge(page_id, annot_id, crate::ast::EdgeType::Child);
+        self.add_edge(page_id, annot_id, crate::ast::EdgeType::Child)?;
 
         self.set_annotation_subtype_property(annot_id, &subtype);
         self.parse_annotation_actions(&dict, annot_id)?;
@@ -1804,9 +1794,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
                 let is_page = node_type == NodeType::Page;
                 let pages_id = self.add_to_ast(pages_value.clone(), node_type)?;
-                self.document
-                    .ast
-                    .add_edge(current_parent, pages_id, crate::ast::EdgeType::Child);
+                self.add_edge(current_parent, pages_id, crate::ast::EdgeType::Child)?;
 
                 if let Some(PdfValue::Array(kids)) = pages_dict.get("Kids") {
                     for kid in kids.iter() {
@@ -2257,6 +2245,25 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         Ok(node_id)
     }
 
+    fn add_edge(
+        &mut self,
+        from: crate::ast::NodeId,
+        to: crate::ast::NodeId,
+        edge_type: crate::ast::EdgeType,
+    ) -> AstResult<()> {
+        self.limits
+            .budget
+            .consume_edge()
+            .map_err(|err| AstError::ParseError(err.to_string()))?;
+        if self.document.ast.add_edge(from, to, edge_type) {
+            Ok(())
+        } else {
+            Err(AstError::ParseError(
+                "Cannot add AST edge: node endpoint is missing".to_string(),
+            ))
+        }
+    }
+
     fn parse_xmp_metadata(
         &mut self,
         metadata_value: &PdfValue,
@@ -2310,9 +2317,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         catalog_id: crate::ast::NodeId,
     ) -> AstResult<crate::ast::NodeId> {
         let metadata_id = self.add_to_ast(PdfValue::Stream(stream.clone()), NodeType::Metadata)?;
-        self.document
-            .ast
-            .add_edge(catalog_id, metadata_id, crate::ast::EdgeType::Child);
+        self.add_edge(catalog_id, metadata_id, crate::ast::EdgeType::Child)?;
 
         if let Some(node) = self.document.ast.get_node_mut(metadata_id) {
             node.metadata
@@ -2339,9 +2344,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         metadata_id: crate::ast::NodeId,
     ) -> AstResult<crate::ast::NodeId> {
         let packet_id = self.add_to_ast(PdfValue::Null, NodeType::Metadata)?;
-        self.document
-            .ast
-            .add_edge(metadata_id, packet_id, crate::ast::EdgeType::Child);
+        self.add_edge(metadata_id, packet_id, crate::ast::EdgeType::Child)?;
 
         if let Some(node) = self.document.ast.get_node_mut(packet_id) {
             node.metadata
@@ -2362,9 +2365,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     ) -> AstResult<()> {
         for (prefix, uri) in &xmp.namespaces {
             let ns_id = self.add_to_ast(PdfValue::Null, NodeType::Metadata)?;
-            self.document
-                .ast
-                .add_edge(packet_id, ns_id, crate::ast::EdgeType::Child);
+            self.add_edge(packet_id, ns_id, crate::ast::EdgeType::Child)?;
 
             if let Some(node) = self.document.ast.get_node_mut(ns_id) {
                 node.metadata
@@ -2391,9 +2392,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         for (key, value) in &xmp.properties {
             let prop_id = self.add_to_ast(PdfValue::Null, NodeType::Metadata)?;
-            self.document
-                .ast
-                .add_edge(packet_id, prop_id, crate::ast::EdgeType::Child);
+            self.add_edge(packet_id, prop_id, crate::ast::EdgeType::Child)?;
 
             let (prefix, name) = Self::split_xmp_property_key(key);
             if !prefix.is_empty() && !xmp.namespaces.contains_key(&prefix) {
@@ -2571,9 +2570,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             PdfValue::Dictionary(dict) => {
                 let action_id =
                     self.add_to_ast(PdfValue::Dictionary(dict.clone()), NodeType::Action)?;
-                self.document
-                    .ast
-                    .add_edge(parent_id, action_id, crate::ast::EdgeType::Child);
+                self.add_edge(parent_id, action_id, crate::ast::EdgeType::Child)?;
 
                 if let Some(event_name) = event.clone() {
                     if let Some(node) = self.document.ast.get_node_mut(action_id) {
@@ -2602,9 +2599,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                         _ => js_value,
                     };
                     let js_id = self.add_to_ast(resolved_js, NodeType::JavaScript)?;
-                    self.document
-                        .ast
-                        .add_edge(action_id, js_id, crate::ast::EdgeType::Child);
+                    self.add_edge(action_id, js_id, crate::ast::EdgeType::Child)?;
                 }
 
                 if let Some(next_value) = dict.get("Next") {
