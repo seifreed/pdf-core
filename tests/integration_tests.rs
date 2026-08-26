@@ -21,6 +21,10 @@ mod integration_tests {
                 assert_eq!(document.version.minor, 4);
                 assert!(document.catalog.is_some());
                 assert!(!document.is_linearized());
+                assert_eq!(
+                    document.original_bytes.as_deref(),
+                    Some(minimal_pdf.as_slice())
+                );
             }
             Err(e) => panic!("Failed to parse minimal PDF: {:?}", e),
         }
@@ -154,6 +158,31 @@ mod integration_tests {
         }
     }
 
+    #[test]
+    fn test_lossless_stream_metadata() {
+        let parser = PdfParser::new();
+        let document = parser
+            .parse_bytes(&create_pdf_with_stream())
+            .expect("stream PDF should parse");
+        let nodes = document.ast.get_all_nodes();
+        let stream = nodes
+            .iter()
+            .find(|node| node.metadata.properties.contains_key("decode_state"))
+            .expect("stream node records lossless length state");
+        assert_eq!(
+            stream.metadata.properties.get("declared_length"),
+            Some(&"3".to_string())
+        );
+        assert_eq!(
+            stream.metadata.properties.get("observed_length"),
+            Some(&"3".to_string())
+        );
+        assert_eq!(
+            stream.metadata.properties.get("decode_state"),
+            Some(&"raw".to_string())
+        );
+    }
+
     /// Test malformed PDF handling
     #[test]
     fn test_malformed_pdf_handling() {
@@ -258,6 +287,31 @@ startxref
         pdf.extend_from_slice(xref_start.to_string().as_bytes());
         pdf.extend_from_slice(b"\n%%EOF");
 
+        pdf
+    }
+
+    fn create_pdf_with_stream() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let mut offsets = vec![0usize];
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".as_slice(),
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>\nendobj\n".as_slice(),
+            b"4 0 obj\n<< /Length 3 >>\nstream\nabc\nendstream\nendobj\n".as_slice(),
+        ];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 5\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
         pdf
     }
 

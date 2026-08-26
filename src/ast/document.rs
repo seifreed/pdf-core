@@ -8,6 +8,8 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct PdfDocument {
+    /// Original input bytes when the document was parsed through `parse_bytes`.
+    pub original_bytes: Option<Vec<u8>>,
     pub budget: ResourceBudget,
     pub ast: PdfAstGraph,
     pub version: PdfVersion,
@@ -157,6 +159,7 @@ impl PdfDocument {
     /// A new `PdfDocument` with an empty AST graph and default metadata
     pub fn new(version: PdfVersion) -> Self {
         PdfDocument {
+            original_bytes: None,
             budget: ResourceBudget::default(),
             ast: PdfAstGraph::new(),
             version,

@@ -185,7 +185,9 @@ impl PdfParser {
     pub fn parse_bytes(&self, data: &[u8]) -> AstResult<PdfDocument> {
         use std::io::Cursor;
         let cursor = Cursor::new(data);
-        self.parse(cursor)
+        let mut document = self.parse(cursor)?;
+        document.original_bytes = Some(data.to_vec());
+        Ok(document)
     }
 
     /// Parses a single PDF value from bytes.

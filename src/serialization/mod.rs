@@ -15,6 +15,8 @@ pub struct SerializableDocument {
     pub trailer: SerializableValue,
     pub xref_entries: HashMap<String, SerializableXRefEntry>,
     #[serde(default)]
+    pub original_bytes: Option<Vec<u8>>,
+    #[serde(default)]
     pub revisions: Vec<SerializableRevision>,
     #[serde(default)]
     pub diagnostics: Vec<crate::ast::ParseDiagnostic>,
@@ -727,6 +729,7 @@ impl SerializableDocument {
                 document.trailer.clone(),
             )),
             xref_entries,
+            original_bytes: document.original_bytes.clone(),
             revisions: document
                 .revisions
                 .iter()
@@ -983,6 +986,7 @@ mod tests {
     fn test_document_serialization() {
         let version = PdfVersion::new(1, 7);
         let mut document = PdfDocument::new(version);
+        document.original_bytes = Some(b"%PDF-1.7\n".to_vec());
         document.diagnostics.push(crate::ast::ParseDiagnostic {
             object_id: Some(ObjectId::new(7, 0)),
             offset: Some(123),
@@ -1006,8 +1010,10 @@ mod tests {
         assert!(json.contains("ast"));
         assert!(json.contains("metadata"));
         assert!(json.contains("schema_version"));
+        assert!(json.contains("original_bytes"));
 
         let deserialized = SerializableDocument::from_json(&json).unwrap();
+        assert_eq!(deserialized.original_bytes, Some(b"%PDF-1.7\n".to_vec()));
         assert_eq!(deserialized.revisions.len(), 1);
         assert_eq!(deserialized.revisions[0].xref_offset, 123);
         assert_eq!(deserialized.revisions[0].added_objects, vec![(2, 0)]);

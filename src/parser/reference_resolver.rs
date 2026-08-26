@@ -575,6 +575,35 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                             format!("{} {} R", obj_id.number, obj_id.generation),
                         );
                         if let PdfValue::Stream(stream) = &node.value {
+                            let declared_length = match stream.dict.get("Length") {
+                                Some(PdfValue::Integer(length)) if *length >= 0 => {
+                                    length.to_string()
+                                }
+                                Some(PdfValue::Reference(reference)) => {
+                                    format!(
+                                        "{} {} R",
+                                        reference.object_number, reference.generation_number
+                                    )
+                                }
+                                Some(_) => "invalid".to_string(),
+                                None => "missing".to_string(),
+                            };
+                            node.metadata
+                                .properties
+                                .insert("declared_length".to_string(), declared_length);
+                            node.metadata.properties.insert(
+                                "observed_length".to_string(),
+                                stream.data.len().to_string(),
+                            );
+                            node.metadata.properties.insert(
+                                "decode_state".to_string(),
+                                match &stream.data {
+                                    StreamData::Raw(_) => "raw",
+                                    StreamData::Decoded(_) => "decoded",
+                                    StreamData::Lazy(_) => "lazy",
+                                }
+                                .to_string(),
+                            );
                             node.metadata
                                 .properties
                                 .insert("stream_length".to_string(), stream.data.len().to_string());
