@@ -131,6 +131,12 @@ pdf_ast_result_t pdf_ast_get_children(
 );
 
 /**
+ * Free the array returned by pdf_ast_get_children.
+ * The individual child nodes must be freed with pdf_ast_free_node.
+ */
+void pdf_ast_free_children(CAstNode** children, size_t count);
+
+/**
  * Serialize document to JSON
  * @param document Document handle
  * @param json_str Output parameter for JSON string

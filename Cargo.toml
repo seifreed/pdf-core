@@ -24,6 +24,9 @@ homepage = "https://github.com/seifreed/pdf-core"
 keywords = ["pdf", "ast", "abstract-syntax-tree", "parsing", "security"]
 categories = ["parsing", "data-structures"]
 
+[lib]
+crate-type = ["rlib", "cdylib", "staticlib"]
+
 [dependencies]
 # Core dependencies
 thiserror = "1.0"

@@ -5,14 +5,16 @@ use std::ptr;
 use std::slice;
 
 /// Opaque handle for PdfDocument
+#[repr(C)]
 pub struct CPdfDocument(*mut PdfDocument);
 
 /// Opaque handle for AstNode
+#[repr(C)]
 pub struct CAstNode(*mut AstNode);
 
 /// Error codes for C API
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CErrorCode {
     Success = 0,
     InvalidInput = 1,
@@ -61,6 +63,24 @@ pub extern "C" fn pdf_ast_init() -> CResult {
     // Initialize logging if needed
     let _ = env_logger::try_init();
     CResult::success()
+}
+
+/// Free an array returned by `pdf_ast_get_children`.
+///
+/// The child node handles remain owned by the caller and must be released with
+/// `pdf_ast_free_node` individually.
+///
+/// # Safety
+///
+/// `children` must be the exact pointer returned by `pdf_ast_get_children`,
+/// and `count` must be the returned child count.
+#[no_mangle]
+pub unsafe extern "C" fn pdf_ast_free_children(children: *mut *mut CAstNode, count: usize) {
+    if !children.is_null() {
+        unsafe {
+            let _ = Vec::from_raw_parts(children, count, count);
+        }
+    }
 }
 
 /// Parse PDF from byte buffer
@@ -445,6 +465,20 @@ pub unsafe extern "C" fn pdf_ast_free_result(result: *mut CResult) {
 /// Get library version
 #[no_mangle]
 pub extern "C" fn pdf_ast_version() -> *const c_char {
-    static VERSION: &[u8] = b"0.1.0\0";
+    static VERSION: &[u8] = concat!(env!("CARGO_PKG_VERSION"), "\0").as_bytes();
     VERSION.as_ptr() as *const c_char
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{pdf_ast_free_children, pdf_ast_init, pdf_ast_version, CErrorCode};
+    use std::ffi::CStr;
+
+    #[test]
+    fn c_api_smoke_contract() {
+        assert_eq!(pdf_ast_init().error_code, CErrorCode::Success);
+        let version = unsafe { CStr::from_ptr(pdf_ast_version()) };
+        assert_eq!(version.to_str().unwrap(), env!("CARGO_PKG_VERSION"));
+        unsafe { pdf_ast_free_children(std::ptr::null_mut(), 0) };
+    }
 }
