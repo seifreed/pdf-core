@@ -37,6 +37,35 @@ int main(void) {
         return 4;
     }
 
+    char *json = NULL;
+    result = pdf_ast_to_json(document, &json);
+    if (result.error_code != PDF_AST_SUCCESS || json == NULL) {
+        pdf_ast_free_result(&result);
+        pdf_ast_free_node(root);
+        pdf_ast_free_document(document);
+        return 8;
+    }
+    pdf_ast_free_string(json);
+
+    CPdfDocument *buffer_document = NULL;
+    result = pdf_ast_parse(NULL, 0, &buffer_document);
+    if (result.error_code != PDF_AST_NULL_POINTER || buffer_document != NULL) {
+        pdf_ast_free_result(&result);
+        pdf_ast_free_node(root);
+        pdf_ast_free_document(document);
+        return 9;
+    }
+    pdf_ast_free_result(&result);
+
+    result = pdf_ast_parse_file("missing-pdf-ast-fixture.pdf", &buffer_document);
+    if (result.error_code != PDF_AST_INVALID_INPUT || buffer_document != NULL) {
+        pdf_ast_free_result(&result);
+        pdf_ast_free_node(root);
+        pdf_ast_free_document(document);
+        return 10;
+    }
+    pdf_ast_free_result(&result);
+
     CAstNode **children = NULL;
     size_t child_count = 0;
     result = pdf_ast_get_children(document, root, NULL, &child_count);
