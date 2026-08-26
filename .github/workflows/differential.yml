@@ -28,7 +28,7 @@ jobs:
       - name: Fetch pinned project corpus
         env:
           PDF_CORPUS_COMMIT: 9979a2a8618dcdf23ad3f20c760c1f06e5b36fe6
-        run: tools/fetch-verapdf-corpus.sh "fixtures/verapdf-pdfa-1b" "$RUNNER_TEMP/verapdf-corpus"
+        run: tools/fetch-verapdf-corpus.sh "fixtures" "$RUNNER_TEMP/verapdf-corpus"
       - name: Run differential corpus test
         env:
           PDF_EXTERNAL_CORPUS: ${{ runner.temp }}/verapdf-corpus
