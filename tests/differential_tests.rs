@@ -52,6 +52,35 @@ fn percentile_ms(samples: &mut [u128], percentile: usize) -> u128 {
     samples[index]
 }
 
+fn peak_rss_kib() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let status = fs::read_to_string("/proc/self/status").ok()?;
+        let value = status
+            .lines()
+            .find(|line| line.starts_with("VmHWM:"))?
+            .split_whitespace()
+            .nth(1)?;
+        return value.parse().ok();
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    {
+        let mut usage = std::mem::MaybeUninit::<libc::rusage>::zeroed();
+        let result = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
+        if result != 0 {
+            return None;
+        }
+        let bytes = unsafe { usage.assume_init().ru_maxrss };
+        return u64::try_from(bytes).ok().map(|bytes| bytes / 1024);
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "ios")))]
+    {
+        None
+    }
+}
+
 #[test]
 fn corpus_differential_metrics_are_recorded() {
     if !tool_available("qpdf") || !tool_available("mutool") {
@@ -156,8 +185,9 @@ fn corpus_differential_metrics_are_recorded() {
     let p50_ms = percentile_ms(&mut durations_ms, 50);
     let p95_ms = percentile_ms(&mut durations_ms, 95);
     let p99_ms = percentile_ms(&mut durations_ms, 99);
+    let peak_rss_kib = peak_rss_kib();
     eprintln!(
-        "differential metrics: files={}, bytes={}, pdf_core_accepts={}, qpdf_accepts={}, mutool_accepts={}, divergences={}, reference_disagreements={}, consensus_divergences={}, wall_ms={}, p50_ms={}, p95_ms={}, p99_ms={}",
+        "differential metrics: files={}, bytes={}, pdf_core_accepts={}, qpdf_accepts={}, mutool_accepts={}, divergences={}, reference_disagreements={}, consensus_divergences={}, wall_ms={}, peak_rss_kib={:?}, p50_ms={}, p95_ms={}, p99_ms={}",
         checked,
         total_bytes,
         core_accepted,
@@ -167,6 +197,7 @@ fn corpus_differential_metrics_are_recorded() {
         reference_disagreements,
         consensus_divergences,
         started.elapsed().as_millis(),
+        peak_rss_kib,
         p50_ms,
         p95_ms,
         p99_ms
