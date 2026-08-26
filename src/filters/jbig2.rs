@@ -66,10 +66,13 @@ fn validate_jbig2_input(
                 .checked_add(4)
                 .ok_or_else(|| FilterError::Jbig2Error("JBIG2 header overflow".to_string()))?;
         }
+        let sequence = data
+            .get(pos..)
+            .ok_or_else(|| FilterError::Jbig2Error("JBIG2 file header is truncated".to_string()))?;
         if flags & 0x01 != 0 {
-            validate_segment_sequence(&data[pos..], max_output_bytes, true)
+            validate_segment_sequence(sequence, max_output_bytes, true)
         } else {
-            validate_random_access_sequence(&data[pos..], max_output_bytes)
+            validate_random_access_sequence(sequence, max_output_bytes)
         }
     } else {
         if let Some(globals) = globals {

@@ -48,6 +48,12 @@ fn rejects_reserved_jbig2_file_header_flags() {
 }
 
 #[test]
+fn rejects_truncated_jbig2_file_header_without_panicking() {
+    let invalid = MINIMAL_JBIG2[..9].to_vec();
+    assert!(decode_jbig2(&invalid, None, 4).is_err());
+}
+
+#[test]
 fn preserves_direct_jbig2_globals_from_decode_params() {
     let mut params = PdfDictionary::new();
     params.insert(
