@@ -860,9 +860,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn recover_xref_by_scan(&mut self) -> AstResult<()> {
-        self.reader.seek(SeekFrom::Start(0))?;
-        let mut content = Vec::new();
-        self.reader.read_to_end(&mut content)?;
+        let content = self.read_limited_input()?;
 
         let mut pos = 0;
         let mut count = 0usize;
@@ -2062,6 +2060,23 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         Ok(buffer)
     }
 
+    fn read_limited_input(&mut self) -> AstResult<Vec<u8>> {
+        self.reader.seek(SeekFrom::Start(0))?;
+        let max_bytes = self.limits.budget.max_input_bytes;
+        let mut buffer = Vec::new();
+        self.reader
+            .by_ref()
+            .take(max_bytes.saturating_add(1))
+            .read_to_end(&mut buffer)?;
+        if buffer.len() as u64 > max_bytes {
+            return Err(AstError::ParseError(format!(
+                "Input exceeds resource limit of {} bytes",
+                max_bytes
+            )));
+        }
+        Ok(buffer)
+    }
+
     fn resolve_indirect_stream_length(&mut self, stream: &mut PdfStream) -> AstResult<()> {
         let length_id = match stream.dict.get("Length") {
             Some(PdfValue::Reference(reference)) => reference.id(),
@@ -2690,9 +2705,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         use std::io::Cursor;
 
         // Create a new reader for the reference resolver
-        self.reader.seek(SeekFrom::Start(0))?;
-        let mut buffer = Vec::new();
-        self.reader.read_to_end(&mut buffer)?;
+        let buffer = self.read_limited_input()?;
         let cursor = Cursor::new(buffer);
 
         // Create reference resolver using existing document xref information
