@@ -213,10 +213,9 @@ impl LazyStream {
             .ok_or("Object stream offset overflow")?;
 
         // Find next object offset to determine length
-        let next_offset = if index + 1 < n {
-            let next_entry_index = index
-                .checked_add(1)
-                .and_then(|value| value.checked_mul(2))
+        let next_offset = if let Some(next_index) = index.checked_add(1).filter(|next| *next < n) {
+            let next_entry_index = next_index
+                .checked_mul(2)
                 .and_then(|value| value.checked_add(1))
                 .ok_or("Object stream entry index overflow")?;
             let next_obj_offset = entries
@@ -452,5 +451,35 @@ mod tests {
         let mut source = MemoryStreamSource::new(vec![1, 2, 3]);
         let result = source.read_at(u64::MAX, 1);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_object_stream_first_beyond_data() {
+        let mut dict = PdfDictionary::new();
+        dict.insert("N", PdfValue::Integer(1));
+        dict.insert("First", PdfValue::Integer(10));
+        let stream = LazyStream::new_object_stream(
+            dict,
+            ObjectId::new(1, 0),
+            0,
+            StreamLoader::Inline(b"1 0".to_vec()),
+        );
+
+        assert!(stream.load().is_err());
+    }
+
+    #[test]
+    fn rejects_object_stream_object_offset_beyond_data() {
+        let mut dict = PdfDictionary::new();
+        dict.insert("N", PdfValue::Integer(1));
+        dict.insert("First", PdfValue::Integer(4));
+        let stream = LazyStream::new_object_stream(
+            dict,
+            ObjectId::new(1, 0),
+            0,
+            StreamLoader::Inline(b"1 100".to_vec()),
+        );
+
+        assert!(stream.load().is_err());
     }
 }
