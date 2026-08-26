@@ -158,6 +158,56 @@ pub fn parse_indirect_object(input: &[u8]) -> IResult<&[u8], (ObjectId, PdfValue
     ))
 }
 
+pub fn parse_indirect_stream_prefix(input: &[u8]) -> IResult<&[u8], (ObjectId, PdfDictionary)> {
+    let (input, obj_num) = integer(input)?;
+    let (input, _) = skip_whitespace(input)?;
+    let (input, gen_num) = integer(input)?;
+    let (input, _) = skip_whitespace(input)?;
+    let (input, _) = tag(b"obj")(input)?;
+    if obj_num < 0 || gen_num < 0 || obj_num > u32::MAX as i64 || gen_num > u16::MAX as i64 {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Verify,
+        )));
+    }
+    let (input, _) = skip_whitespace_and_comments(input)?;
+    let (input, value) = parse_value(input)?;
+    let dict = match value {
+        PdfValue::Dictionary(dict) => dict,
+        _ => {
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Tag,
+            )))
+        }
+    };
+    let (input, _) = skip_whitespace_and_comments(input)?;
+    let (input, _) = tag(b"stream")(input)?;
+    let (input, _) = alt((tag(b"\r\n"), tag(b"\n")))(input)?;
+
+    Ok((input, (ObjectId::new(obj_num as u32, gen_num as u16), dict)))
+}
+
+pub fn parse_indirect_object_with_stream_length(
+    input: &[u8],
+    length: usize,
+) -> IResult<&[u8], (ObjectId, PdfValue)> {
+    let (input, (obj_id, dict)) = parse_indirect_stream_prefix(input)?;
+    let (input, data) = nom::bytes::complete::take(length)(input)?;
+    let (input, _) = skip_whitespace(input)?;
+    let (input, _) = tag(b"endstream")(input)?;
+    let (input, _) = skip_whitespace_and_comments(input)?;
+    let (input, _) = tag(b"endobj")(input)?;
+
+    Ok((
+        input,
+        (
+            obj_id,
+            PdfValue::Stream(PdfStream::new(dict, data.to_vec())),
+        ),
+    ))
+}
+
 fn parse_stream_data(input: &[u8], dict_value: PdfValue) -> IResult<&[u8], PdfValue> {
     parse_stream_data_with_resolver(input, dict_value, None)
 }
@@ -297,7 +347,10 @@ fn next_decimal(data: &[u8], cursor: &mut usize) -> Result<usize, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_indirect_object, parse_value};
+    use super::{
+        parse_indirect_object, parse_indirect_object_with_stream_length,
+        parse_indirect_stream_prefix, parse_value,
+    };
     use crate::types::PdfValue;
 
     #[test]
@@ -316,5 +369,18 @@ mod tests {
     fn keeps_valid_references() {
         let (_, value) = parse_value(b"12 3 R").expect("valid reference");
         assert!(matches!(value, PdfValue::Reference(_)));
+    }
+
+    #[test]
+    fn parses_indirect_stream_length_without_scanning_for_endstream() {
+        let data = b"1 0 obj\n<< /Length 9 0 R >>\nstream\nabcendstreamxyz\nendstream\nendobj";
+        let (remaining, (_, value)) = parse_indirect_stream_prefix(data).unwrap();
+        assert_eq!(remaining, b"abcendstreamxyz\nendstream\nendobj");
+
+        let (_, (_, value)) = parse_indirect_object_with_stream_length(data, 15).unwrap();
+        let PdfValue::Stream(stream) = value else {
+            panic!("expected stream");
+        };
+        assert_eq!(stream.raw_data(), Some(b"abcendstreamxyz".as_slice()));
     }
 }

@@ -496,8 +496,48 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 ));
             }
 
+            // Resolve an indirect stream length before parsing stream bytes.
+            let parsed = match object_parser::parse_indirect_stream_prefix(&buffer) {
+                Ok((_, (_, dict))) => {
+                    if let Some(PdfValue::Reference(length_ref)) = dict.get("Length") {
+                        match self.load_object_value(length_ref.id()) {
+                            Some(PdfValue::Integer(length)) if length >= 0 => {
+                                match usize::try_from(length) {
+                                    Ok(length) => {
+                                        object_parser::parse_indirect_object_with_stream_length(
+                                            &buffer, length,
+                                        )
+                                    }
+                                    Err(_) if self.tolerant => {
+                                        object_parser::parse_indirect_object(&buffer)
+                                    }
+                                    Err(_) => {
+                                        return Err(
+                                            "Indirect stream Length is too large".to_string()
+                                        )
+                                    }
+                                }
+                            }
+                            Some(_) if self.tolerant => {
+                                object_parser::parse_indirect_object(&buffer)
+                            }
+                            Some(_) => {
+                                return Err("Indirect stream Length is not an integer".to_string())
+                            }
+                            None if self.tolerant => object_parser::parse_indirect_object(&buffer),
+                            None => {
+                                return Err("Failed to resolve indirect stream Length".to_string())
+                            }
+                        }
+                    } else {
+                        object_parser::parse_indirect_object(&buffer)
+                    }
+                }
+                Err(_) => object_parser::parse_indirect_object(&buffer),
+            };
+
             // Try to parse the object
-            match object_parser::parse_indirect_object(&buffer) {
+            match parsed {
                 Ok((rest, (parsed_obj_id, value))) => {
                     if parsed_obj_id != obj_id {
                         warn!(

@@ -1884,7 +1884,53 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 XRefEntry::InUse { offset, .. } => {
                     let buffer = self.read_object_buffer(offset)?;
 
-                    match object_parser::parse_indirect_object(&buffer) {
+                    let parsed = match object_parser::parse_indirect_stream_prefix(&buffer) {
+                        Ok((_, (_, dict))) => {
+                            if let Some(PdfValue::Reference(length_ref)) = dict.get("Length") {
+                                match self.load_object(&length_ref.id()) {
+                                    Ok(PdfValue::Integer(length)) if length >= 0 => {
+                                        match usize::try_from(length) {
+                                            Ok(length) => {
+                                                object_parser::parse_indirect_object_with_stream_length(
+                                                    &buffer, length,
+                                                )
+                                            }
+                                            Err(_) if self.tolerant => {
+                                                object_parser::parse_indirect_object(&buffer)
+                                            }
+                                            Err(_) => {
+                                                return Err(AstError::ParseError(
+                                                    "Indirect stream Length is too large".to_string(),
+                                                ));
+                                            }
+                                        }
+                                    }
+                                    Ok(_) if self.tolerant => {
+                                        object_parser::parse_indirect_object(&buffer)
+                                    }
+                                    Ok(_) => {
+                                        return Err(AstError::ParseError(
+                                            "Indirect stream Length is not an integer".to_string(),
+                                        ));
+                                    }
+                                    Err(err) if self.tolerant => {
+                                        log::warn!(
+                                            "Failed to resolve indirect stream Length for object {}: {}",
+                                            obj_id.number,
+                                            err
+                                        );
+                                        object_parser::parse_indirect_object(&buffer)
+                                    }
+                                    Err(err) => return Err(err),
+                                }
+                            } else {
+                                object_parser::parse_indirect_object(&buffer)
+                            }
+                        }
+                        Err(_) => object_parser::parse_indirect_object(&buffer),
+                    };
+
+                    match parsed {
                         Ok((_, (parsed_id, mut value))) => {
                             if parsed_id == *obj_id {
                                 if let PdfValue::Stream(stream) = &mut value {
@@ -2677,7 +2723,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
 #[cfg(test)]
 mod tests {
-    use super::PdfFileParser;
+    use super::{PdfFileParser, XRefEntry};
+    use crate::parser::ParseMode;
+    use crate::performance::PerformanceLimits;
+    use crate::types::{ObjectId, PdfValue};
     use std::io::{BufReader, Cursor};
 
     #[test]
@@ -2685,5 +2734,48 @@ mod tests {
         type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
         assert!(Parser::parse_object_header(b"-1 0 obj").is_err());
         assert!(Parser::parse_object_header(b"1 -1 obj").is_err());
+    }
+
+    #[test]
+    fn resolves_indirect_stream_length_before_parsing_stream_data() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let stream_data = b"abcendstreamxyz";
+        let mut data = b"%PDF-1.7\n".to_vec();
+        let stream_offset = data.len() as u64;
+        data.extend_from_slice(b"4 0 obj\n<< /Length 5 0 R >>\nstream\n");
+        data.extend_from_slice(stream_data);
+        data.extend_from_slice(b"\nendstream\nendobj\n");
+        let length_offset = data.len() as u64;
+        data.extend_from_slice(b"5 0 obj\n15\nendobj\n");
+
+        let mut parser = Parser::new(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("parser should initialize");
+        parser.document.xref.entries.insert(
+            ObjectId::new(4, 0),
+            XRefEntry::InUse {
+                offset: stream_offset,
+                generation: 0,
+            },
+        );
+        parser.document.xref.entries.insert(
+            ObjectId::new(5, 0),
+            XRefEntry::InUse {
+                offset: length_offset,
+                generation: 0,
+            },
+        );
+
+        let value = parser
+            .load_object(&ObjectId::new(4, 0))
+            .expect("stream object should load");
+        let PdfValue::Stream(stream) = value else {
+            panic!("expected stream");
+        };
+        assert_eq!(stream.raw_data(), Some(stream_data.as_slice()));
     }
 }
