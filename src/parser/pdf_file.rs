@@ -1260,9 +1260,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         match open_action {
             PdfValue::Reference(open_action_ref) => {
-                let action_value = self
-                    .load_object(&open_action_ref.id())
-                    .unwrap_or(PdfValue::Null);
+                let action_value = self.load_object(&open_action_ref.id())?;
                 let action_id = self.add_to_ast(action_value, NodeType::Action)?;
                 self.add_edge(catalog_id, action_id, crate::ast::EdgeType::Reference)?;
             }

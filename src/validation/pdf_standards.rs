@@ -188,7 +188,7 @@ impl PdfSchema for PdfASchema {
     }
 
     fn description(&self) -> &str {
-        "ISO 19005 PDF/A long-term archival standard"
+        "Experimental preflight checks for selected ISO 19005 PDF/A requirements"
     }
 
     fn reference_url(&self) -> Option<&str> {
@@ -335,7 +335,7 @@ impl PdfSchema for PdfUASchema {
     }
 
     fn description(&self) -> &str {
-        "ISO 14289 PDF/UA universal accessibility standard"
+        "Experimental preflight checks for selected ISO 14289 PDF/UA requirements"
     }
 
     fn supports_pdf_version(&self, version: &PdfVersion) -> bool {
