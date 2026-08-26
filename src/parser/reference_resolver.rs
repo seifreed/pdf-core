@@ -1161,7 +1161,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         let offset = self.xref_table.get(&obj_id).copied()?;
         self.reader.seek(SeekFrom::Start(offset)).ok()?;
         let mut buffer = Vec::new();
-        let max_bytes = self.limits.max_object_size_mb * 1024 * 1024;
+        let max_bytes = self.limits.max_object_size_mb.saturating_mul(1024 * 1024);
         let mut total_read = 0usize;
         let mut chunk = vec![0u8; 65536];
         while total_read < max_bytes {

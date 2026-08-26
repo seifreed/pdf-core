@@ -311,7 +311,7 @@ pub fn parse_object_stream_offsets(
         .get(..first)
         .ok_or_else(|| "Object stream header exceeds decoded data".to_string())?;
     let mut cursor = 0;
-    let mut offsets = Vec::with_capacity(object_count);
+    let mut offsets = Vec::new();
 
     for _ in 0..object_count {
         let _object_number = next_decimal(header, &mut cursor)?;
