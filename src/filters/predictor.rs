@@ -51,7 +51,7 @@ impl PredictorDecoder {
         let bytes_per_row =
             (self.columns * self.colors as u32 * self.bits_per_component as u32).div_ceil(8);
 
-        if data.len() % bytes_per_row as usize != 0 {
+        if !data.len().is_multiple_of(bytes_per_row as usize) {
             return Err(crate::filters::FilterError::InvalidData(
                 "Data length not divisible by row length for TIFF predictor".to_string(),
             ));
@@ -87,7 +87,7 @@ impl PredictorDecoder {
             (self.columns * self.colors as u32 * self.bits_per_component as u32).div_ceil(8);
         let row_length = bytes_per_row as usize + 1; // +1 for predictor byte
 
-        if data.len() % row_length != 0 {
+        if !data.len().is_multiple_of(row_length) {
             return Err(crate::filters::FilterError::InvalidData(
                 "Data length not compatible with PNG predictor format".to_string(),
             ));

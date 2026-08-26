@@ -51,7 +51,7 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-01-01
         with:
-          toolchain: 1.85.0
+          toolchain: 1.88.0
 
       - name: Check declared MSRV
         run: cargo check --workspace --all-targets --locked

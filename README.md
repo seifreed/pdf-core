@@ -62,7 +62,7 @@ isolation and an application-level resource policy.
 
 ## Compatibility
 
-- **MSRV:** Rust 1.85.0.
+- **MSRV:** Rust 1.88.0.
 - **Project:** `pdf-core`.
 - **Crate:** `pdf-ast` for compatibility with existing consumers.
 - **AST schema:** experimental `1.1.0`; see [COMPATIBILITY.md](COMPATIBILITY.md).

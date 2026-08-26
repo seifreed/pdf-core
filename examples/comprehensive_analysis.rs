@@ -201,7 +201,7 @@ fn add_fonts(doc: &mut PdfDocument, page_id: pdf_ast::NodeId, page_num: usize) {
     font_dict.insert("Encoding", PdfValue::Name(PdfName::new("WinAnsiEncoding")));
 
     // Some fonts are embedded, some are not (compliance issue)
-    if page_num % 2 == 0 {
+    if page_num.is_multiple_of(2) {
         font_dict.insert(
             "FontFile",
             PdfValue::String(pdf_ast::PdfString::new_literal(b"embedded_font_data")),

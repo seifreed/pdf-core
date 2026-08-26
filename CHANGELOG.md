@@ -42,3 +42,4 @@ The next release will be cut after the full CI and signed-tag checklist passes.
 - Bounded object-stream allocations, xref scans, parser re-reads, and JPX,
   LZW, RunLength, ASCII, and JPEG decoder output.
 - Made workspace Clippy warnings fatal in CI.
+- Raised the MSRV to Rust 1.88.0 to retain the audited `time` dependency.

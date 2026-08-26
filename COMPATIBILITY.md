@@ -2,7 +2,7 @@
 
 ## Rust
 
-The minimum supported Rust version (MSRV) is **1.85.0**. The root
+The minimum supported Rust version (MSRV) is **1.88.0**. The root
 `Cargo.toml` and CI MSRV job are the authoritative declarations. A change
 that requires a newer compiler must update both in the same change.
 
