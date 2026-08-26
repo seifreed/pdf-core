@@ -2661,6 +2661,8 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     "Catalog" => return NodeType::Catalog,
                     "Pages" => return NodeType::Pages,
                     "Page" => return NodeType::Page,
+                    "StructTreeRoot" => return NodeType::StructTreeRoot,
+                    "StructElem" => return NodeType::StructElem,
                     "Font" => return NodeType::Font,
                     "XObject" => return NodeType::XObject,
                     "Annot" => return NodeType::Annotation,

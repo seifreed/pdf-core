@@ -43,8 +43,10 @@ certificate.
 ## Published Rule Matrix
 
 The local identifiers below are preflight rules, not replacements for the
-veraPDF validation model. The fixtures are synthetic AST documents exercised
-by `tests/validation_tests.rs`; they prove both branches of each local rule.
+veraPDF validation model. Synthetic AST fixtures in
+`tests/validation_tests.rs` prove both branches of each local rule; serialized
+upstream fixtures in `tests/verapdf_rule_mapping_tests.rs` add parser and
+corpus coverage for the PDF/A and PDF/UA cases listed below.
 
 | Local rule | Profile and ISO clause | Positive fixture | Negative fixture | veraPDF rule mapping |
 |---|---|---|---|---|
@@ -57,16 +59,17 @@ by `tests/validation_tests.rs`; they prove both branches of each local rule.
 | `LANG_EMPTY` | PDF/UA-1, ISO 14289-1:2014 7.2 | Same test with `en-US` | Same test with an empty `Lang` string | Aggregate of `ISO_14289_1:7.2:*`; no 1:1 veraPDF rule |
 
 The corpus also contains serialized Isartor negatives for the three PDF/A
-clauses above. `tests/verapdf_rule_mapping_tests.rs` rechecks the exact
-veraPDF IDs when `VERAPDF_BIN` and `PDF_COMPLIANCE_CORPUS` are configured:
-`6.3.4:1`, `6.5.2:1`, and `6.6.1:1`. These are reference observations, not
-proof that the synthetic local fixtures serialize identically.
+clauses above and upstream PDF/UA cases for tagged structure and document
+language. `tests/verapdf_rule_mapping_tests.rs` rechecks the exact veraPDF
+IDs when `VERAPDF_BIN` and `PDF_COMPLIANCE_CORPUS` are configured:
+`6.3.4:1`, `6.5.2:1`, and `6.6.1:1`; the local PDF/A and PDF/UA validators are
+then run against those serialized bytes.
 
 ## Required Before Conformance Claims
 
 - The local positive/negative fixture branch is covered by the matrix above;
-  PDF serialization is still required before running those exact documents
-  through veraPDF.
+  serialized upstream positives and negatives cover the current PDF/A and
+  PDF/UA preflight rules.
 - Run serialized versions of the same fixtures through a pinned veraPDF
   release and record pass/fail/divergence results per veraPDF rule ID.
 - Use `VERAPDF_BIN=/path/to/verapdf cargo test --test verapdf_tests` to run the

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 use pdf_ast::validation::pdfa::PdfA1bValidator;
+use pdf_ast::validation::SchemaRegistry;
 use pdf_ast::PdfParser;
 
 const CASES: &[(&str, &str)] = &[
@@ -33,6 +34,49 @@ const LOCAL_CASES: &[(&str, &str)] = &[
     (
         "PDFA-1b/6.6 Actions/6.6.1 General/isartor-6-6-1-t01-fail-f.pdf",
         "PDF_A_JAVASCRIPT",
+    ),
+];
+
+const PDFUA_CASES: &[(&str, &str, bool)] = &[
+    (
+        "verapdf-pdfua-1/7.1 General/7.1-t11-fail-a.pdf",
+        "NO_TAGGED_STRUCTURE",
+        true,
+    ),
+    (
+        "verapdf-pdfua-1/7.1 General/7.1-t01-fail-a.pdf",
+        "NO_TAGGED_STRUCTURE",
+        false,
+    ),
+    (
+        "verapdf-pdfua-1/7.1 General/7.1-t11-fail-a.pdf",
+        "STRUCT_ELEM_MISSING",
+        true,
+    ),
+    (
+        "verapdf-pdfua-1/7.2 Text/7.2-t24-pass-a.pdf",
+        "STRUCT_ELEM_MISSING",
+        false,
+    ),
+    (
+        "verapdf-pdfua-1/7.2 Text/7.2-t29-fail-o.pdf",
+        "LANG_MISSING",
+        true,
+    ),
+    (
+        "verapdf-pdfua-1/7.2 Text/7.2-t24-pass-a.pdf",
+        "LANG_MISSING",
+        false,
+    ),
+    (
+        "verapdf-pdfua-1/7.2 Text/7.2-t29-fail-n.pdf",
+        "LANG_EMPTY",
+        true,
+    ),
+    (
+        "verapdf-pdfua-1/7.2 Text/7.2-t24-pass-a.pdf",
+        "LANG_EMPTY",
+        false,
     ),
 ];
 
@@ -133,6 +177,39 @@ fn local_pdfa_rules_match_serialized_isartor_cases() {
                 .iter()
                 .any(|issue| issue.code == *expected_code),
             "local rule {expected_code} missing for {}",
+            path.display()
+        );
+    }
+}
+
+#[test]
+fn local_pdfua_rules_match_serialized_upstream_cases() {
+    let Some(root) = corpus_root() else {
+        eprintln!("Skipping local PDF/UA fixture mapping: corpus root is not configured");
+        return;
+    };
+    let parser = PdfParser::new();
+    let registry = SchemaRegistry::new();
+
+    for (relative, expected_code, should_have_issue) in PDFUA_CASES {
+        let path = root.join(relative);
+        let bytes = fs::read(&path).unwrap_or_else(|error| {
+            panic!("read local PDF/UA fixture {}: {error}", path.display())
+        });
+        let document = parser.parse_bytes(&bytes).unwrap_or_else(|error| {
+            panic!("parse local PDF/UA fixture {}: {error}", path.display())
+        });
+        let report = registry
+            .validate(&document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        let has_issue = report
+            .issues
+            .iter()
+            .any(|issue| issue.code == *expected_code);
+        assert_eq!(
+            has_issue,
+            *should_have_issue,
+            "local rule {expected_code} mismatch for {}",
             path.display()
         );
     }

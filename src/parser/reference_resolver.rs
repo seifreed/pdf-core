@@ -886,6 +886,8 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                     "/Catalog" => return NodeType::Catalog,
                     "/Pages" => return NodeType::Pages,
                     "/Page" => return NodeType::Page,
+                    "/StructTreeRoot" => return NodeType::StructTreeRoot,
+                    "/StructElem" => return NodeType::StructElem,
                     "/Font" => return NodeType::Font,
                     "/XObject" => {
                         if let Some(PdfValue::Name(subtype)) = dict.get("Subtype") {

@@ -10,6 +10,9 @@ The next release will be cut after the full CI and signed-tag checklist passes.
   fixtures, with SHA-256 manifest coverage and exact veraPDF rule mappings.
 - Added the ISO 32000 clause inventory, serialized veraPDF mapping test, C ABI
   header/link smoke test, and 60 parser-fuzz seeds from a 1,000-run campaign.
+- Classified tagged-PDF `/StructTreeRoot` and `/StructElem` nodes during
+  reference resolution and added serialized PDF/UA structure and language
+  rule coverage.
 
 ## 0.1.1-alpha
 
