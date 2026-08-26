@@ -145,6 +145,34 @@ jobs:
           echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           echo "source_date_epoch=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
 
+      - name: Verify package versions match tag
+        env:
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          expected = os.environ["RELEASE_VERSION"]
+          manifests = [
+              Path("Cargo.toml"),
+              Path("python/Cargo.toml"),
+              Path("javascript/package.json"),
+          ]
+          versions = []
+          for manifest in manifests:
+              if manifest.suffix == ".json":
+                  versions.append(json.loads(manifest.read_text())["version"])
+              else:
+                  for line in manifest.read_text().splitlines():
+                      if line.startswith("version = "):
+                          versions.append(line.split('"')[1])
+                          break
+          if versions != [expected] * len(versions):
+              raise SystemExit(f"release tag {expected} does not match versions {versions}")
+          PY
+
       - name: Build Rust and C artifacts
         env:
           SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.source_date_epoch }}
