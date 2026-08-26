@@ -2581,12 +2581,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     }
                 }
 
-                if dict.get("JS").is_some() || dict.get("JavaScript").is_some() {
-                    let js_value = dict
-                        .get("JS")
-                        .or_else(|| dict.get("JavaScript"))
-                        .cloned()
-                        .unwrap_or(PdfValue::Null);
+                if let Some(js_value) = dict.get("JS").or_else(|| dict.get("JavaScript")).cloned() {
                     let resolved_js = match js_value {
                         PdfValue::Reference(reference) => self.load_object(&reference.id())?,
                         _ => js_value,
