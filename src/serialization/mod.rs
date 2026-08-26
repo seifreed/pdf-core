@@ -20,6 +20,8 @@ pub struct SerializableDocument {
     pub revisions: Vec<SerializableRevision>,
     #[serde(default)]
     pub diagnostics: Vec<crate::ast::ParseDiagnostic>,
+    #[serde(default)]
+    pub forensic: Option<SerializableForensicSnapshot>,
     pub metadata: SerializableDocumentMetadata,
 }
 
@@ -38,6 +40,46 @@ pub struct SerializableRevision {
     pub modified_objects: Vec<(u32, u16)>,
     pub added_objects: Vec<(u32, u16)>,
     pub deleted_objects: Vec<(u32, u16)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableForensicSnapshot {
+    pub declared_xref: HashMap<String, crate::ast::XRefEntry>,
+    pub recovered_xref: HashMap<String, crate::ast::XRefEntry>,
+    pub duplicate_objects: Vec<(u32, u16)>,
+    pub overwritten_objects: Vec<(u32, u16)>,
+    pub residual_ranges: Vec<(u64, u64)>,
+}
+
+impl From<&crate::ast::ForensicSnapshot> for SerializableForensicSnapshot {
+    fn from(snapshot: &crate::ast::ForensicSnapshot) -> Self {
+        let serialize_xref = |entries: &HashMap<crate::types::ObjectId, crate::ast::XRefEntry>| {
+            entries
+                .iter()
+                .map(|(object_id, entry)| {
+                    (
+                        format!("{}_{}", object_id.number, object_id.generation),
+                        *entry,
+                    )
+                })
+                .collect()
+        };
+        Self {
+            declared_xref: serialize_xref(&snapshot.declared_xref),
+            recovered_xref: serialize_xref(&snapshot.recovered_xref),
+            duplicate_objects: snapshot
+                .duplicate_objects
+                .iter()
+                .map(|id| (id.number, id.generation))
+                .collect(),
+            overwritten_objects: snapshot
+                .overwritten_objects
+                .iter()
+                .map(|id| (id.number, id.generation))
+                .collect(),
+            residual_ranges: snapshot.residual_ranges.clone(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -771,6 +813,10 @@ impl SerializableDocument {
                 })
                 .collect(),
             diagnostics: document.diagnostics.clone(),
+            forensic: document
+                .forensic
+                .as_ref()
+                .map(SerializableForensicSnapshot::from),
             metadata: SerializableDocumentMetadata {
                 file_size: document.metadata.file_size,
                 linearized: document.metadata.linearized,
@@ -816,7 +862,10 @@ impl SerializableDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{DocumentRevision, NodeType, PdfAstGraph, PdfDocument, PdfVersion};
+    use crate::ast::{
+        DocumentRevision, ForensicSnapshot, NodeType, PdfAstGraph, PdfDocument, PdfVersion,
+        XRefEntry,
+    };
     use crate::types::{ObjectId, PdfDictionary, PdfValue};
 
     #[test]
@@ -1064,6 +1113,25 @@ mod tests {
             bytes_consumed: 42,
             message: "recovered missing object".to_string(),
         });
+        document.forensic = Some(ForensicSnapshot {
+            declared_xref: HashMap::from([(
+                ObjectId::new(1, 0),
+                XRefEntry::InUse {
+                    offset: 12,
+                    generation: 0,
+                },
+            )]),
+            recovered_xref: HashMap::from([(
+                ObjectId::new(2, 0),
+                XRefEntry::Free {
+                    next_free_object: 0,
+                    generation: 65535,
+                },
+            )]),
+            duplicate_objects: vec![ObjectId::new(3, 0)],
+            overwritten_objects: vec![ObjectId::new(4, 0)],
+            residual_ranges: vec![(100, 120)],
+        });
         document.revisions.push(DocumentRevision {
             revision_number: 1,
             xref_offset: 123,
@@ -1088,6 +1156,11 @@ mod tests {
         assert_eq!(deserialized.diagnostics.len(), 1);
         assert_eq!(deserialized.diagnostics[0].recovery_action, "xref recovery");
         assert_eq!(deserialized.diagnostics[0].bytes_consumed, 42);
+        let forensic = deserialized.forensic.as_ref().unwrap();
+        assert_eq!(forensic.declared_xref.len(), 1);
+        assert_eq!(forensic.recovered_xref.len(), 1);
+        assert_eq!(forensic.duplicate_objects, vec![(3, 0)]);
+        assert_eq!(forensic.residual_ranges, vec![(100, 120)]);
         deserialized.deserialize_ast().unwrap();
 
         let cbor = SerializableDocument::from_document(&document)
