@@ -16,6 +16,10 @@ fn dispatch_visitor<V: Visitor>(visitor: &mut V, node: &AstNode) -> VisitorActio
         (NodeType::Action, Some(d)) => visitor.visit_action(node, d),
         (NodeType::EmbeddedFile, Some(d)) => visitor.visit_embedded_file(node, d),
         (NodeType::Signature, Some(d)) => visitor.visit_signature(node, d),
+        (NodeType::StructTreeRoot, Some(d)) => visitor.visit_struct_tree_root(node, d),
+        (NodeType::StructElem, Some(d)) => visitor.visit_struct_elem(node, d),
+        (NodeType::CMap, Some(d)) => visitor.visit_cmap(node, d),
+        (NodeType::ToUnicode, Some(d)) => visitor.visit_tounicode(node, d),
         _ => visitor.visit_node(node),
     }
 }
@@ -61,6 +65,26 @@ pub trait Visitor {
     }
 
     fn visit_signature(&mut self, node: &AstNode, dict: &PdfDictionary) -> VisitorAction {
+        let _ = dict;
+        self.visit_node(node)
+    }
+
+    fn visit_struct_tree_root(&mut self, node: &AstNode, dict: &PdfDictionary) -> VisitorAction {
+        let _ = dict;
+        self.visit_node(node)
+    }
+
+    fn visit_struct_elem(&mut self, node: &AstNode, dict: &PdfDictionary) -> VisitorAction {
+        let _ = dict;
+        self.visit_node(node)
+    }
+
+    fn visit_cmap(&mut self, node: &AstNode, dict: &PdfDictionary) -> VisitorAction {
+        let _ = dict;
+        self.visit_node(node)
+    }
+
+    fn visit_tounicode(&mut self, node: &AstNode, dict: &PdfDictionary) -> VisitorAction {
         let _ = dict;
         self.visit_node(node)
     }

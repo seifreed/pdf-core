@@ -94,6 +94,72 @@ fn test_visitor_pattern() {
 }
 
 #[test]
+fn test_visitor_dispatches_structure_and_cmap_nodes() {
+    struct SpecializedCounter {
+        struct_roots: usize,
+        struct_elements: usize,
+        cmaps: usize,
+        tounicode: usize,
+    }
+
+    impl Visitor for SpecializedCounter {
+        fn visit_struct_tree_root(
+            &mut self,
+            _node: &AstNode,
+            _dict: &PdfDictionary,
+        ) -> VisitorAction {
+            self.struct_roots += 1;
+            VisitorAction::Continue
+        }
+
+        fn visit_struct_elem(&mut self, _node: &AstNode, _dict: &PdfDictionary) -> VisitorAction {
+            self.struct_elements += 1;
+            VisitorAction::Continue
+        }
+
+        fn visit_cmap(&mut self, _node: &AstNode, _dict: &PdfDictionary) -> VisitorAction {
+            self.cmaps += 1;
+            VisitorAction::Continue
+        }
+
+        fn visit_tounicode(&mut self, _node: &AstNode, _dict: &PdfDictionary) -> VisitorAction {
+            self.tounicode += 1;
+            VisitorAction::Continue
+        }
+    }
+
+    let mut doc = PdfDocument::new(PdfVersion::new(1, 7));
+    let root = doc
+        .ast
+        .create_node(NodeType::Root, PdfValue::Dictionary(PdfDictionary::new()));
+    doc.ast.set_root(root);
+    for node_type in [
+        NodeType::StructTreeRoot,
+        NodeType::StructElem,
+        NodeType::CMap,
+        NodeType::ToUnicode,
+    ] {
+        let child = doc
+            .ast
+            .create_node(node_type, PdfValue::Dictionary(PdfDictionary::new()));
+        doc.ast.add_edge(root, child, ast::EdgeType::Child);
+    }
+
+    let mut counter = SpecializedCounter {
+        struct_roots: 0,
+        struct_elements: 0,
+        cmaps: 0,
+        tounicode: 0,
+    };
+    visitor::AstWalker::new(&doc.ast).walk(&mut counter);
+
+    assert_eq!(counter.struct_roots, 1);
+    assert_eq!(counter.struct_elements, 1);
+    assert_eq!(counter.cmaps, 1);
+    assert_eq!(counter.tounicode, 1);
+}
+
+#[test]
 fn test_query_builder() {
     let mut doc = PdfDocument::new(PdfVersion::new(1, 7));
 
