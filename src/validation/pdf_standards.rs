@@ -216,6 +216,12 @@ impl PdfSchema for PdfASchema {
 
         // Run PDF/A specific constraints
         for constraint in self.get_constraints() {
+            if let Some(reference) = constraint.iso_reference() {
+                context
+                    .report
+                    .metadata
+                    .insert(format!("iso.{}", constraint.name()), reference.to_string());
+            }
             constraint.check(document, context.report);
         }
 
@@ -291,6 +297,12 @@ impl PdfSchema for PdfXSchema {
         let context = ValidationContext::new(document, &mut report);
 
         for constraint in self.get_constraints() {
+            if let Some(reference) = constraint.iso_reference() {
+                context
+                    .report
+                    .metadata
+                    .insert(format!("iso.{}", constraint.name()), reference.to_string());
+            }
             constraint.check(document, context.report);
         }
 
@@ -351,6 +363,12 @@ impl PdfSchema for PdfUASchema {
         let context = ValidationContext::new(document, &mut report);
 
         for constraint in self.get_constraints() {
+            if let Some(reference) = constraint.iso_reference() {
+                context
+                    .report
+                    .metadata
+                    .insert(format!("iso.{}", constraint.name()), reference.to_string());
+            }
             constraint.check(document, context.report);
         }
 

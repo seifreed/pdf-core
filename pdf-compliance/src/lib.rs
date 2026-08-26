@@ -53,6 +53,9 @@ pub struct Violation {
     pub rule: String,
     pub description: String,
     pub location: String,
+    pub node_id: Option<usize>,
+    pub offset: Option<u64>,
+    pub expected: Option<String>,
     pub standard_reference: Option<String>,
     pub severity: ViolationSeverity,
 }
@@ -70,7 +73,7 @@ pub fn validate_profile(
 ) -> Option<ComplianceReport> {
     let report =
         pdf_ast::validation::SchemaRegistry::new().validate(document, profile.schema_name())?;
-    Some(convert_report(profile, report))
+    Some(convert_report(profile, document, report))
 }
 
 pub fn validate_pdfa1b(document: &PdfDocument) -> ComplianceReport {
@@ -83,7 +86,11 @@ pub fn validate_pdfua1(document: &PdfDocument) -> ComplianceReport {
         .expect("PDF/UA-1 is registered by the root validation registry")
 }
 
-fn convert_report(profile: ComplianceProfile, report: ValidationReport) -> ComplianceReport {
+fn convert_report(
+    profile: ComplianceProfile,
+    document: &PdfDocument,
+    report: ValidationReport,
+) -> ComplianceReport {
     let status = if report.issues.iter().any(|issue| {
         matches!(
             issue.severity,
@@ -101,7 +108,11 @@ fn convert_report(profile: ComplianceProfile, report: ValidationReport) -> Compl
         ComplianceStatus::Compliant
     };
 
-    let violations = report.issues.into_iter().map(convert_issue).collect();
+    let violations = report
+        .issues
+        .into_iter()
+        .map(|issue| convert_issue(issue, document))
+        .collect();
 
     ComplianceReport {
         profile,
@@ -115,7 +126,12 @@ fn convert_report(profile: ComplianceProfile, report: ValidationReport) -> Compl
     }
 }
 
-fn convert_issue(issue: ValidationIssue) -> Violation {
+fn convert_issue(issue: ValidationIssue, document: &PdfDocument) -> Violation {
+    let node_id = issue.node_id.map(|id| id.index());
+    let offset = issue
+        .node_id
+        .and_then(|id| document.ast.get_node(id))
+        .and_then(|node| node.metadata.offset);
     let standard_reference = match issue.code.as_str() {
         "PDF_A_FONT_EMBEDDING" => Some("ISO 19005-1:2005, 6.3.5"),
         "PDF_A_MULTIMEDIA" | "PDF_A_JAVASCRIPT" => Some("ISO 19005-1:2005, 6.6"),
@@ -129,6 +145,9 @@ fn convert_issue(issue: ValidationIssue) -> Violation {
         rule: issue.code,
         description: issue.message,
         location: issue.location.unwrap_or_else(|| "Document".to_string()),
+        node_id,
+        offset,
+        expected: issue.suggestion,
         standard_reference: standard_reference.map(str::to_string),
         severity: match issue.severity {
             ValidationSeverity::Critical | ValidationSeverity::Error => ViolationSeverity::Error,
@@ -141,6 +160,7 @@ fn convert_issue(issue: ValidationIssue) -> Violation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pdf_ast::types::PdfValue;
     use pdf_ast::PdfVersion;
 
     #[test]
@@ -177,5 +197,35 @@ mod tests {
         ] {
             assert!(validate_profile(&doc, profile).is_some());
         }
+    }
+
+    #[test]
+    fn preserves_issue_location_and_expectation_in_adapter_output() {
+        let mut doc = PdfDocument::new(PdfVersion::new(1, 7));
+        let node_id = doc
+            .ast
+            .create_node(pdf_ast::ast::NodeType::Root, PdfValue::Null);
+        doc.ast
+            .get_node_mut(node_id)
+            .expect("created node exists")
+            .metadata
+            .offset = Some(123);
+        let issue = ValidationIssue {
+            severity: ValidationSeverity::Error,
+            code: "PDF_A_FONT_EMBEDDING".to_string(),
+            message: "font is not embedded".to_string(),
+            node_id: Some(node_id),
+            location: Some("Font".to_string()),
+            suggestion: Some("Embed the font".to_string()),
+        };
+
+        let violation = convert_issue(issue, &doc);
+        assert_eq!(violation.node_id, Some(node_id.index()));
+        assert_eq!(violation.offset, Some(123));
+        assert_eq!(violation.expected.as_deref(), Some("Embed the font"));
+        assert_eq!(
+            violation.standard_reference.as_deref(),
+            Some("ISO 19005-1:2005, 6.3.5")
+        );
     }
 }
