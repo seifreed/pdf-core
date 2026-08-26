@@ -65,5 +65,9 @@ fn compare_strict_parser_with_verapdf_when_available() {
     }
 
     assert!(checked > 0, "veraPDF comparison checked no corpus files");
+    assert_eq!(
+        divergences, 0,
+        "veraPDF comparison found {divergences} parser divergences"
+    );
     eprintln!("veraPDF comparison: {checked} checked, {divergences} divergences");
 }

@@ -43,3 +43,4 @@ The next release will be cut after the full CI and signed-tag checklist passes.
   LZW, RunLength, ASCII, and JPEG decoder output.
 - Made workspace Clippy warnings fatal in CI.
 - Raised the MSRV to Rust 1.88.0 to retain the audited `time` dependency.
+- Made differential corpus gates fail on missing CI tools or parser divergences.

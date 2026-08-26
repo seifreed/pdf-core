@@ -45,6 +45,9 @@ fn tool_available(tool: &str) -> bool {
 #[test]
 fn corpus_acceptance_matches_reference_parsers() {
     if !tool_available("qpdf") || !tool_available("mutool") {
+        if std::env::var_os("CI").is_some() {
+            panic!("qpdf and mutool are required in CI for differential testing");
+        }
         eprintln!("Skipping differential test: qpdf and mutool are required");
         return;
     }
@@ -126,6 +129,10 @@ fn corpus_acceptance_matches_reference_parsers() {
     }
 
     assert!(checked > 0, "differential test checked no corpus files");
+    assert_eq!(
+        divergences, 0,
+        "differential testing found {divergences} parser divergences"
+    );
     eprintln!(
         "differential metrics: files={}, bytes={}, pdf_core_accepts={}, qpdf_accepts={}, mutool_accepts={}, divergences={}, wall_ms={}",
         checked,
