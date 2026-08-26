@@ -600,10 +600,41 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             match parsed {
                 Ok((rest, (parsed_obj_id, value))) => {
                     if parsed_obj_id != obj_id {
-                        warn!(
-                            "Object ID mismatch: expected {:?}, got {:?}",
-                            obj_id, parsed_obj_id
+                        let message = format!(
+                            "Object ID mismatch: expected {} {}, got {} {}",
+                            obj_id.number,
+                            obj_id.generation,
+                            parsed_obj_id.number,
+                            parsed_obj_id.generation
                         );
+                        if !self.tolerant {
+                            return Err(message);
+                        }
+                        warn!("{message}");
+
+                        let node_id =
+                            self.create_node(ast, NodeType::Object(obj_id), PdfValue::Null)?;
+                        if let Some(node) = ast.get_node_mut(node_id) {
+                            node.metadata.offset = Some(offset);
+                            node.metadata.size = Some(buffer.len() - rest.len());
+                            node.metadata.errors.push(crate::ast::node::ParseError {
+                                code: crate::ast::node::ErrorCode::InvalidReference,
+                                message,
+                                offset: Some(offset),
+                                recoverable: true,
+                            });
+                            node.metadata
+                                .warnings
+                                .push("Discarded object bytes after ObjectId mismatch".to_string());
+                            node.metadata.properties.insert(
+                                "object_id".to_string(),
+                                format!("{} {} R", obj_id.number, obj_id.generation),
+                            );
+                            node.metadata
+                                .properties
+                                .insert("recovery".to_string(), "object_id_mismatch".to_string());
+                        }
+                        return Ok(node_id);
                     }
 
                     // Create node with proper type
@@ -1510,5 +1541,47 @@ mod tests {
 
         let error = resolver.resolve_stream_lengths(&mut ast).unwrap_err();
         assert!(error.contains("non-negative"));
+    }
+
+    #[test]
+    fn object_id_mismatch_is_strict_or_null_recovery() {
+        let data = b"2 0 obj\n<< /Type /Page >>\nendobj\n".to_vec();
+        let mut document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        document.xref.entries.insert(
+            ObjectId::new(1, 0),
+            XRefEntry::InUse {
+                offset: 0,
+                generation: 0,
+            },
+        );
+
+        let mut strict = ReferenceResolver::from_document(
+            Cursor::new(data.clone()),
+            &document,
+            false,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut strict_ast = PdfAstGraph::new();
+        assert!(strict
+            .resolve_object(ObjectId::new(1, 0), &mut strict_ast)
+            .is_err());
+
+        let mut tolerant = ReferenceResolver::from_document(
+            Cursor::new(data),
+            &document,
+            true,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut tolerant_ast = PdfAstGraph::new();
+        let node_id = tolerant
+            .resolve_object(ObjectId::new(1, 0), &mut tolerant_ast)
+            .expect("tolerant mismatch should recover");
+        let node = tolerant_ast.get_node(node_id).expect("recovery node");
+        assert!(matches!(node.value, PdfValue::Null));
+        assert!(node.is_error());
+        assert_eq!(
+            node.metadata.properties.get("recovery"),
+            Some(&"object_id_mismatch".to_string())
+        );
     }
 }
