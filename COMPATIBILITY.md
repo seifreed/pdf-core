@@ -21,12 +21,11 @@ documented migration note.
 
 ## AST Serialization
 
-The AST serialization schema is currently `1.1.0` and is experimental. The
-major schema version is the compatibility boundary: a different major
-version may require an explicit migration. Serialized object identities,
-node types, edge types, and schema version must remain self-describing; a
-deserializer must reject unknown or incomplete identity data rather than
-inventing values.
+The AST serialization schema is currently `1.1.0` and is experimental. Only
+`1.1.0` is currently accepted; other versions are rejected until an explicit
+migration is implemented. Serialized object identities, node types, edge
+types, and schema version must remain self-describing; a deserializer must
+reject unknown, inconsistent, or incomplete data rather than inventing values.
 
 ## Security Scope
 

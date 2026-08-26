@@ -47,3 +47,4 @@ The next release will be cut after the full CI and signed-tag checklist passes.
 - Made TSA chain and revocation checks explicitly opt-in in the library and CLI.
 - Locked JavaScript binding dependencies and switched binding workflows to `npm ci`.
 - Added corpus latency percentiles and rejected malformed xref, image, and function dimensions safely.
+- Deserializers now reject unsupported AST schema versions and inconsistent graph metadata instead of silently repairing input.
