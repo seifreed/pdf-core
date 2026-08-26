@@ -163,15 +163,18 @@ impl LazyStream {
             .dict
             .get("N")
             .and_then(|v| v.as_integer())
-            .ok_or("Missing N in object stream")?;
+            .ok_or("Missing N in object stream")
+            .and_then(|value| usize::try_from(value).map_err(|_| "N must be non-negative"))?;
 
         let first = self
             .dict
             .get("First")
             .and_then(|v| v.as_integer())
-            .ok_or("Missing First in object stream")?;
+            .ok_or("Missing First in object stream")
+            .and_then(|value| usize::try_from(value).map_err(|_| "First must be non-negative"))?;
 
-        if index >= n as u32 {
+        let index = usize::try_from(index).map_err(|_| "Object stream index overflow")?;
+        if index >= n {
             return Err(format!(
                 "Index {} out of range for object stream with {} objects",
                 index, n
@@ -187,33 +190,51 @@ impl LazyStream {
         }
 
         // Find object offset in stream
-        let offset_table = &data[..offset_table_end];
+        let offset_table = data
+            .get(..offset_table_end)
+            .ok_or("Invalid First offset in object stream")?;
         let entries: Vec<&str> = std::str::from_utf8(offset_table)
             .map_err(|e| format!("Invalid offset table: {}", e))?
             .split_whitespace()
             .collect();
 
-        if entries.len() < (index * 2 + 2) as usize {
-            return Err("Insufficient entries in offset table".to_string());
-        }
-
-        let obj_offset = entries[(index * 2 + 1) as usize]
+        let entry_index = index
+            .checked_mul(2)
+            .and_then(|value| value.checked_add(1))
+            .ok_or("Object stream entry index overflow")?;
+        let obj_offset = entries
+            .get(entry_index)
+            .ok_or("Insufficient entries in offset table")?
             .parse::<usize>()
             .map_err(|e| format!("Invalid offset: {}", e))?;
 
-        let absolute_offset = first as usize + obj_offset;
+        let absolute_offset = first
+            .checked_add(obj_offset)
+            .ok_or("Object stream offset overflow")?;
 
         // Find next object offset to determine length
-        let next_offset = if index + 1 < n as u32 {
-            let next_obj_offset = entries[((index + 1) * 2 + 1) as usize]
+        let next_offset = if index + 1 < n {
+            let next_entry_index = index
+                .checked_add(1)
+                .and_then(|value| value.checked_mul(2))
+                .and_then(|value| value.checked_add(1))
+                .ok_or("Object stream entry index overflow")?;
+            let next_obj_offset = entries
+                .get(next_entry_index)
+                .ok_or("Insufficient entries in offset table")?
                 .parse::<usize>()
                 .map_err(|e| format!("Invalid next offset: {}", e))?;
-            first as usize + next_obj_offset
+            first
+                .checked_add(next_obj_offset)
+                .ok_or("Object stream offset overflow")?
         } else {
             data.len()
         };
 
-        if absolute_offset >= data.len() || next_offset > data.len() {
+        if absolute_offset >= data.len()
+            || next_offset > data.len()
+            || next_offset < absolute_offset
+        {
             return Err("Object offset out of bounds".to_string());
         }
 
@@ -311,15 +332,20 @@ impl MemoryStreamSource {
 
 impl StreamSource for MemoryStreamSource {
     fn read_at(&mut self, offset: u64, length: usize) -> std::io::Result<Vec<u8>> {
-        let offset = offset as usize;
-        if offset + length > self.data.len() {
+        let offset = usize::try_from(offset).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Offset exceeds usize")
+        })?;
+        let end = offset.checked_add(length).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "Read range overflows")
+        })?;
+        if end > self.data.len() {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::UnexpectedEof,
                 "Read beyond end of stream",
             ));
         }
 
-        Ok(self.data[offset..offset + length].to_vec())
+        Ok(self.data[offset..end].to_vec())
     }
 
     fn clone_source(&self) -> Box<dyn StreamSource> {
@@ -398,5 +424,33 @@ impl StreamCacheManager {
 
     pub fn get_current_usage(&self) -> usize {
         self.current_usage.lock().map(|usage| *usage).unwrap_or(0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{LazyStream, MemoryStreamSource, StreamLoader, StreamSource};
+    use crate::types::{ObjectId, PdfDictionary, PdfValue};
+
+    #[test]
+    fn rejects_negative_object_stream_counts() {
+        let mut dict = PdfDictionary::new();
+        dict.insert("N", PdfValue::Integer(-1));
+        dict.insert("First", PdfValue::Integer(0));
+        let stream = LazyStream::new_object_stream(
+            dict,
+            ObjectId::new(1, 0),
+            0,
+            StreamLoader::Inline(Vec::new()),
+        );
+
+        assert!(stream.load().is_err());
+    }
+
+    #[test]
+    fn rejects_overflowing_memory_reads() {
+        let mut source = MemoryStreamSource::new(vec![1, 2, 3]);
+        let result = source.read_at(u64::MAX, 1);
+        assert!(result.is_err());
     }
 }
