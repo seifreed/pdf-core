@@ -50,7 +50,7 @@
 | Object streams | Partial, bounded and validated |
 | Flate, ASCII85, LZW, RunLength | Implemented |
 | CCITT | Experimental |
-| JBIG2 | Placeholder, not supported for production decoding |
+| JBIG2 | Unsupported; raw stream inspection only |
 | JPX | Container inspection, not full JPEG 2000 decoding |
 | Text extraction | Experimental |
 | PDF/A and PDF/UA | Partial preflight checks, not certifiable |
