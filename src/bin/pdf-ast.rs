@@ -1653,8 +1653,7 @@ fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = Vec::new();
 
-    let chunks = data.chunks_exact(3);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = data.as_chunks::<3>();
 
     for chunk in chunks {
         let b1 = chunk[0] as u32;
