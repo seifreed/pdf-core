@@ -28,6 +28,7 @@ pub struct CcittDecoder {
     end_of_block: bool,
     black_is_1: bool,
     damaged_rows_before_error: i32,
+    max_output_bytes: Option<usize>,
 }
 
 impl CcittDecoder {
@@ -42,6 +43,7 @@ impl CcittDecoder {
             end_of_block: true,
             black_is_1: false,
             damaged_rows_before_error: 0,
+            max_output_bytes: None,
         }
     }
 
@@ -76,6 +78,11 @@ impl CcittDecoder {
         self
     }
 
+    pub fn with_max_output_bytes(mut self, max_output_bytes: usize) -> Self {
+        self.max_output_bytes = Some(max_output_bytes);
+        self
+    }
+
     /// Decode Group 3 1D (Modified Huffman)
     pub fn decode_group3_1d(&self, data: &[u8]) -> Result<Vec<u8>, String> {
         let mut decoder = Group3Decoder::new(self.columns, self.rows, false);
@@ -84,6 +91,7 @@ impl CcittDecoder {
         decoder.encoded_byte_align = self.encoded_byte_align;
         decoder.end_of_block = self.end_of_block;
         decoder.damaged_rows_before_error = self.damaged_rows_before_error;
+        decoder.max_output_bytes = self.max_output_bytes;
         decoder.decode_1d(data)
     }
 
@@ -96,6 +104,7 @@ impl CcittDecoder {
         decoder.encoded_byte_align = self.encoded_byte_align;
         decoder.end_of_block = self.end_of_block;
         decoder.damaged_rows_before_error = self.damaged_rows_before_error;
+        decoder.max_output_bytes = self.max_output_bytes;
         decoder.decode_2d(data)
     }
 
@@ -105,8 +114,27 @@ impl CcittDecoder {
         decoder.black_is_1 = self.black_is_1;
         decoder.end_of_block = self.end_of_block;
         decoder.damaged_rows_before_error = self.damaged_rows_before_error;
+        decoder.max_output_bytes = self.max_output_bytes;
         decoder.decode(data)
     }
+}
+
+fn append_row(
+    output: &mut Vec<u8>,
+    row: &[u8],
+    max_output_bytes: Option<usize>,
+) -> Result<(), String> {
+    if let Some(limit) = max_output_bytes {
+        let next_len = output
+            .len()
+            .checked_add(row.len())
+            .ok_or_else(|| "CCITT output size overflow".to_string())?;
+        if next_len > limit {
+            return Err("CCITT output exceeds limit".to_string());
+        }
+    }
+    output.extend_from_slice(row);
+    Ok(())
 }
 
 /// Group 3 Fax decoder
@@ -120,6 +148,7 @@ struct Group3Decoder {
     encoded_byte_align: bool,
     end_of_block: bool,
     damaged_rows_before_error: i32,
+    max_output_bytes: Option<usize>,
 }
 
 impl Group3Decoder {
@@ -134,6 +163,7 @@ impl Group3Decoder {
             encoded_byte_align: false,
             end_of_block: true,
             damaged_rows_before_error: 0,
+            max_output_bytes: None,
         }
     }
 
@@ -160,13 +190,13 @@ impl Group3Decoder {
             let row_result = self.decode_row_1d(&mut reader, &mut row);
             match row_result {
                 Ok(()) => {
-                    output.extend_from_slice(&row);
+                    append_row(&mut output, &row, self.max_output_bytes)?;
                     decoded_rows += 1;
                 }
                 Err(err) => {
                     if self.damaged_rows_before_error > 0 {
                         self.damaged_rows_before_error -= 1;
-                        output.extend_from_slice(&row);
+                        append_row(&mut output, &row, self.max_output_bytes)?;
                         decoded_rows += 1;
                     } else {
                         return Err(err);
@@ -221,14 +251,14 @@ impl Group3Decoder {
 
             match row_result {
                 Ok(()) => {
-                    output.extend_from_slice(&row);
+                    append_row(&mut output, &row, self.max_output_bytes)?;
                     reference_row.copy_from_slice(&row);
                     decoded_rows += 1;
                 }
                 Err(err) => {
                     if self.damaged_rows_before_error > 0 {
                         self.damaged_rows_before_error -= 1;
-                        output.extend_from_slice(&row);
+                        append_row(&mut output, &row, self.max_output_bytes)?;
                         reference_row.copy_from_slice(&row);
                         decoded_rows += 1;
                     } else {
@@ -362,6 +392,7 @@ struct Group4Decoder {
     black_is_1: bool,
     end_of_block: bool,
     damaged_rows_before_error: i32,
+    max_output_bytes: Option<usize>,
 }
 
 impl Group4Decoder {
@@ -372,6 +403,7 @@ impl Group4Decoder {
             black_is_1: false,
             end_of_block: true,
             damaged_rows_before_error: 0,
+            max_output_bytes: None,
         }
     }
 
@@ -392,14 +424,14 @@ impl Group4Decoder {
             let row_result = self.decode_row_mmr(&mut reader, &mut row, &reference_row);
             match row_result {
                 Ok(()) => {
-                    output.extend_from_slice(&row);
+                    append_row(&mut output, &row, self.max_output_bytes)?;
                     reference_row.copy_from_slice(&row);
                     decoded_rows += 1;
                 }
                 Err(err) => {
                     if self.damaged_rows_before_error > 0 {
                         self.damaged_rows_before_error -= 1;
-                        output.extend_from_slice(&row);
+                        append_row(&mut output, &row, self.max_output_bytes)?;
                         reference_row.copy_from_slice(&row);
                         decoded_rows += 1;
                     } else {
@@ -745,5 +777,14 @@ mod tests {
         let data = pack_bits_lsb(&v0_bits);
         let result = decoder.decode_group4(&data).unwrap();
         assert_eq!(result, vec![0x00]);
+    }
+
+    #[test]
+    fn enforces_output_limit_before_appending_rows() {
+        let decoder = CcittDecoder::new(8, 1)
+            .with_black_is_1(true)
+            .with_max_output_bytes(0);
+        let data = pack_bits_lsb(&[1, 0, 0, 1, 1]);
+        assert!(decoder.decode_group3_1d(&data).is_err());
     }
 }

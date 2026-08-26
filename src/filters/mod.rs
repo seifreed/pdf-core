@@ -441,7 +441,8 @@ fn decode_ccitt_fax(
         .with_end_of_line(end_of_line)
         .with_encoded_byte_align(encoded_byte_align)
         .with_end_of_block(end_of_block)
-        .with_damaged_rows_before_error(damaged_rows_before_error);
+        .with_damaged_rows_before_error(damaged_rows_before_error)
+        .with_max_output_bytes(max_output_bytes);
 
     let result = match k.cmp(&0) {
         Ordering::Less => decoder.decode_group4(data),
