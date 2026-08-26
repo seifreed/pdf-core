@@ -118,24 +118,24 @@ fn decode_single_filter(
     max_output_bytes: usize,
 ) -> Result<Vec<u8>, FilterError> {
     match filter {
-        StreamFilter::ASCIIHexDecode => decode_ascii_hex(data),
-        StreamFilter::ASCII85Decode => decode_ascii85(data),
+        StreamFilter::ASCIIHexDecode => decode_ascii_hex(data, max_output_bytes),
+        StreamFilter::ASCII85Decode => decode_ascii85(data, max_output_bytes),
         StreamFilter::FlateDecode(params) => {
             decode_flate_with_struct(data, params, max_output_bytes)
         }
-        StreamFilter::LZWDecode(params) => decode_lzw_with_params(data, params),
-        StreamFilter::RunLengthDecode => decode_run_length(data),
+        StreamFilter::LZWDecode(params) => decode_lzw_with_params(data, params, max_output_bytes),
+        StreamFilter::RunLengthDecode => decode_run_length(data, max_output_bytes),
         StreamFilter::CCITTFaxDecode(params) => decode_ccitt_fax(data, params, max_output_bytes),
         StreamFilter::JBIG2Decode => decode_jbig2(data),
-        StreamFilter::DCTDecode => decode_dct(data),
-        StreamFilter::JPXDecode => decode_jpx(data),
+        StreamFilter::DCTDecode => decode_dct(data, max_output_bytes),
+        StreamFilter::JPXDecode => decode_jpx(data, max_output_bytes),
         StreamFilter::Crypt(_) => Err(FilterError::CryptError(
             "Crypt filter requires decryption context".to_string(),
         )),
     }
 }
 
-fn decode_ascii_hex(data: &[u8]) -> Result<Vec<u8>, FilterError> {
+fn decode_ascii_hex(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
     let mut result = Vec::new();
     let mut chars = data.iter().filter(|&&c| !c.is_ascii_whitespace());
 
@@ -149,6 +149,11 @@ fn decode_ascii_hex(data: &[u8]) -> Result<Vec<u8>, FilterError> {
         let hex_str = format!("{}{}", c1 as char, c2 as char);
         let byte = u8::from_str_radix(&hex_str, 16)
             .map_err(|_| FilterError::InvalidData(format!("Invalid hex string: {}", hex_str)))?;
+        if result.len() == max_output_bytes {
+            return Err(FilterError::DecompressionError(
+                "ASCIIHex output exceeds limit".to_string(),
+            ));
+        }
         result.push(byte);
     }
 
@@ -158,7 +163,7 @@ fn decode_ascii_hex(data: &[u8]) -> Result<Vec<u8>, FilterError> {
 /// Powers of 85 for ASCII85 decoding: [85^4, 85^3, 85^2, 85^1, 85^0]
 const ASCII85_POWERS: [u32; 5] = [52200625, 614125, 7225, 85, 1];
 
-fn decode_ascii85(data: &[u8]) -> Result<Vec<u8>, FilterError> {
+fn decode_ascii85(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
     let mut result = Vec::new();
     let mut tuple: Vec<u8> = Vec::with_capacity(5);
 
@@ -172,6 +177,11 @@ fn decode_ascii85(data: &[u8]) -> Result<Vec<u8>, FilterError> {
         }
 
         if byte == b'z' {
+            if 4 > max_output_bytes.saturating_sub(result.len()) {
+                return Err(FilterError::DecompressionError(
+                    "ASCII85 output exceeds limit".to_string(),
+                ));
+            }
             result.extend_from_slice(&[0, 0, 0, 0]);
             continue;
         }
@@ -187,6 +197,11 @@ fn decode_ascii85(data: &[u8]) -> Result<Vec<u8>, FilterError> {
 
         if tuple.len() == 5 {
             let value = ascii85_tuple_to_u32(&tuple);
+            if 4 > max_output_bytes.saturating_sub(result.len()) {
+                return Err(FilterError::DecompressionError(
+                    "ASCII85 output exceeds limit".to_string(),
+                ));
+            }
             result.extend_from_slice(&value.to_be_bytes());
             tuple.clear();
         }
@@ -196,6 +211,11 @@ fn decode_ascii85(data: &[u8]) -> Result<Vec<u8>, FilterError> {
         let bytes_to_take = tuple.len() - 1;
         tuple.resize(5, 84);
         let value = ascii85_tuple_to_u32(&tuple);
+        if bytes_to_take > max_output_bytes.saturating_sub(result.len()) {
+            return Err(FilterError::DecompressionError(
+                "ASCII85 output exceeds limit".to_string(),
+            ));
+        }
         result.extend_from_slice(&value.to_be_bytes()[..bytes_to_take]);
     }
 
@@ -257,9 +277,13 @@ fn decode_flate_with_struct(
     )
 }
 
-fn decode_lzw_with_params(data: &[u8], params: &LZWDecodeParams) -> Result<Vec<u8>, FilterError> {
+fn decode_lzw_with_params(
+    data: &[u8],
+    params: &LZWDecodeParams,
+    max_output_bytes: usize,
+) -> Result<Vec<u8>, FilterError> {
     let early_change = params.early_change.unwrap_or(true);
-    let decoded = decode_lzw(data, early_change)?;
+    let decoded = decode_lzw(data, early_change, max_output_bytes)?;
     apply_predictor(
         decoded,
         params.predictor,
@@ -269,12 +293,16 @@ fn decode_lzw_with_params(data: &[u8], params: &LZWDecodeParams) -> Result<Vec<u
     )
 }
 
-fn decode_lzw(data: &[u8], early_change: bool) -> Result<Vec<u8>, FilterError> {
+fn decode_lzw(
+    data: &[u8],
+    early_change: bool,
+    max_output_bytes: usize,
+) -> Result<Vec<u8>, FilterError> {
     if early_change {
         let mut decoder = lzw::DecoderEarlyChange::new(lzw::MsbReader::new(), 8);
-        decode_lzw_stream_ec(data, &mut decoder).or_else(|msb_err| {
+        decode_lzw_stream_ec(data, &mut decoder, max_output_bytes).or_else(|msb_err| {
             let mut fallback = lzw::DecoderEarlyChange::new(lzw::LsbReader::new(), 8);
-            decode_lzw_stream_ec(data, &mut fallback).map_err(|lsb_err| {
+            decode_lzw_stream_ec(data, &mut fallback, max_output_bytes).map_err(|lsb_err| {
                 FilterError::DecompressionError(format!(
                     "LZW decode error (MSB: {}, LSB: {})",
                     msb_err, lsb_err
@@ -283,9 +311,9 @@ fn decode_lzw(data: &[u8], early_change: bool) -> Result<Vec<u8>, FilterError> {
         })
     } else {
         let mut decoder = lzw::Decoder::new(lzw::MsbReader::new(), 8);
-        decode_lzw_stream(data, &mut decoder).or_else(|msb_err| {
+        decode_lzw_stream(data, &mut decoder, max_output_bytes).or_else(|msb_err| {
             let mut fallback = lzw::Decoder::new(lzw::LsbReader::new(), 8);
-            decode_lzw_stream(data, &mut fallback).map_err(|lsb_err| {
+            decode_lzw_stream(data, &mut fallback, max_output_bytes).map_err(|lsb_err| {
                 FilterError::DecompressionError(format!(
                     "LZW decode error (MSB: {}, LSB: {})",
                     msb_err, lsb_err
@@ -298,6 +326,7 @@ fn decode_lzw(data: &[u8], early_change: bool) -> Result<Vec<u8>, FilterError> {
 fn decode_lzw_stream<R: lzw::BitReader>(
     data: &[u8],
     decoder: &mut lzw::Decoder<R>,
+    max_output_bytes: usize,
 ) -> Result<Vec<u8>, String> {
     let mut offset = 0usize;
     let mut output = Vec::new();
@@ -309,6 +338,9 @@ fn decode_lzw_stream<R: lzw::BitReader>(
         if consumed == 0 {
             break;
         }
+        if bytes.len() > max_output_bytes.saturating_sub(output.len()) {
+            return Err("LZW output exceeds limit".to_string());
+        }
         offset += consumed;
         output.extend_from_slice(bytes);
     }
@@ -319,6 +351,7 @@ fn decode_lzw_stream<R: lzw::BitReader>(
 fn decode_lzw_stream_ec<R: lzw::BitReader>(
     data: &[u8],
     decoder: &mut lzw::DecoderEarlyChange<R>,
+    max_output_bytes: usize,
 ) -> Result<Vec<u8>, String> {
     let mut offset = 0usize;
     let mut output = Vec::new();
@@ -329,6 +362,9 @@ fn decode_lzw_stream_ec<R: lzw::BitReader>(
             .map_err(|e| format!("{:?}", e))?;
         if consumed == 0 {
             break;
+        }
+        if bytes.len() > max_output_bytes.saturating_sub(output.len()) {
+            return Err("LZW output exceeds limit".to_string());
         }
         offset += consumed;
         output.extend_from_slice(bytes);
@@ -392,7 +428,7 @@ fn apply_predictor(
         .map_err(|e| FilterError::DecompressionError(format!("Predictor decode error: {:?}", e)))
 }
 
-fn decode_run_length(data: &[u8]) -> Result<Vec<u8>, FilterError> {
+fn decode_run_length(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
     let mut result = Vec::new();
     let mut i = 0;
     let mut seen_eod = false;
@@ -410,6 +446,11 @@ fn decode_run_length(data: &[u8]) -> Result<Vec<u8>, FilterError> {
                     "RunLength decode error: insufficient data".to_string(),
                 ));
             }
+            if count > max_output_bytes.saturating_sub(result.len()) {
+                return Err(FilterError::DecompressionError(
+                    "RunLength output exceeds limit".to_string(),
+                ));
+            }
             result.extend_from_slice(&data[i + 1..i + 1 + count]);
             i += 1 + count;
         } else {
@@ -420,6 +461,11 @@ fn decode_run_length(data: &[u8]) -> Result<Vec<u8>, FilterError> {
                 ));
             }
             let byte = data[i + 1];
+            if count > max_output_bytes.saturating_sub(result.len()) {
+                return Err(FilterError::DecompressionError(
+                    "RunLength output exceeds limit".to_string(),
+                ));
+            }
             result.resize(result.len() + count, byte);
             i += 2;
         }
@@ -496,7 +542,7 @@ fn decode_jbig2(data: &[u8]) -> Result<Vec<u8>, FilterError> {
     ))
 }
 
-fn decode_dct(data: &[u8]) -> Result<Vec<u8>, FilterError> {
+fn decode_dct(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
     use jpeg_decoder::Decoder;
 
     let mut decoder = Decoder::new(data);
@@ -504,9 +550,24 @@ fn decode_dct(data: &[u8]) -> Result<Vec<u8>, FilterError> {
     let _metadata = decoder
         .info()
         .ok_or_else(|| FilterError::ImageDecodeError("JPEG info not available".to_string()))?;
+    let info = decoder
+        .info()
+        .ok_or_else(|| FilterError::ImageDecodeError("JPEG info not available".to_string()))?;
+    let decoded_size = usize::from(info.width)
+        .checked_mul(usize::from(info.height))
+        .and_then(|pixels| pixels.checked_mul(info.pixel_format.pixel_bytes()))
+        .ok_or_else(|| FilterError::ImageDecodeError("JPEG output size overflow".to_string()))?;
+    if decoded_size > max_output_bytes {
+        return Err(FilterError::DecompressionError(
+            "JPEG output exceeds limit".to_string(),
+        ));
+    }
 
     match decoder.decode() {
-        Ok(image_data) => Ok(image_data),
+        Ok(image_data) if image_data.len() <= max_output_bytes => Ok(image_data),
+        Ok(_) => Err(FilterError::DecompressionError(
+            "JPEG output exceeds limit".to_string(),
+        )),
         Err(jpeg_decoder::Error::Format(_)) => Ok(data.to_vec()),
         Err(e) => Err(FilterError::ImageDecodeError(format!(
             "JPEG decode error: {:?}",
@@ -515,9 +576,15 @@ fn decode_dct(data: &[u8]) -> Result<Vec<u8>, FilterError> {
     }
 }
 
-fn decode_jpx(data: &[u8]) -> Result<Vec<u8>, FilterError> {
-    jpx::decode_jpx_to_codestream(data)
-        .map_err(|e| FilterError::ImageDecodeError(format!("JPX decode error: {}", e)))
+fn decode_jpx(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
+    let codestream = jpx::decode_jpx_to_codestream(data)
+        .map_err(|e| FilterError::ImageDecodeError(format!("JPX decode error: {}", e)))?;
+    if codestream.len() > max_output_bytes {
+        return Err(FilterError::DecompressionError(
+            "JPX output exceeds limit".to_string(),
+        ));
+    }
+    Ok(codestream)
 }
 
 #[cfg(test)]
@@ -526,7 +593,7 @@ mod tests {
         apply_predictor, decode_ccitt_fax, decode_stream_with_budget, decode_stream_with_limits,
     };
     use crate::performance::ResourceBudget;
-    use crate::types::CCITTFaxDecodeParams;
+    use crate::types::{CCITTFaxDecodeParams, StreamFilter};
 
     #[test]
     fn rejects_negative_predictor_parameters() {
@@ -559,5 +626,26 @@ mod tests {
         let error = decode_stream_with_limits(b"12345", &[], 4, 10)
             .expect_err("unfiltered data must respect the output limit");
         assert!(error.to_string().contains("Decoded stream exceeds limit"));
+    }
+
+    #[test]
+    fn limited_ascii_hex_and_run_length_decode() {
+        let hex_error =
+            decode_stream_with_limits(b"303132>", &[StreamFilter::ASCIIHexDecode], 2, 10)
+                .expect_err("ASCIIHex output must respect the limit");
+        assert!(hex_error
+            .to_string()
+            .contains("ASCIIHex output exceeds limit"));
+
+        let run_length_error = decode_stream_with_limits(
+            &[2, b'a', b'b', b'c', 128],
+            &[StreamFilter::RunLengthDecode],
+            2,
+            10,
+        )
+        .expect_err("RunLength output must respect the limit");
+        assert!(run_length_error
+            .to_string()
+            .contains("RunLength output exceeds limit"));
     }
 }
