@@ -27,7 +27,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y qpdf mupdf-tools
       - name: Fetch pinned project corpus
         env:
-          PDF_CORPUS_COMMIT: 256edc3a63d9b57033c5778dcb683355323b0e73
+          PDF_CORPUS_COMMIT: a1b3288ef75c2e782ed4e199ba3713e5a2d9d519
         run: tools/fetch-verapdf-corpus.sh "fixtures/verapdf-pdfa-1b" "$RUNNER_TEMP/verapdf-corpus"
       - name: Run differential corpus test
         env:
