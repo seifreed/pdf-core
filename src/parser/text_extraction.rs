@@ -96,11 +96,8 @@ impl<'a> TextExtractor<'a> {
         }
 
         // Sort spans by position
-        self.text_spans.sort_by(|a, b| {
-            a.y.partial_cmp(&b.y)
-                .unwrap()
-                .then(a.x.partial_cmp(&b.x).unwrap())
-        });
+        self.text_spans
+            .sort_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)));
 
         self.text_spans.clone()
     }
@@ -252,7 +249,9 @@ impl<'a> TextExtractor<'a> {
             return;
         }
 
-        let font = self.text_state.current_font.as_ref().unwrap();
+        let Some(font) = self.text_state.current_font.as_ref() else {
+            return;
+        };
         let mut chars = Vec::new();
         let mut total_width = 0.0;
 

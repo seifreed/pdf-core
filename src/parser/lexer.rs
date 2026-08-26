@@ -35,10 +35,15 @@ fn parse_i64(input: &[u8]) -> Result<i64, &'static str> {
 }
 
 fn parse_f64(input: &[u8]) -> Result<f64, &'static str> {
-    std::str::from_utf8(input)
+    let value = std::str::from_utf8(input)
         .map_err(|_| "invalid numeric token")?
         .parse::<f64>()
-        .map_err(|_| "invalid real number")
+        .map_err(|_| "invalid real number")?;
+    if value.is_finite() {
+        Ok(value)
+    } else {
+        Err("real number is not finite")
+    }
 }
 
 pub fn skip_whitespace(input: &[u8]) -> IResult<&[u8], ()> {

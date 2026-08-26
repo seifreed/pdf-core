@@ -350,8 +350,8 @@ impl<'a> ExtGStateParser<'a> {
         }
 
         // TR2 - Transfer function (PDF 1.3)
-        if gs_dict.contains_key("TR2") {
-            self.parse_transfer_function_v2(gs_dict.get("TR2").unwrap(), gs_id);
+        if let Some(tr2) = gs_dict.get("TR2") {
+            self.parse_transfer_function_v2(tr2, gs_id);
         }
     }
 

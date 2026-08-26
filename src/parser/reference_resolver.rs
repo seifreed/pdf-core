@@ -1038,10 +1038,9 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 None => continue,
             };
 
-            let js_value = dict.get("JS").or_else(|| dict.get("JavaScript"));
-            if js_value.is_none() {
+            let Some(js_value) = dict.get("JS").or_else(|| dict.get("JavaScript")) else {
                 continue;
-            }
+            };
 
             let existing_js = ast.get_children(node_id).into_iter().any(|child| {
                 ast.get_node(child)
@@ -1052,7 +1051,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 continue;
             }
 
-            let resolved = match js_value.unwrap() {
+            let resolved = match js_value {
                 PdfValue::Reference(r) => self.load_object_value(r.id()).unwrap_or(PdfValue::Null),
                 value => value.clone(),
             };

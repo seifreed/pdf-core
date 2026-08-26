@@ -240,8 +240,9 @@ impl ReferenceRecovery {
         if let Ok(re) = regex::Regex::new(r"(\d+)\s*(\d+)R") {
             for line in data_str.lines() {
                 if let Some(captures) = re.captures(line) {
-                    let broken = captures.get(0).unwrap().as_str();
-                    broken_refs.push(broken.to_string());
+                    if let Some(broken) = captures.get(0) {
+                        broken_refs.push(broken.as_str().to_string());
+                    }
                 }
             }
         }
@@ -251,16 +252,16 @@ impl ReferenceRecovery {
 
     fn fix_reference(&self, _data: &[u8], broken_ref: &str) -> Option<String> {
         // Fix malformed references
-        if let Some(captures) = regex::Regex::new(r"(\d+)\s*(\d+)R")
+        regex::Regex::new(r"(\d+)\s*(\d+)R")
             .ok()
             .and_then(|re| re.captures(broken_ref))
-        {
-            let obj_num = captures.get(1).unwrap().as_str();
-            let gen_num = captures.get(2).unwrap().as_str();
-            return Some(format!("{} {} R", obj_num, gen_num));
-        }
-
-        None
+            .and_then(|captures| {
+                Some(format!(
+                    "{} {} R",
+                    captures.get(1)?.as_str(),
+                    captures.get(2)?.as_str()
+                ))
+            })
     }
 }
 
