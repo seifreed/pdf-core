@@ -1,0 +1,29 @@
+name: API Stability Audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+
+jobs:
+  semver:
+    name: Compare public API with pdf-ast 0.1.0
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-01-01
+        with:
+          toolchain: stable
+      - name: Install cargo-semver-checks
+        run: cargo install cargo-semver-checks --version 0.50.0 --locked
+      - name: Check release compatibility
+        run: cargo semver-checks check-release --package pdf-ast
