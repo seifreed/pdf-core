@@ -1,6 +1,6 @@
 # MSRV and Compatibility
 
-The minimum supported Rust version is **1.85.0**, matching `rust-version` in
+The minimum supported Rust version is **1.88.0**, matching `rust-version` in
 the root `Cargo.toml`. The CI `msrv` job checks the complete workspace against
 that toolchain.
 
