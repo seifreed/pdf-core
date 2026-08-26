@@ -40,7 +40,7 @@ jobs:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-01-01
         with:
-          toolchain: stable
+          toolchain: nightly
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
       - name: Run bounded campaign
