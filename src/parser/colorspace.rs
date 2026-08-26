@@ -177,6 +177,9 @@ impl<'a> ColorSpaceParser<'a> {
         };
 
         let node_id = self.ast.next_node_id();
+        if self.limits.budget.consume_node().is_err() {
+            return;
+        }
         let profile_id =
             self.ast
                 .add_node(AstNode::new(node_id, NodeType::Metadata, PdfValue::Null));
