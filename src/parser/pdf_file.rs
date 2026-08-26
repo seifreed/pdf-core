@@ -2328,13 +2328,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn decode_xmp_stream(&self, stream: &PdfStream) -> Option<Vec<u8>> {
-        match stream.decode_with_limits(
-            self.limits.max_object_size_mb * 1024 * 1024,
-            self.limits.max_stream_decode_ratio,
-        ) {
-            Ok(data) => Some(data),
-            Err(_) => stream.raw_data().map(|d| d.to_vec()),
-        }
+        stream.decode_with_budget(&self.limits.budget).ok()
     }
 
     fn create_xmp_packet_node(

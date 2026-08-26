@@ -165,17 +165,7 @@ impl PdfStream {
     }
 
     pub fn decode(&self) -> Result<Vec<u8>, String> {
-        match &self.data {
-            StreamData::Raw(data) | StreamData::Decoded(data) => {
-                let filters = self.get_filters_with_params();
-                if filters.is_empty() {
-                    Ok(data.clone())
-                } else {
-                    crate::filters::decode_stream(data, &filters).map_err(|e| e.to_string())
-                }
-            }
-            StreamData::Lazy(_) => Err("Lazy stream decoding not implemented".to_string()),
-        }
+        self.decode_with_budget(&ResourceBudget::default())
     }
 
     pub fn decode_with_budget(&self, budget: &ResourceBudget) -> Result<Vec<u8>, String> {
