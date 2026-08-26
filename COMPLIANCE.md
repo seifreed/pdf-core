@@ -76,6 +76,12 @@ The latest local parser gate (2026-08-26 UTC, corpus commit
 `peak_rss_kib=197168`, and p50/p95/p99 latencies of 3/57/150 ms. Reproduce it
 with `PDF_EXTERNAL_CORPUS=/path/to/pdf-core-corpus/fixtures PDF_EXTERNAL_MAX_FILES=3000 cargo test --test external_corpus_tests --locked -- --test-threads=1 --nocapture`.
 
+The matching local veraPDF 1.30.0 comparison (same date and corpus revision)
+checked all 569 PDF/A-1b fixtures: 263 were PDF/A-1b conformant, 6 were
+rejected by the strict parser, and the tolerant parser had zero acceptance
+divergences. Reproduce it with
+`PDF_VERAPDF_CORPUS=/path/to/pdf-core-corpus/fixtures/verapdf-pdfa-1b cargo test --test verapdf_tests --locked -- --test-threads=1`.
+
 ## Required Before Conformance Claims
 
 - The local positive/negative fixture branch is covered by the matrix above;
