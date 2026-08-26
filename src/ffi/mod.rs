@@ -1,6 +1,7 @@
 use crate::{AstNode, NodeType, PdfDocument, PdfParser};
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+use std::panic::AssertUnwindSafe;
 use std::ptr;
 use std::slice;
 
@@ -106,8 +107,11 @@ pub unsafe extern "C" fn pdf_ast_parse(
     let parser = PdfParser::new();
     let reader = std::io::Cursor::new(pdf_data);
 
-    match parser.parse(std::io::BufReader::new(reader)) {
-        Ok(doc) => {
+    let parsed = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        parser.parse(std::io::BufReader::new(reader))
+    }));
+    match parsed {
+        Ok(Ok(doc)) => {
             let boxed_doc = Box::new(doc);
             let c_doc = Box::new(CPdfDocument(Box::into_raw(boxed_doc)));
             unsafe {
@@ -115,7 +119,8 @@ pub unsafe extern "C" fn pdf_ast_parse(
             }
             CResult::success()
         }
-        Err(e) => CResult::error(CErrorCode::ParseError, &format!("Parse error: {}", e)),
+        Ok(Err(e)) => CResult::error(CErrorCode::ParseError, &format!("Parse error: {}", e)),
+        Err(_) => CResult::error(CErrorCode::ParseError, "Parser panicked during parsing"),
     }
 }
 
@@ -155,8 +160,9 @@ pub unsafe extern "C" fn pdf_ast_parse_file(
     let parser = PdfParser::new();
     let reader = std::io::BufReader::new(file);
 
-    match parser.parse(reader) {
-        Ok(doc) => {
+    let parsed = std::panic::catch_unwind(AssertUnwindSafe(|| parser.parse(reader)));
+    match parsed {
+        Ok(Ok(doc)) => {
             let boxed_doc = Box::new(doc);
             let c_doc = Box::new(CPdfDocument(Box::into_raw(boxed_doc)));
             unsafe {
@@ -164,7 +170,8 @@ pub unsafe extern "C" fn pdf_ast_parse_file(
             }
             CResult::success()
         }
-        Err(e) => CResult::error(CErrorCode::ParseError, &format!("Parse error: {}", e)),
+        Ok(Err(e)) => CResult::error(CErrorCode::ParseError, &format!("Parse error: {}", e)),
+        Err(_) => CResult::error(CErrorCode::ParseError, "Parser panicked during parsing"),
     }
 }
 

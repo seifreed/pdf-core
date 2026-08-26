@@ -57,6 +57,16 @@ int main(void) {
     }
     pdf_ast_free_result(&result);
 
+    static const uint8_t invalid_pdf[] = "not a PDF";
+    result = pdf_ast_parse(invalid_pdf, sizeof(invalid_pdf) - 1, &buffer_document);
+    if (result.error_code != PDF_AST_PARSE_ERROR || buffer_document != NULL) {
+        pdf_ast_free_result(&result);
+        pdf_ast_free_node(root);
+        pdf_ast_free_document(document);
+        return 11;
+    }
+    pdf_ast_free_result(&result);
+
     result = pdf_ast_parse_file("missing-pdf-ast-fixture.pdf", &buffer_document);
     if (result.error_code != PDF_AST_INVALID_INPUT || buffer_document != NULL) {
         pdf_ast_free_result(&result);
