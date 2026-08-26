@@ -15,8 +15,5 @@ fuzz_target!(|data: &[u8]| {
     dictionary.insert("Size", pdf_ast::types::PdfValue::Integer(8));
 
     let stream = pdf_ast::types::PdfStream::new(dictionary, data.to_vec());
-    let _ = pdf_ast::parser::xref::parse_xref_stream(
-        &stream,
-        &pdf_ast::performance::PerformanceLimits::default(),
-    );
+    let _ = pdf_ast::parser::xref::parse_xref_stream(&stream);
 });
