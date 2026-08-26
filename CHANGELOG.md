@@ -44,3 +44,6 @@ The next release will be cut after the full CI and signed-tag checklist passes.
 - Made workspace Clippy warnings fatal in CI.
 - Raised the MSRV to Rust 1.88.0 to retain the audited `time` dependency.
 - Made differential corpus gates fail on missing CI tools or parser divergences.
+- Made TSA chain and revocation checks explicitly opt-in in the library and CLI.
+- Locked JavaScript binding dependencies and switched binding workflows to `npm ci`.
+- Added corpus latency percentiles and rejected malformed xref, image, and function dimensions safely.
