@@ -245,7 +245,7 @@ fn add_info_dictionary(doc: &mut PdfDocument) {
     info_dict.insert(
         "Creator",
         PdfValue::String(pdf_ast::PdfString::new_literal(
-            b"pdf-core experimental library v0.1.0",
+            b"pdf-core experimental library v0.1.1-alpha",
         )),
     );
     info_dict.insert(

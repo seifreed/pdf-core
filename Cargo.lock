@@ -1514,7 +1514,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-ast-dynamic-plugin-example"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "pdf-ast",
  "serde_json",
@@ -1531,7 +1531,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-compliance"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "pdf-ast",
  "serde",
@@ -1539,7 +1539,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-diff"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "log",
  "pdf-ast",
@@ -1550,7 +1550,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-sec-analyzer"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "log",
  "pdf-ast",
@@ -1562,7 +1562,7 @@ dependencies = [
 
 [[package]]
 name = "pdf-text-intel"
-version = "0.1.0"
+version = "0.1.1-alpha"
 dependencies = [
  "log",
  "pdf-ast",

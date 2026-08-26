@@ -1,6 +1,6 @@
 [package]
 name = "pdf-compliance"
-version = "0.1.0"
+version = "0.1.1-alpha"
 edition = "2021"
 authors = ["Marc Rivero <mriverolopez@gmail.com>"]
 description = "PDF compliance validation library (PDF/A, PDF/UA) using PDF-AST"
