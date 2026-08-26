@@ -137,13 +137,13 @@ enum Commands {
         #[arg(long)]
         security_report: Option<PathBuf>,
 
-        /// Disable TSA chain validation for RFC3161 timestamps
+        /// Enable TSA chain validation for RFC3161 timestamps
         #[arg(long)]
-        disable_tsa_chain_validation: bool,
+        enable_tsa_chain_validation: bool,
 
-        /// Disable TSA OCSP/CRL checks during timestamp validation
+        /// Enable TSA OCSP/CRL checks during timestamp validation
         #[arg(long)]
-        disable_tsa_revocation_checks: bool,
+        enable_tsa_revocation_checks: bool,
 
         /// Allow-list TSA certificate fingerprint (SHA-256). Can be repeated or comma-separated.
         #[arg(long, value_delimiter = ',', value_name = "SHA256")]
@@ -311,8 +311,8 @@ fn main() {
             security,
             metrics,
             security_report,
-            disable_tsa_chain_validation,
-            disable_tsa_revocation_checks,
+            enable_tsa_chain_validation,
+            enable_tsa_revocation_checks,
             tsa_allow_fingerprint,
             tsa_block_fingerprint,
         } => handle_analyze(
@@ -322,8 +322,8 @@ fn main() {
             *metrics,
             security_report.clone(),
             build_crypto_config(
-                *disable_tsa_chain_validation,
-                *disable_tsa_revocation_checks,
+                *enable_tsa_chain_validation,
+                *enable_tsa_revocation_checks,
                 tsa_allow_fingerprint,
                 tsa_block_fingerprint,
             ),
@@ -1027,14 +1027,14 @@ fn handle_analyze(
 }
 
 fn build_crypto_config(
-    disable_tsa_chain_validation: bool,
-    disable_tsa_revocation_checks: bool,
+    enable_tsa_chain_validation: bool,
+    enable_tsa_revocation_checks: bool,
     tsa_allow_fingerprint: &[String],
     tsa_block_fingerprint: &[String],
 ) -> CryptoConfig {
     CryptoConfig {
-        enable_tsa_chain_validation: !disable_tsa_chain_validation,
-        enable_tsa_revocation_checks: !disable_tsa_revocation_checks,
+        enable_tsa_chain_validation,
+        enable_tsa_revocation_checks,
         tsa_allow_fingerprints: tsa_allow_fingerprint.to_vec(),
         tsa_block_fingerprints: tsa_block_fingerprint.to_vec(),
         ..Default::default()

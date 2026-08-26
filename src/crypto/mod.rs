@@ -91,8 +91,8 @@ impl Default for CryptoConfig {
             enable_crl_checking: false, // Disabled by default for performance
             enable_ocsp_checking: false, // Disabled by default for performance
             network_timeout_seconds: 30,
-            enable_tsa_chain_validation: true,
-            enable_tsa_revocation_checks: true,
+            enable_tsa_chain_validation: false,
+            enable_tsa_revocation_checks: false,
             tsa_allow_fingerprints: Vec::new(),
             tsa_block_fingerprints: Vec::new(),
         }

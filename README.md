@@ -162,7 +162,8 @@ pdf-ast analyze input.pdf --security --metrics
 
 # TSA controls for RFC3161 timestamps
 pdf-ast analyze input.pdf --security --tsa-allow-fingerprint <SHA256>
-pdf-ast analyze input.pdf --security --disable-tsa-revocation-checks
+pdf-ast analyze input.pdf --security --enable-tsa-chain-validation \
+  --enable-tsa-revocation-checks
 
 # Security report output formats
 pdf-ast analyze input.pdf --security --format yaml
