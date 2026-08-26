@@ -1,4 +1,4 @@
-use crate::ast::{EdgeType, NodeId, PdfAstGraph, PdfDocument};
+use crate::ast::{EdgeType, NodeId, NodeType, PdfAstGraph, PdfDocument};
 use crate::types::PdfValue;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -173,11 +173,7 @@ impl GraphSerializer {
 
             let serialized_node = SerializableNode {
                 id: serial_id,
-                node_type: format!("{:?}", node.node_type)
-                    .split('(')
-                    .next()
-                    .unwrap_or("Unknown")
-                    .to_string(),
+                node_type: node_type_name(&node.node_type).to_string(),
                 value: Self::serialize_value(&node.value),
                 object_id,
             };
@@ -194,7 +190,7 @@ impl GraphSerializer {
                 let serialized_edge = SerializableEdge {
                     from: from_id,
                     to: to_id,
-                    edge_type: format!("{:?}", edge.edge_type),
+                    edge_type: edge_type_name(edge.edge_type).to_string(),
                 };
                 self.edges.push(serialized_edge);
             }
@@ -334,11 +330,11 @@ impl GraphDeserializer {
             "Metadata" => Ok(crate::ast::NodeType::Metadata),
             "EmbeddedFile" => Ok(crate::ast::NodeType::EmbeddedFile),
             "Signature" => Ok(crate::ast::NodeType::Signature),
-            "Object" => Ok(crate::ast::NodeType::Object(
-                object_id
-                    .map(|(num, gen)| ObjectId::new(num, gen))
-                    .unwrap_or_else(|| ObjectId::new(0, 0)),
-            )),
+            "Object" => {
+                let (num, gen) =
+                    object_id.ok_or_else(|| "Object node is missing its object_id".to_string())?;
+                Ok(crate::ast::NodeType::Object(ObjectId::new(num, gen)))
+            }
             "Unknown" => Ok(crate::ast::NodeType::Unknown),
             "Stream" => Ok(crate::ast::NodeType::Stream),
             "FilteredStream" => Ok(crate::ast::NodeType::FilteredStream),
@@ -406,7 +402,7 @@ impl GraphDeserializer {
             "Encryption" => Ok(crate::ast::NodeType::Encryption),
             "Content" => Ok(crate::ast::NodeType::Content),
             "Other" => Ok(crate::ast::NodeType::Other),
-            _ => Ok(crate::ast::NodeType::Unknown),
+            _ => Err(format!("Unknown node type: {}", type_str)),
         }
     }
 
@@ -473,6 +469,103 @@ impl GraphDeserializer {
                 generation_number: *generation,
             })),
         }
+    }
+}
+
+fn node_type_name(node_type: &NodeType) -> &'static str {
+    match node_type {
+        NodeType::Root => "Root",
+        NodeType::Catalog => "Catalog",
+        NodeType::Pages => "Pages",
+        NodeType::Page => "Page",
+        NodeType::Resource => "Resource",
+        NodeType::Font => "Font",
+        NodeType::Image => "Image",
+        NodeType::ContentStream => "ContentStream",
+        NodeType::Annotation => "Annotation",
+        NodeType::Action => "Action",
+        NodeType::Metadata => "Metadata",
+        NodeType::EmbeddedFile => "EmbeddedFile",
+        NodeType::Signature => "Signature",
+        NodeType::Object(_) => "Object",
+        NodeType::Unknown => "Unknown",
+        NodeType::Stream => "Stream",
+        NodeType::FilteredStream => "FilteredStream",
+        NodeType::DecodedStream => "DecodedStream",
+        NodeType::XObject => "XObject",
+        NodeType::FormXObject => "FormXObject",
+        NodeType::ImageXObject => "ImageXObject",
+        NodeType::Type1Font => "Type1Font",
+        NodeType::TrueTypeFont => "TrueTypeFont",
+        NodeType::Type3Font => "Type3Font",
+        NodeType::CIDFont => "CIDFont",
+        NodeType::JavaScriptAction => "JavaScriptAction",
+        NodeType::GoToAction => "GoToAction",
+        NodeType::URIAction => "URIAction",
+        NodeType::LaunchAction => "LaunchAction",
+        NodeType::SubmitFormAction => "SubmitFormAction",
+        NodeType::AcroForm => "AcroForm",
+        NodeType::Field => "Field",
+        NodeType::Encrypt => "Encrypt",
+        NodeType::Permission => "Permission",
+        NodeType::ContentOperator => "ContentOperator",
+        NodeType::TextOperator => "TextOperator",
+        NodeType::GraphicsOperator => "GraphicsOperator",
+        NodeType::EmbeddedJS => "EmbeddedJS",
+        NodeType::SuspiciousAction => "SuspiciousAction",
+        NodeType::ExternalReference => "ExternalReference",
+        NodeType::EncodedContent => "EncodedContent",
+        NodeType::Outline => "Outline",
+        NodeType::OutlineItem => "OutlineItem",
+        NodeType::NameTree => "NameTree",
+        NodeType::StructTreeRoot => "StructTreeRoot",
+        NodeType::StructElem => "StructElem",
+        NodeType::ColorSpace => "ColorSpace",
+        NodeType::ICCBased => "ICCBased",
+        NodeType::Separation => "Separation",
+        NodeType::DeviceN => "DeviceN",
+        NodeType::Indexed => "Indexed",
+        NodeType::Pattern => "Pattern",
+        NodeType::Shading => "Shading",
+        NodeType::ExtGState => "ExtGState",
+        NodeType::Function => "Function",
+        NodeType::CMap => "CMap",
+        NodeType::ToUnicode => "ToUnicode",
+        NodeType::Encoding => "Encoding",
+        NodeType::OCG => "OCG",
+        NodeType::OCProperties => "OCProperties",
+        NodeType::OCMD => "OCMD",
+        NodeType::RichMedia => "RichMedia",
+        NodeType::Rendition => "Rendition",
+        NodeType::Screen => "Screen",
+        NodeType::Sound => "Sound",
+        NodeType::Movie => "Movie",
+        NodeType::ThreeD => "ThreeD",
+        NodeType::U3D => "U3D",
+        NodeType::PRC => "PRC",
+        NodeType::OutputIntent => "OutputIntent",
+        NodeType::LinkAnnotation => "LinkAnnotation",
+        NodeType::WidgetAnnotation => "WidgetAnnotation",
+        NodeType::FileAttachmentAnnotation => "FileAttachmentAnnotation",
+        NodeType::InlineImage => "InlineImage",
+        NodeType::Form => "Form",
+        NodeType::Structure => "Structure",
+        NodeType::Multimedia => "Multimedia",
+        NodeType::JavaScript => "JavaScript",
+        NodeType::Encryption => "Encryption",
+        NodeType::Content => "Content",
+        NodeType::Other => "Other",
+    }
+}
+
+fn edge_type_name(edge_type: EdgeType) -> &'static str {
+    match edge_type {
+        EdgeType::Child => "Child",
+        EdgeType::Reference => "Reference",
+        EdgeType::Parent => "Parent",
+        EdgeType::Resource => "Resource",
+        EdgeType::Annotation => "Annotation",
+        EdgeType::Content => "Content",
     }
 }
 
@@ -593,13 +686,20 @@ mod tests {
         let root_value = PdfValue::Dictionary(PdfDictionary::new());
         let root_id = ast.create_node(NodeType::Root, root_value);
         let object_id = crate::types::ObjectId::new(42, 7);
-        ast.create_node(NodeType::Object(object_id), PdfValue::Integer(1));
+        let object_node_id = ast.create_node(NodeType::Object(object_id), PdfValue::Integer(1));
         ast.set_root(root_id);
 
         let serialized = SerializableGraph::from_ast(&ast);
         assert_eq!(serialized.nodes.len(), 2);
         assert_eq!(serialized.edges.len(), 0);
         assert!(serialized.root.is_some());
+        let object_node = serialized
+            .nodes
+            .iter()
+            .find(|node| node.id == object_node_id.index())
+            .unwrap();
+        assert_eq!(object_node.node_type, "Object");
+        assert_eq!(object_node.object_id, Some((42, 7)));
 
         let json = serialized.to_json().unwrap();
         assert!(json.contains("Root"));
@@ -608,6 +708,29 @@ mod tests {
         assert_eq!(deserialized.nodes.len(), 2);
         let restored = GraphDeserializer::deserialize(deserialized).unwrap();
         assert!(restored.get_node_by_object(object_id).is_some());
+    }
+
+    #[test]
+    fn rejects_object_nodes_without_identity() {
+        let graph = SerializableGraph {
+            nodes: vec![SerializableNode {
+                id: 0,
+                node_type: "Object".to_string(),
+                value: SerializableValue::Null,
+                object_id: None,
+            }],
+            edges: Vec::new(),
+            root: Some(0),
+            metadata: GraphMetadata {
+                node_count: 1,
+                edge_count: 0,
+                is_cyclic: false,
+                serialization_version: AST_SCHEMA_VERSION.to_string(),
+            },
+        };
+
+        let error = GraphDeserializer::deserialize(graph).unwrap_err();
+        assert!(error.contains("missing its object_id"));
     }
 
     #[test]
