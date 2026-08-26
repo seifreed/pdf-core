@@ -14,7 +14,7 @@ Command:
 
 ```sh
 for target in certificates cmap content_stream filters indirect_objects lexer object_streams object_values page_tree pdf_parse pkcs7 serialization streams xmp xref xref_streams; do
-  cargo +nightly fuzz run "$target" -- -runs=1000
+  cargo +nightly fuzz run "$target" -- -runs=1000 -timeout=5 -print_final_stats=1
 done
 ```
 

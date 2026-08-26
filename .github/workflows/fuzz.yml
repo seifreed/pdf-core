@@ -50,4 +50,4 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
       - name: Run bounded campaign
-        run: cargo fuzz run ${{ matrix.target }} -- -runs=1000
+        run: cargo fuzz run ${{ matrix.target }} -- -runs=1000 -timeout=5 -print_final_stats=1
