@@ -37,3 +37,8 @@ The next release will be cut after the full CI and signed-tag checklist passes.
   parser, with a truncation regression test.
 - Removed the stale Python lockfile so workspace dependency resolution uses the
   audited root lockfile consistently.
+- Fixed builds without default features by using sequential fallbacks when
+  Rayon is disabled, and added a CI regression job for that configuration.
+- Bounded object-stream allocations, xref scans, parser re-reads, and JPX,
+  LZW, RunLength, ASCII, and JPEG decoder output.
+- Made workspace Clippy warnings fatal in CI.
