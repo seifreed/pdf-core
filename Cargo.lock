@@ -1533,11 +1533,8 @@ dependencies = [
 name = "pdf-compliance"
 version = "0.1.0"
 dependencies = [
- "log",
  "pdf-ast",
- "regex",
  "serde",
- "serde_json",
 ]
 
 [[package]]

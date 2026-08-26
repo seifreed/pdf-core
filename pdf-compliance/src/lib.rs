@@ -1,4 +1,5 @@
-use pdf_ast::{AstNode, PdfDictionary, PdfDocument, Visitor, VisitorAction};
+use pdf_ast::validation::{ValidationIssue, ValidationReport, ValidationSeverity};
+use pdf_ast::PdfDocument;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,165 +49,69 @@ pub enum ViolationSeverity {
 }
 
 pub fn validate_pdfa1b(document: &PdfDocument) -> ComplianceReport {
-    let mut validator = PdfA1bValidator::new();
-    let mut walker = pdf_ast::visitor::AstWalker::new(&document.ast);
-    walker.walk(&mut validator);
-    validator.generate_report()
+    let report = pdf_ast::validation::pdfa::PdfA1bValidator::new().validate(document);
+    convert_report(ComplianceProfile::PdfA1b, report)
 }
 
 pub fn validate_pdfua1(document: &PdfDocument) -> ComplianceReport {
-    let mut validator = PdfUA1Validator::new();
-    let mut walker = pdf_ast::visitor::AstWalker::new(&document.ast);
-    walker.walk(&mut validator);
-    validator.generate_report()
+    let report = pdf_ast::validation::SchemaRegistry::new()
+        .validate(document, "PDF/UA-1")
+        .expect("PDF/UA-1 is registered by the root validation registry");
+    convert_report(ComplianceProfile::PdfUA1, report)
 }
 
-struct PdfA1bValidator {
-    violations: Vec<Violation>,
-    has_embedded_fonts: bool,
-}
+fn convert_report(profile: ComplianceProfile, report: ValidationReport) -> ComplianceReport {
+    let status = if report.issues.iter().any(|issue| {
+        matches!(
+            issue.severity,
+            ValidationSeverity::Error | ValidationSeverity::Critical
+        )
+    }) {
+        ComplianceStatus::NonCompliant
+    } else if report
+        .issues
+        .iter()
+        .any(|issue| issue.severity == ValidationSeverity::Warning)
+    {
+        ComplianceStatus::PartiallyCompliant
+    } else {
+        ComplianceStatus::Compliant
+    };
 
-impl PdfA1bValidator {
-    fn new() -> Self {
-        Self {
-            violations: Vec::new(),
-            has_embedded_fonts: false,
-        }
-    }
+    let violations = report.issues.into_iter().map(convert_issue).collect();
 
-    fn generate_report(&self) -> ComplianceReport {
-        let status = if self
-            .violations
-            .iter()
-            .any(|v| v.severity == ViolationSeverity::Error)
-        {
-            ComplianceStatus::NonCompliant
-        } else if self
-            .violations
-            .iter()
-            .any(|v| v.severity == ViolationSeverity::Warning)
-        {
-            ComplianceStatus::PartiallyCompliant
-        } else {
-            ComplianceStatus::Compliant
-        };
-
-        ComplianceReport {
-            profile: ComplianceProfile::PdfA1b,
-            scope: "Experimental preflight checks for selected PDF/A-1b requirements".to_string(),
-            status,
-            violations: self.violations.clone(),
-            recommendations: vec![
-                "Ensure all fonts are embedded".to_string(),
-                "Include ICC color profile".to_string(),
-                "Remove JavaScript and multimedia content".to_string(),
-            ],
-        }
+    ComplianceReport {
+        profile,
+        scope: "Experimental preflight checks for selected requirements".to_string(),
+        status,
+        violations,
+        recommendations: vec![
+            "Review every reported rule against the target profile".to_string(),
+            "Do not treat a clean report as full conformance".to_string(),
+        ],
     }
 }
 
-impl Visitor for PdfA1bValidator {
-    fn visit_font(&mut self, _node: &AstNode, dict: &PdfDictionary) -> VisitorAction {
-        if dict.get("FontFile").is_none()
-            && dict.get("FontFile2").is_none()
-            && dict.get("FontFile3").is_none()
-        {
-            self.violations.push(Violation {
-                rule_id: "pdfa-1b.font-embedding".to_string(),
-                rule: "PDF/A-1b Font Embedding".to_string(),
-                description: "All fonts must be embedded in PDF/A-1b".to_string(),
-                location: "Font dictionary".to_string(),
-                standard_reference: Some("ISO 19005-1:2005, 6.3.5".to_string()),
-                severity: ViolationSeverity::Error,
-            });
-        } else {
-            self.has_embedded_fonts = true;
-        }
-        VisitorAction::Continue
-    }
+fn convert_issue(issue: ValidationIssue) -> Violation {
+    let standard_reference = match issue.code.as_str() {
+        "PDF_A_FONT_EMBEDDING" => Some("ISO 19005-1:2005, 6.3.5"),
+        "PDF_A_MULTIMEDIA" | "PDF_A_JAVASCRIPT" => Some("ISO 19005-1:2005, 6.6"),
+        "NO_TAGGED_STRUCTURE" | "STRUCT_ELEM_MISSING" => Some("ISO 14289-1:2014, 7.1"),
+        "LANG_MISSING" | "LANG_EMPTY" => Some("ISO 14289-1:2014, 7.2"),
+        _ => None,
+    };
 
-    fn visit_action(&mut self, _node: &AstNode, _dict: &PdfDictionary) -> VisitorAction {
-        self.violations.push(Violation {
-            rule_id: "pdfa-1b.interactive-content".to_string(),
-            rule: "PDF/A-1b Interactive Content".to_string(),
-            description: "Interactive content not allowed in PDF/A-1b".to_string(),
-            location: "Action dictionary".to_string(),
-            standard_reference: Some("ISO 19005-1:2005, 6.6".to_string()),
-            severity: ViolationSeverity::Error,
-        });
-        VisitorAction::Continue
-    }
-}
-
-struct PdfUA1Validator {
-    violations: Vec<Violation>,
-    has_structure_tree: bool,
-    has_lang_attribute: bool,
-}
-
-impl PdfUA1Validator {
-    fn new() -> Self {
-        Self {
-            violations: Vec::new(),
-            has_structure_tree: false,
-            has_lang_attribute: false,
-        }
-    }
-
-    fn generate_report(&self) -> ComplianceReport {
-        let status = if self
-            .violations
-            .iter()
-            .any(|v| v.severity == ViolationSeverity::Error)
-        {
-            ComplianceStatus::NonCompliant
-        } else {
-            ComplianceStatus::Compliant
-        };
-
-        ComplianceReport {
-            profile: ComplianceProfile::PdfUA1,
-            scope: "Experimental preflight checks for selected PDF/UA-1 requirements".to_string(),
-            status,
-            violations: self.violations.clone(),
-            recommendations: vec![
-                "Add structure tree for accessibility".to_string(),
-                "Include language attributes".to_string(),
-                "Provide alt text for images".to_string(),
-            ],
-        }
-    }
-}
-
-impl Visitor for PdfUA1Validator {
-    fn visit_catalog(&mut self, _node: &AstNode, dict: &PdfDictionary) -> VisitorAction {
-        if dict.get("StructTreeRoot").is_some() {
-            self.has_structure_tree = true;
-        } else {
-            self.violations.push(Violation {
-                rule_id: "pdfua-1.structure-tree".to_string(),
-                rule: "PDF/UA-1 Structure Tree".to_string(),
-                description: "Document must have a structure tree".to_string(),
-                location: "Catalog".to_string(),
-                standard_reference: Some("ISO 14289-1:2014, 7.1".to_string()),
-                severity: ViolationSeverity::Error,
-            });
-        }
-
-        if dict.get("Lang").is_some() {
-            self.has_lang_attribute = true;
-        } else {
-            self.violations.push(Violation {
-                rule_id: "pdfua-1.language".to_string(),
-                rule: "PDF/UA-1 Language".to_string(),
-                description: "Document must specify primary language".to_string(),
-                location: "Catalog".to_string(),
-                standard_reference: Some("ISO 14289-1:2014, 7.2".to_string()),
-                severity: ViolationSeverity::Warning,
-            });
-        }
-
-        VisitorAction::Continue
+    Violation {
+        rule_id: issue.code.clone(),
+        rule: issue.code,
+        description: issue.message,
+        location: issue.location.unwrap_or_else(|| "Document".to_string()),
+        standard_reference: standard_reference.map(str::to_string),
+        severity: match issue.severity {
+            ValidationSeverity::Critical | ValidationSeverity::Error => ViolationSeverity::Error,
+            ValidationSeverity::Warning => ViolationSeverity::Warning,
+            ValidationSeverity::Info => ViolationSeverity::Info,
+        },
     }
 }
 
@@ -227,5 +132,9 @@ mod tests {
         let doc = PdfDocument::new(PdfVersion::new(1, 7));
         let report = validate_pdfua1(&doc);
         assert_eq!(report.profile, ComplianceProfile::PdfUA1);
+        assert!(report
+            .violations
+            .iter()
+            .any(|violation| violation.rule_id == "CATALOG_MISSING"));
     }
 }
