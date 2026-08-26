@@ -10,10 +10,16 @@ test -d "$fixture_root"
 command -v "$verapdf_bin" >/dev/null 2>&1 || test -x "$verapdf_bin"
 command -v jq >/dev/null 2>&1
 
+files=()
+while IFS= read -r -d '' fixture; do
+    files+=("$fixture")
+done < <(find "$fixture_root" -type f -iname '*.pdf' -print0 | sort -z)
+test "${#files[@]}" -gt 0
+
 temporary_report="$(mktemp)"
 trap 'rm -f "$temporary_report"' EXIT
 
-"$verapdf_bin" --format json --flavour 1b --recurse "$fixture_root" \
+"$verapdf_bin" --format json --flavour 1b "${files[@]}" \
     > "$temporary_report" || test -s "$temporary_report"
 
 verapdf_version="$($verapdf_bin --version 2>/dev/null | sed -n 's/^veraPDF //p' | head -n 1)"
@@ -41,13 +47,15 @@ jq --arg fixture_root "$fixture_root" \
           else null end),
         veraPDF_rules: (.validationResult[0].details.ruleSummaries
           | map(select(.ruleStatus == "FAILED")
-          | "\(.specification):\(.clause):\(.testNumber)")),
+          | "\(.specification):\(.clause):\(.testNumber)")
+          | sort),
         expected_compliant: .validationResult[0].compliant
       }))
     }
   ' "$temporary_report" > "$output"
 
 test "$(jq -r '.fixture_count' "$output")" -gt 0
+test "$(jq -r '.fixture_count' "$output")" -eq "${#files[@]}"
 test "$(jq -r '.fixture_count == (.mappings | length)' "$output")" = true
 test "$(jq -r '[.mappings[].expected_compliant] | all(.[]; . == false)' "$output")" = true
 test "$(jq -r '[.mappings[] | select((.veraPDF_rules | length) == 0)] | length' "$output")" -eq 0
