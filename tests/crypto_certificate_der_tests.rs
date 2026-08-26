@@ -42,6 +42,9 @@ fn test_certificate_der_roundtrip() {
 
 #[cfg(not(feature = "crypto"))]
 #[test]
-fn test_certificate_der_roundtrip_no_crypto() {
-    assert!(true);
+fn test_truncated_certificate_length_is_rejected() {
+    let mut cert = vec![0x30, 0x82, 0xff, 0xff];
+    cert.resize(100, 0);
+
+    assert!(parse_der_certificate(&cert).is_err());
 }

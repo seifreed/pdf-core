@@ -1544,7 +1544,7 @@ impl<'a> SimpleDerParser<'a> {
         }
 
         // Parse version
-        let _version = parser.parse_version();
+        let _version = parser.parse_version()?;
 
         // Parse serial number
         let serial = parser.parse_integer()?;
@@ -1565,7 +1565,7 @@ impl<'a> SimpleDerParser<'a> {
         let pub_key_algo = parser.parse_subject_public_key_info()?;
 
         // Extensions
-        let (key_usage, ext_key_usage, is_ca) = parser.parse_extensions();
+        let (key_usage, ext_key_usage, is_ca) = parser.parse_extensions()?;
 
         // Compute fingerprint
         let fingerprint = self.compute_sha256_fingerprint();
@@ -1600,40 +1600,24 @@ impl<'a> SimpleDerParser<'a> {
             return Err(CryptoError::CertificateError("Missing length".to_string()));
         }
 
-        let length = if self.data[self.pos] & 0x80 == 0 {
-            let len = self.data[self.pos] as usize;
-            self.pos += 1;
-            len
-        } else {
-            let num_octets = (self.data[self.pos] & 0x7F) as usize;
-            self.pos += 1;
-
-            let mut len = 0usize;
-            for _ in 0..num_octets {
-                if self.pos >= self.data.len() {
-                    return Err(CryptoError::CertificateError(
-                        "Invalid length encoding".to_string(),
-                    ));
-                }
-                len = (len << 8) | (self.data[self.pos] as usize);
-                self.pos += 1;
-            }
-            len
-        };
+        let length = self.read_length()?;
 
         Ok((tag, length))
     }
 
-    fn parse_version(&mut self) -> i32 {
+    fn parse_version(&mut self) -> CryptoResult<i32> {
         if self.pos < self.data.len() && self.data[self.pos] == 0xA0 {
             self.pos += 1;
-            let _ = self.read_length();
-            if self.pos + 3 <= self.data.len() {
-                self.pos += 3;
-                return 2; // v3
+            let length = self.read_length()?;
+            if length == 3 {
+                self.pos += length;
+                return Ok(2); // v3
             }
+            return Err(CryptoError::CertificateError(
+                "Invalid certificate version".to_string(),
+            ));
         }
-        0 // v1
+        Ok(0) // v1
     }
 
     fn parse_integer(&mut self) -> CryptoResult<u64> {
@@ -1667,7 +1651,7 @@ impl<'a> SimpleDerParser<'a> {
 
         if self.pos < self.data.len() && self.data[self.pos] == 0x06 {
             self.pos += 1;
-            let oid_len = self.read_length();
+            let oid_len = self.read_length()?;
 
             let algo = if self.pos + oid_len <= self.data.len() {
                 let oid_bytes = &self.data[self.pos..self.pos + oid_len];
@@ -1707,17 +1691,17 @@ impl<'a> SimpleDerParser<'a> {
         while self.pos < end_pos && self.pos < self.data.len() {
             if self.data[self.pos] == 0x31 {
                 self.pos += 1;
-                let set_len = self.read_length();
+                let set_len = self.read_length()?;
                 let set_end = self.pos + set_len;
 
                 while self.pos < set_end && self.pos < self.data.len() {
                     if self.data[self.pos] == 0x30 {
                         self.pos += 1;
-                        let _seq_len = self.read_length();
+                        let _seq_len = self.read_length()?;
 
                         if self.pos < self.data.len() && self.data[self.pos] == 0x06 {
                             self.pos += 1;
-                            let oid_len = self.read_length();
+                            let oid_len = self.read_length()?;
                             let oid_bytes = if self.pos + oid_len <= self.data.len() {
                                 let bytes = &self.data[self.pos..self.pos + oid_len];
                                 self.pos += oid_len;
@@ -1729,7 +1713,7 @@ impl<'a> SimpleDerParser<'a> {
                             if self.pos < self.data.len() {
                                 let _value_tag = self.data[self.pos];
                                 self.pos += 1;
-                                let value_len = self.read_length();
+                                let value_len = self.read_length()?;
 
                                 if self.pos + value_len <= self.data.len() {
                                     let value_bytes = &self.data[self.pos..self.pos + value_len];
@@ -1794,7 +1778,7 @@ impl<'a> SimpleDerParser<'a> {
 
         let _tag = self.data[self.pos];
         self.pos += 1;
-        let length = self.read_length();
+        let length = self.read_length()?;
 
         self.pos += length;
         Ok(super::chrono::Utc::now())
@@ -1815,43 +1799,65 @@ impl<'a> SimpleDerParser<'a> {
         Ok(algo)
     }
 
-    fn parse_extensions(&mut self) -> (Vec<String>, Vec<String>, bool) {
+    fn parse_extensions(&mut self) -> CryptoResult<(Vec<String>, Vec<String>, bool)> {
         let mut key_usage = Vec::new();
         let mut ext_key_usage = Vec::new();
         let mut is_ca = false;
 
         if self.pos < self.data.len() && self.data[self.pos] == 0xA3 {
             self.pos += 1;
-            let _ = self.read_length();
+            let _ = self.read_length()?;
             key_usage.push("Digital Signature".to_string());
             ext_key_usage.push("Code Signing".to_string());
         }
 
-        (key_usage, ext_key_usage, is_ca)
+        Ok((key_usage, ext_key_usage, is_ca))
     }
 
-    fn read_length(&mut self) -> usize {
+    fn read_length(&mut self) -> CryptoResult<usize> {
         if self.pos >= self.data.len() {
-            return 0;
+            return Err(CryptoError::CertificateError("Missing length".to_string()));
         }
 
         if self.data[self.pos] & 0x80 == 0 {
             let len = self.data[self.pos] as usize;
             self.pos += 1;
-            len
+            if len > self.data.len() - self.pos {
+                return Err(CryptoError::CertificateError(
+                    "Length exceeds available data".to_string(),
+                ));
+            }
+            Ok(len)
         } else {
             let num_octets = (self.data[self.pos] & 0x7F) as usize;
             self.pos += 1;
 
+            if num_octets == 0 {
+                return Err(CryptoError::CertificateError(
+                    "Indefinite length is not valid DER".to_string(),
+                ));
+            }
+
             let mut len = 0usize;
             for _ in 0..num_octets {
                 if self.pos >= self.data.len() {
-                    break;
+                    return Err(CryptoError::CertificateError(
+                        "Invalid length encoding".to_string(),
+                    ));
                 }
-                len = (len << 8) | (self.data[self.pos] as usize);
+                len = len
+                    .checked_shl(8)
+                    .and_then(|value| value.checked_add(self.data[self.pos] as usize))
+                    .ok_or_else(|| CryptoError::CertificateError("Length overflow".to_string()))?;
                 self.pos += 1;
             }
-            len
+
+            if len > self.data.len() - self.pos {
+                return Err(CryptoError::CertificateError(
+                    "Length exceeds available data".to_string(),
+                ));
+            }
+            Ok(len)
         }
     }
 
