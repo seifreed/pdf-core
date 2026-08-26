@@ -2,6 +2,9 @@ name: External PDF Corpus
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
   schedule:
     - cron: "23 4 * * 0"
 
@@ -23,6 +26,43 @@ jobs:
         uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-01-01
         with:
           toolchain: stable
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install pinned veraPDF CLI
+        env:
+          VERAPDF_SHA256: 6cc6341cb1af644044054b81f00a6590a7918abb18f762243de115258bcad838
+        run: |
+          archive="$RUNNER_TEMP/verapdf-1.30.2.zip"
+          curl --fail --location --retry 3 \
+            https://software.verapdf.org/releases/1.30/verapdf-greenfield-1.30.2-installer.zip \
+            --output "$archive"
+          echo "$VERAPDF_SHA256  $archive" | sha256sum --check
+          unzip -q "$archive" -d "$RUNNER_TEMP/verapdf-installer"
+          cat > "$RUNNER_TEMP/verapdf-install.xml" <<'EOF'
+          <AutomatedInstallation langpack="eng">
+            <com.izforge.izpack.panels.htmlhello.HTMLHelloPanel id="welcome"/>
+            <com.izforge.izpack.panels.target.TargetPanel id="install_dir">
+              <installpath>${{ runner.temp }}/verapdf</installpath>
+            </com.izforge.izpack.panels.target.TargetPanel>
+            <com.izforge.izpack.panels.packs.PacksPanel id="sdk_pack_select">
+              <pack index="0" name="veraPDF GUI" selected="true"/>
+              <pack index="1" name="veraPDF Mac and *nix Scripts" selected="true"/>
+              <pack index="2" name="veraPDF Validation model" selected="false"/>
+              <pack index="3" name="veraPDF Documentation" selected="false"/>
+              <pack index="4" name="veraPDF Sample Plugins" selected="false"/>
+            </com.izforge.izpack.panels.packs.PacksPanel>
+            <com.izforge.izpack.panels.install.InstallPanel id="install"/>
+            <com.izforge.izpack.panels.finish.FinishPanel id="finish"/>
+          </AutomatedInstallation>
+          EOF
+          "$RUNNER_TEMP/verapdf-installer/verapdf-greenfield-1.30.2/verapdf-install" \
+            "$RUNNER_TEMP/verapdf-install.xml"
+          test -x "$RUNNER_TEMP/verapdf/verapdf"
+          echo "VERAPDF_BIN=$RUNNER_TEMP/verapdf/verapdf" >> "$GITHUB_ENV"
 
       - name: Fetch pinned project corpus
         env:
