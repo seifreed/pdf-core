@@ -448,7 +448,7 @@ impl<'a> CMapParser<'a> {
         }
 
         let mut bytes = Vec::with_capacity(hex.len() / 2);
-        for pair in hex.as_bytes().chunks_exact(2) {
+        for pair in hex.as_bytes().as_chunks::<2>().0 {
             let byte_str = std::str::from_utf8(pair).ok()?;
             if let Ok(byte) = u8::from_str_radix(byte_str, 16) {
                 bytes.push(byte);
