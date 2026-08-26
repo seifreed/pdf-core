@@ -68,3 +68,7 @@ The next release will be cut after the full CI and signed-tag checklist passes.
 - Added a semver audit against the published `0.1.0` baseline; public struct
   field additions remain an intentional API-freeze blocker for the next major
   compatibility milestone.
+- Added `SECURITY.md` with private vulnerability-reporting guidance and
+  deployment isolation requirements for untrusted PDFs.
+- Verified the Python wheel install smoke test and Node native binding smoke
+  test locally; registry publication and signed releases remain disabled.
