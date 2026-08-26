@@ -58,7 +58,7 @@ jobs:
         working-directory: javascript
         shell: bash
         run: |
-          npm install --ignore-scripts
+          npm ci --ignore-scripts
           npm run build-release
           mkdir -p "$GITHUB_WORKSPACE/dist/node-package"
           cp index.node index.d.ts README.md package.json "$GITHUB_WORKSPACE/dist/node-package/"

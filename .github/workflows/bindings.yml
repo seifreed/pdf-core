@@ -59,7 +59,7 @@ jobs:
           node-version: "20"
       - name: Build native module
         working-directory: javascript
-        run: npm install && npm run build-release
+        run: npm ci && npm run build-release
       - name: Run binding smoke test
         working-directory: javascript
         run: npm test
