@@ -62,13 +62,15 @@ corpus coverage for the PDF/A and PDF/UA cases listed below.
 | `STRUCT_ELEM_MISSING` | PDF/UA-1, ISO 14289-1:2014 7.1 | Same test with a `StructElem` | Same test with `StructTreeRoot` but no `StructElem` | Aggregate of `ISO_14289_1:7.1:*`; no 1:1 veraPDF rule |
 | `LANG_MISSING` | PDF/UA-1, ISO 14289-1:2014 7.2 | `fixture_pdfua_language_rule_has_positive_and_negative_cases` with `en-US` | Same test without `Lang` | Aggregate of `ISO_14289_1:7.2:2,21-34`; depends on content object |
 | `LANG_EMPTY` | PDF/UA-1, ISO 14289-1:2014 7.2 | Same test with `en-US` | Same test with an empty `Lang` string | Aggregate of `ISO_14289_1:7.2:*`; no 1:1 veraPDF rule |
+| `ALT_TEXT_MISSING` | PDF/UA-1, ISO 14289-1:2014 7.3 | `7.3-t01-pass-a.pdf` | `7.3-t01-fail-a.pdf` | `ISO 14289-1:2014:7.3:1` |
 
 The corpus also contains serialized Isartor negatives for the three PDF/A
 clauses above and upstream PDF/UA cases for tagged structure and document
-language. `tests/verapdf_rule_mapping_tests.rs` rechecks the exact veraPDF
-IDs when `VERAPDF_BIN` and `PDF_COMPLIANCE_CORPUS` are configured:
-`6.3.4:1`, `6.5.2:1`, and `6.6.1:1`; the local PDF/A and PDF/UA validators are
-then run against those serialized bytes.
+language, and alternative-text cases. `tests/verapdf_rule_mapping_tests.rs`
+rechecks the exact veraPDF IDs when `VERAPDF_BIN` and
+`PDF_COMPLIANCE_CORPUS` are configured: PDF/A `6.3.4:1`, `6.5.2:1`, and
+`6.6.1:1`, plus PDF/UA `7.3:1`; the local PDF/A and PDF/UA validators are then
+run against those serialized bytes.
 
 The latest local parser gate (2026-08-26 UTC, corpus commit
 `9979a2a8618dcdf23ad3f20c760c1f06e5b36fe6`) processed 2,809 files and

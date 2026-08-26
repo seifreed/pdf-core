@@ -78,6 +78,27 @@ const PDFUA_CASES: &[(&str, &str, bool)] = &[
         "LANG_EMPTY",
         false,
     ),
+    (
+        "verapdf-pdfua-1/7.3 Graphics/7.3-t01-fail-a.pdf",
+        "ALT_TEXT_MISSING",
+        true,
+    ),
+    (
+        "verapdf-pdfua-1/7.3 Graphics/7.3-t01-pass-a.pdf",
+        "ALT_TEXT_MISSING",
+        false,
+    ),
+];
+
+const PDFUA_VERAPDF_CASES: &[(&str, &str)] = &[
+    (
+        "verapdf-pdfua-1/7.3 Graphics/7.3-t01-fail-a.pdf",
+        "ISO 14289-1:2014:7.3:1",
+    ),
+    (
+        "verapdf-pdfua-1/7.3 Graphics/7.3-t01-fail-b.pdf",
+        "ISO 14289-1:2014:7.3:1",
+    ),
 ];
 
 fn verapdf_binary() -> Option<String> {
@@ -293,6 +314,54 @@ fn local_pdfua_rules_match_serialized_upstream_cases() {
             *should_have_issue,
             "local rule {expected_code} mismatch for {}",
             path.display()
+        );
+    }
+}
+
+#[test]
+fn pdfua_rules_match_verapdf_ids() {
+    let Some(verapdf) = verapdf_binary() else {
+        eprintln!("Skipping veraPDF PDF/UA rule mapping: veraPDF is not available");
+        return;
+    };
+    let Some(root) = corpus_root() else {
+        eprintln!("Skipping veraPDF PDF/UA rule mapping: corpus root is not configured");
+        return;
+    };
+
+    let files: Vec<PathBuf> = PDFUA_VERAPDF_CASES
+        .iter()
+        .map(|(relative, _)| root.join(relative))
+        .collect();
+    for path in &files {
+        assert!(path.is_file(), "missing PDF/UA fixture: {}", path.display());
+    }
+
+    let output = Command::new(verapdf)
+        .args(["--format", "json", "--flavour", "ua1"])
+        .args(&files)
+        .output()
+        .expect("veraPDF should run");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("valid veraPDF JSON");
+    let jobs = report["report"]["jobs"].as_array().expect("veraPDF jobs");
+    assert_eq!(jobs.len(), PDFUA_VERAPDF_CASES.len());
+
+    for (job, (_, expected_rule)) in jobs.iter().zip(PDFUA_VERAPDF_CASES) {
+        let validation = &job["validationResult"][0];
+        assert_eq!(validation["jobEndStatus"], "normal");
+        let rules = validation["details"]["ruleSummaries"]
+            .as_array()
+            .expect("veraPDF rule summaries");
+        assert!(
+            rules.iter().any(|rule| {
+                format!(
+                    "{}:{}:{}",
+                    rule["specification"].as_str().unwrap_or_default(),
+                    rule["clause"].as_str().unwrap_or_default(),
+                    rule["testNumber"].as_u64().unwrap_or_default()
+                ) == *expected_rule
+            }),
+            "veraPDF rule {expected_rule} missing"
         );
     }
 }
