@@ -14,6 +14,7 @@ pub struct ParallelProcessor {
 
 impl ParallelProcessor {
     pub fn new(config: PerformanceConfig) -> Result<Self, String> {
+        #[cfg(feature = "parallel")]
         let thread_count = config.worker_threads.unwrap_or_else(|| {
             std::thread::available_parallelism()
                 .map(|n| n.get())
@@ -47,15 +48,28 @@ impl ParallelProcessor {
 
         increment_parallel_tasks();
 
-        self.thread_pool.install(|| {
+        #[cfg(feature = "parallel")]
+        {
+            self.thread_pool.install(|| {
+                pages
+                    .par_iter()
+                    .map(|page| {
+                        increment_pages_processed(1);
+                        processor(page)
+                    })
+                    .collect()
+            })
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
             pages
-                .par_iter()
+                .iter()
                 .map(|page| {
                     increment_pages_processed(1);
                     processor(page)
                 })
                 .collect()
-        })
+        }
     }
 
     /// Extract text from all pages in parallel
@@ -96,12 +110,25 @@ impl ParallelProcessor {
         }
 
         // Process each node type in parallel
+        let nodes_by_type = nodes_by_type.into_iter().collect::<Vec<_>>();
+        #[cfg(feature = "parallel")]
         let results: Vec<_> = nodes_by_type
-            .into_iter()
-            .collect::<Vec<_>>()
             .into_par_iter()
             .map(|(node_type, nodes)| {
                 increment_parallel_tasks();
+                let analysis = match node_type {
+                    NodeType::Page => self.analyze_pages(&nodes),
+                    NodeType::Font => self.analyze_fonts(&nodes),
+                    NodeType::Image => self.analyze_images(&nodes),
+                    _ => TypeAnalysis::default(),
+                };
+                (node_type, analysis)
+            })
+            .collect();
+        #[cfg(not(feature = "parallel"))]
+        let results: Vec<_> = nodes_by_type
+            .into_iter()
+            .map(|(node_type, nodes)| {
                 let analysis = match node_type {
                     NodeType::Page => self.analyze_pages(&nodes),
                     NodeType::Font => self.analyze_fonts(&nodes),
@@ -139,8 +166,15 @@ impl ParallelProcessor {
 
         increment_parallel_tasks();
 
-        self.thread_pool
-            .install(|| streams.par_iter().map(&processor).collect())
+        #[cfg(feature = "parallel")]
+        {
+            self.thread_pool
+                .install(|| streams.par_iter().map(&processor).collect())
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
+            streams.iter().map(&processor).collect()
+        }
     }
 
     /// Parallel validation of PDF objects
@@ -154,12 +188,22 @@ impl ParallelProcessor {
 
         increment_parallel_tasks();
 
-        self.thread_pool.install(|| {
+        #[cfg(feature = "parallel")]
+        {
+            self.thread_pool.install(|| {
+                objects
+                    .par_iter()
+                    .map(|(id, node)| self.validate_object(*id, node))
+                    .collect()
+            })
+        }
+        #[cfg(not(feature = "parallel"))]
+        {
             objects
-                .par_iter()
+                .iter()
                 .map(|(id, node)| self.validate_object(*id, node))
                 .collect()
-        })
+        }
     }
 
     // Helper methods
@@ -324,7 +368,14 @@ impl BatchProcessor {
             .chunks(self.batch_size)
             .flat_map(|batch| {
                 if batch.len() > 1 && self.processor.config.enable_parallel {
-                    batch.par_iter().map(&processor).collect::<Vec<_>>()
+                    #[cfg(feature = "parallel")]
+                    {
+                        batch.par_iter().map(&processor).collect::<Vec<_>>()
+                    }
+                    #[cfg(not(feature = "parallel"))]
+                    {
+                        batch.iter().map(&processor).collect::<Vec<_>>()
+                    }
                 } else {
                     batch.iter().map(&processor).collect::<Vec<_>>()
                 }
@@ -370,8 +421,14 @@ impl WorkScheduler {
 
         // Process normal priority items in parallel
         if !normal_priority.is_empty() && self.processor.config.enable_parallel {
+            #[cfg(feature = "parallel")]
             let parallel_results: Vec<R> = normal_priority
                 .par_iter()
+                .map(|(_, item)| processor(item))
+                .collect();
+            #[cfg(not(feature = "parallel"))]
+            let parallel_results: Vec<R> = normal_priority
+                .iter()
                 .map(|(_, item)| processor(item))
                 .collect();
             results.extend(parallel_results);

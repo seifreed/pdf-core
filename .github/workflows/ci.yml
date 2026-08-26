@@ -56,6 +56,27 @@ jobs:
       - name: Check declared MSRV
         run: cargo check --workspace --all-targets --locked
 
+  minimal-features:
+    name: Minimal Features Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-01-01
+        with:
+          toolchain: stable
+
+      - name: Check without default features
+        run: cargo check --no-default-features --workspace --all-targets --locked
+
+      - name: Run fallback parser regression test
+        run: cargo test --no-default-features --test crypto_certificate_der_tests --locked
+
   clippy:
     name: Clippy Lint
     runs-on: ubuntu-latest
