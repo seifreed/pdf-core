@@ -1689,28 +1689,6 @@ fn base64_encode(data: &[u8]) -> String {
     String::from_utf8(result).unwrap_or_default()
 }
 
-// fn handle_stream(
-//     input: PathBuf,
-//     output: PathBuf,
-//     buffer_size: usize,
-//     max_tasks: usize,
-//     progress: bool,
-//     _cli: &Cli
-// ) -> Result<(), String> {
-//     info!("Starting stream processing");
-//
-//     fs::create_dir_all(&output)
-//         .map_err(|e| format!("Could not create output directory: {}", e))?;
-//
-//     // let mut pipeline = create_standard_pipeline();
-//
-//     // Configure pipeline
-//     // This would need to be implemented with proper async runtime
-//     println!("Stream processing not fully implemented yet - this is a placeholder");
-//
-//     Ok(())
-// }
-
 fn handle_benchmark(
     input: PathBuf,
     iterations: usize,
