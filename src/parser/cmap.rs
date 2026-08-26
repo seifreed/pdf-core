@@ -114,6 +114,7 @@ impl<'a> CMapParser<'a> {
         node.metadata
             .set_property("wmode".to_string(), cmap.wmode.to_string());
 
+        self.budget.consume_node().ok()?;
         let node_id = self.ast.add_node(node);
 
         Some((node_id, cmap))
@@ -151,6 +152,7 @@ impl<'a> CMapParser<'a> {
         node.metadata
             .set_property("mapping_count".to_string(), mapping_count.to_string());
 
+        self.budget.consume_node().ok()?;
         let node_id = self.ast.add_node(node);
 
         Some(node_id)

@@ -62,7 +62,7 @@ impl<'a> ColorSpaceParser<'a> {
             PdfValue::Name(PdfName::new(name.to_string())),
         );
 
-        Some(self.ast.add_node(node))
+        self.add_node(node)
     }
 
     fn parse_colorspace_array(&mut self, arr: &PdfArray) -> Option<NodeId> {
@@ -96,14 +96,13 @@ impl<'a> ColorSpaceParser<'a> {
             PdfValue::Array(arr.clone()),
         );
 
-        let icc_id = self.ast.add_node(icc_node);
+        let icc_id = self.add_node(icc_node)?;
 
         // Link to ICC profile stream
         match &arr[1] {
             PdfValue::Reference(obj_id) => {
                 if let Some(stream_id) = self.resolver.get_node_id(&obj_id.object_id()) {
-                    self.ast
-                        .add_edge(icc_id, stream_id, crate::ast::EdgeType::Reference);
+                    self.add_edge(icc_id, stream_id, crate::ast::EdgeType::Reference);
 
                     let stream = self
                         .ast
@@ -157,8 +156,7 @@ impl<'a> ColorSpaceParser<'a> {
 
         // Add edge after releasing mutable reference
         if let Some(alt_id) = alt_id {
-            self.ast
-                .add_edge(node_id, alt_id, crate::ast::EdgeType::Reference);
+            self.add_edge(node_id, alt_id, crate::ast::EdgeType::Reference);
         }
     }
 
@@ -182,8 +180,7 @@ impl<'a> ColorSpaceParser<'a> {
         let profile_id =
             self.ast
                 .add_node(AstNode::new(node_id, NodeType::Metadata, PdfValue::Null));
-        self.ast
-            .add_edge(icc_id, profile_id, crate::ast::EdgeType::Child);
+        self.add_edge(icc_id, profile_id, crate::ast::EdgeType::Child);
 
         if let Some(node) = self.ast.get_node_mut(profile_id) {
             node.metadata
@@ -215,7 +212,7 @@ impl<'a> ColorSpaceParser<'a> {
             PdfValue::Array(arr.clone()),
         );
 
-        let node_id = self.ast.add_node(node);
+        let node_id = self.add_node(node)?;
 
         // Extract CalGray parameters
         if let PdfValue::Dictionary(params) = &arr[1] {
@@ -271,7 +268,7 @@ impl<'a> ColorSpaceParser<'a> {
             PdfValue::Array(arr.clone()),
         );
 
-        let node_id = self.ast.add_node(node);
+        let node_id = self.add_node(node)?;
 
         // Extract CalRGB parameters
         if let PdfValue::Dictionary(params) = &arr[1] {
@@ -344,7 +341,7 @@ impl<'a> ColorSpaceParser<'a> {
             PdfValue::Array(arr.clone()),
         );
 
-        let node_id = self.ast.add_node(node);
+        let node_id = self.add_node(node)?;
 
         // Extract Lab parameters
         if let PdfValue::Dictionary(params) = &arr[1] {
@@ -408,20 +405,18 @@ impl<'a> ColorSpaceParser<'a> {
                 .set_property("colorant".to_string(), name.without_slash().to_string());
         }
 
-        let sep_id = self.ast.add_node(node);
+        let sep_id = self.add_node(node)?;
 
         // Link to alternate color space
         if let Some(alt_id) = self.parse_colorspace(&arr[2]) {
-            self.ast
-                .add_edge(sep_id, alt_id, crate::ast::EdgeType::Reference);
+            self.add_edge(sep_id, alt_id, crate::ast::EdgeType::Reference);
         }
 
         // Link to tint transform function
         match &arr[3] {
             PdfValue::Reference(obj_id) => {
                 if let Some(func_id) = self.resolver.get_node_id(&obj_id.object_id()) {
-                    self.ast
-                        .add_edge(sep_id, func_id, crate::ast::EdgeType::Reference);
+                    self.add_edge(sep_id, func_id, crate::ast::EdgeType::Reference);
 
                     if let Some(func_node) = self.ast.get_node_mut(func_id) {
                         func_node.node_type = NodeType::Function;
@@ -434,9 +429,8 @@ impl<'a> ColorSpaceParser<'a> {
                     NodeType::Function,
                     PdfValue::Dictionary(func_dict.clone()),
                 );
-                let func_id = self.ast.add_node(func_node);
-                self.ast
-                    .add_edge(sep_id, func_id, crate::ast::EdgeType::Reference);
+                let func_id = self.add_node(func_node)?;
+                self.add_edge(sep_id, func_id, crate::ast::EdgeType::Reference);
             }
             _ => {}
         }
@@ -469,20 +463,18 @@ impl<'a> ColorSpaceParser<'a> {
                 .set_property("colorants".to_string(), names_str);
         }
 
-        let devn_id = self.ast.add_node(node);
+        let devn_id = self.add_node(node)?;
 
         // Link to alternate color space
         if let Some(alt_id) = self.parse_colorspace(&arr[2]) {
-            self.ast
-                .add_edge(devn_id, alt_id, crate::ast::EdgeType::Reference);
+            self.add_edge(devn_id, alt_id, crate::ast::EdgeType::Reference);
         }
 
         // Link to tint transform function
         match &arr[3] {
             PdfValue::Reference(obj_id) => {
                 if let Some(func_id) = self.resolver.get_node_id(&obj_id.object_id()) {
-                    self.ast
-                        .add_edge(devn_id, func_id, crate::ast::EdgeType::Reference);
+                    self.add_edge(devn_id, func_id, crate::ast::EdgeType::Reference);
 
                     if let Some(func_node) = self.ast.get_node_mut(func_id) {
                         func_node.node_type = NodeType::Function;
@@ -495,9 +487,8 @@ impl<'a> ColorSpaceParser<'a> {
                     NodeType::Function,
                     PdfValue::Dictionary(func_dict.clone()),
                 );
-                let func_id = self.ast.add_node(func_node);
-                self.ast
-                    .add_edge(devn_id, func_id, crate::ast::EdgeType::Reference);
+                let func_id = self.add_node(func_node)?;
+                self.add_edge(devn_id, func_id, crate::ast::EdgeType::Reference);
             }
             _ => {}
         }
@@ -556,12 +547,11 @@ impl<'a> ColorSpaceParser<'a> {
                 .set_property("max_index".to_string(), max.to_string());
         }
 
-        let indexed_id = self.ast.add_node(node);
+        let indexed_id = self.add_node(node)?;
 
         // Link to base color space
         if let Some(base_id) = self.parse_colorspace(&arr[1]) {
-            self.ast
-                .add_edge(indexed_id, base_id, crate::ast::EdgeType::Reference);
+            self.add_edge(indexed_id, base_id, crate::ast::EdgeType::Reference);
         }
 
         // Process lookup table
@@ -580,8 +570,7 @@ impl<'a> ColorSpaceParser<'a> {
             }
             PdfValue::Reference(obj_id) => {
                 if let Some(lookup_id) = self.resolver.get_node_id(&obj_id.object_id()) {
-                    self.ast
-                        .add_edge(indexed_id, lookup_id, crate::ast::EdgeType::Reference);
+                    self.add_edge(indexed_id, lookup_id, crate::ast::EdgeType::Reference);
                 }
             }
             _ => {}
@@ -603,17 +592,25 @@ impl<'a> ColorSpaceParser<'a> {
                 .set_property("has_underlying".to_string(), "true".to_string());
         }
 
-        let pattern_id = self.ast.add_node(node);
+        let pattern_id = self.add_node(node)?;
 
         // Link to underlying color space if present
         if arr.len() > 1 {
             if let Some(underlying_id) = self.parse_colorspace(&arr[1]) {
-                self.ast
-                    .add_edge(pattern_id, underlying_id, crate::ast::EdgeType::Reference);
+                self.add_edge(pattern_id, underlying_id, crate::ast::EdgeType::Reference);
             }
         }
 
         Some(pattern_id)
+    }
+
+    fn add_node(&mut self, node: AstNode) -> Option<NodeId> {
+        self.limits.budget.consume_node().ok()?;
+        Some(self.ast.add_node(node))
+    }
+
+    fn add_edge(&mut self, from: NodeId, to: NodeId, edge_type: crate::ast::EdgeType) -> bool {
+        self.limits.budget.consume_edge().is_ok() && self.ast.add_edge(from, to, edge_type)
     }
 
     fn array_to_string(&self, arr: &PdfArray) -> String {
