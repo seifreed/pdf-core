@@ -324,16 +324,16 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         use nom::{
             bytes::complete::tag,
             character::complete::{digit1, space1},
-            combinator::map,
+            combinator::map_opt,
             sequence::tuple,
         };
 
-        map(
+        map_opt(
             tuple((digit1, space1, digit1, space1, tag(b"obj"))),
             |(num, _, gen, _, _)| {
-                let num = std::str::from_utf8(num).unwrap_or("0").parse().unwrap_or(0);
-                let gen = std::str::from_utf8(gen).unwrap_or("0").parse().unwrap_or(0);
-                ObjectId::new(num, gen)
+                let num = std::str::from_utf8(num).ok()?.parse().ok()?;
+                let gen = std::str::from_utf8(gen).ok()?.parse().ok()?;
+                Some(ObjectId::new(num, gen))
             },
         )(data)
     }
@@ -1437,6 +1437,14 @@ mod tests {
         let (_, obj_id) = result.unwrap();
         assert_eq!(obj_id.number, 123);
         assert_eq!(obj_id.generation, 0);
+    }
+
+    #[test]
+    fn rejects_object_header_numeric_overflow() {
+        assert!(
+            ReferenceResolver::<Cursor<Vec<u8>>>::parse_object_header(b"4294967296 0 obj").is_err()
+        );
+        assert!(ReferenceResolver::<Cursor<Vec<u8>>>::parse_object_header(b"1 65536 obj").is_err());
     }
 
     #[test]
