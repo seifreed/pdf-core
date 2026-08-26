@@ -495,7 +495,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let mut entries: std::collections::HashMap<ObjectId, XRefEntry> =
             table_entries.into_iter().collect();
 
-        let trailer = match Self::extract_trailer_dict(remaining) {
+        let trailer = match Self::extract_trailer_dict(remaining, self.limits.max_depth) {
             Some(dict) => dict,
             None => return Ok(None),
         };
@@ -528,12 +528,12 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         Ok(Some((entries, trailer)))
     }
 
-    fn extract_trailer_dict(data: &[u8]) -> Option<PdfDictionary> {
+    fn extract_trailer_dict(data: &[u8], max_depth: usize) -> Option<PdfDictionary> {
         let trailer_pos = Self::find_pattern(data, TRAILER_KEYWORD)?;
         let trailer_data = &data[trailer_pos + TRAILER_KEYWORD.len()..];
         let trailer_data = Self::skip_whitespace(trailer_data);
 
-        match object_parser::parse_value(trailer_data) {
+        match object_parser::parse_value_with_max_depth(trailer_data, max_depth) {
             Ok((_, PdfValue::Dictionary(dict))) => Some(dict),
             _ => None,
         }
@@ -3008,5 +3008,13 @@ mod tests {
             ),
         );
         assert!(Parser::extract_xref_field_widths(&dict).is_err());
+    }
+
+    #[test]
+    fn trailer_parsing_honors_configured_nesting_limit() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let trailer = b"trailer << /Nested [1] >>";
+        assert!(Parser::extract_trailer_dict(trailer, 0).is_none());
+        assert!(Parser::extract_trailer_dict(trailer, 256).is_some());
     }
 }
