@@ -31,6 +31,15 @@ incremental revisions, and schema version must remain self-describing rather
 than inventing values. `SerializableDocument::deserialize_ast` restores the
 validated graph; it does not claim to reconstruct parser-only runtime state.
 
+## C ABI
+
+The C header exposes ABI version `1.0`, returned by `pdf_ast_abi_version()` as
+`(major << 16) | minor`. Opaque document and node handles are owned by the
+caller after successful creation; strings, result messages, and child arrays
+must be released with the matching `pdf_ast_free_*` function. The ABI smoke
+test compiles with `-Wall -Wextra -Werror`; incompatible C changes require an
+ABI major bump.
+
 ## Security Scope
 
 Compatibility does not imply security support for experimental codecs,

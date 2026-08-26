@@ -13,6 +13,11 @@ The next release will be cut after the full CI and signed-tag checklist passes.
 - Classified tagged-PDF `/StructTreeRoot` and `/StructElem` nodes during
   reference resolution and added serialized PDF/UA structure and language
   rule coverage.
+- Preserved inherited page resources, exercised hybrid xref tables/streams,
+  and improved variable-width ToUnicode decoding including UTF-16 surrogate
+  pairs.
+- Versioned the C ABI as 1.0 with documented ownership and warning-free header
+  smoke coverage.
 
 ## 0.2.0-alpha.1
 
