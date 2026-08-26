@@ -167,8 +167,7 @@ impl<'a> FunctionParser<'a> {
         if let Some(PdfValue::Array(size)) = dict.get("Size") {
             func.size = size
                 .iter()
-                .filter_map(|v| v.as_integer())
-                .map(|i| i as u32)
+                .filter_map(|v| v.as_integer().and_then(|i| u32::try_from(i).ok()))
                 .collect();
         } else {
             return None;
@@ -176,7 +175,10 @@ impl<'a> FunctionParser<'a> {
 
         // Parse BitsPerSample
         if let Some(bps) = dict.get("BitsPerSample").and_then(|v| v.as_integer()) {
-            func.bits_per_sample = bps as u32;
+            func.bits_per_sample = match bps {
+                1 | 2 | 4 | 8 | 16 | 32 => bps as u32,
+                _ => return None,
+            };
         }
 
         // Parse Order (interpolation order)
@@ -364,7 +366,7 @@ impl<'a> FunctionParser<'a> {
 
         let mut samples = Vec::new();
         let bits = func.bits_per_sample as usize;
-        let max_val = (1 << bits) - 1;
+        let max_val = (1u64 << bits) - 1;
 
         match bits {
             8 => {
@@ -435,9 +437,9 @@ impl<'a> FunctionParser<'a> {
         // Map input through encode
         let mut encoded = Vec::new();
         for (i, &x) in input.iter().enumerate() {
-            if i < func.encode.len() {
-                let (e_min, e_max) = func.encode[i];
-                let (d_min, d_max) = func.domain[i];
+            if let (Some(&(e_min, e_max)), Some(&(d_min, d_max))) =
+                (func.encode.get(i), func.domain.get(i))
+            {
                 let t = (x - d_min) / (d_max - d_min);
                 encoded.push(e_min + t * (e_max - e_min));
             }
@@ -596,5 +598,31 @@ impl<'a> BitReader<'a> {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{FunctionParser, PdfFunction, SampledFunction};
+    use crate::ast::PdfAstGraph;
+    use crate::parser::reference_resolver::ObjectNodeMap;
+
+    #[test]
+    fn type0_evaluation_handles_mismatched_domain_and_encode_arrays() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let parser = FunctionParser::new(&mut ast, &resolver);
+        let function = PdfFunction::Type0(SampledFunction {
+            domain: Vec::new(),
+            range: vec![(0.0, 1.0)],
+            size: vec![1],
+            bits_per_sample: 8,
+            order: 1,
+            encode: vec![(0.0, 1.0)],
+            decode: vec![(0.0, 1.0)],
+            samples: vec![0.5],
+        });
+
+        assert_eq!(parser.evaluate(&function, &[0.5]).len(), 1);
     }
 }
