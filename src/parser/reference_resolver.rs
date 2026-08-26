@@ -14,6 +14,18 @@ pub struct ObjectNodeMap {
     object_to_node: HashMap<ObjectId, NodeId>,
 }
 
+fn stream_uses_jbig2(filter: Option<&PdfValue>) -> bool {
+    match filter {
+        Some(PdfValue::Name(name)) => name.without_slash() == "JBIG2Decode",
+        Some(PdfValue::Array(filters)) => filters.iter().any(|filter| {
+            filter
+                .as_name()
+                .is_some_and(|name| name.without_slash() == "JBIG2Decode")
+        }),
+        _ => false,
+    }
+}
+
 impl Default for ObjectNodeMap {
     fn default() -> Self {
         Self::new()
@@ -375,6 +387,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
         // Third pass: resolve indirect Length references in streams
         self.resolve_stream_lengths(ast)?;
+
+        // Resolve direct stream values for JBIG2 globals before any stream AST
+        // decoding pass consumes the filter parameters.
+        self.resolve_jbig2_globals(ast);
 
         // Fourth pass: build page resource nodes (colorspaces, ICC profiles)
         self.build_page_resources(ast)?;
@@ -970,6 +986,70 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         }
 
         Ok(())
+    }
+
+    fn resolve_jbig2_globals(&mut self, ast: &mut PdfAstGraph) {
+        let node_ids: Vec<NodeId> = ast.get_all_nodes().iter().map(|node| node.id).collect();
+
+        for node_id in node_ids {
+            let mut dict = match ast
+                .get_node(node_id)
+                .and_then(|node| node.as_stream())
+                .filter(|stream| stream_uses_jbig2(stream.dict.get("Filter")))
+                .map(|stream| stream.dict.clone())
+            {
+                Some(dict) => dict,
+                None => continue,
+            };
+
+            let changed = dict
+                .get_mut("DecodeParms")
+                .map(|params| self.resolve_jbig2_globals_value(params, ast))
+                .unwrap_or(false);
+            if changed {
+                if let Some(node) = ast.get_node_mut(node_id) {
+                    if let PdfValue::Stream(stream) = &mut node.value {
+                        stream.dict = dict;
+                    }
+                }
+            }
+        }
+    }
+
+    fn resolve_jbig2_globals_value(&mut self, value: &mut PdfValue, ast: &PdfAstGraph) -> bool {
+        match value {
+            PdfValue::Dictionary(dict) => self.resolve_jbig2_globals_dict(dict, ast),
+            PdfValue::Array(values) => values
+                .iter_mut()
+                .map(|value| self.resolve_jbig2_globals_value(value, ast))
+                .any(|changed| changed),
+            _ => false,
+        }
+    }
+
+    fn resolve_jbig2_globals_dict(&mut self, dict: &mut PdfDictionary, ast: &PdfAstGraph) -> bool {
+        let reference = match dict.get("JBIG2Globals") {
+            Some(PdfValue::Reference(reference)) => *reference,
+            _ => return false,
+        };
+        let Some(mut stream) = self
+            .object_to_node
+            .get(&reference.id())
+            .and_then(|node_id| ast.get_node(*node_id))
+            .and_then(|node| node.as_stream())
+            .cloned()
+        else {
+            return false;
+        };
+
+        if let Some(raw) = stream.raw_data() {
+            let filters = stream.get_filters_with_params();
+            if let Ok(decoded) = decode_stream_with_budget(raw, &filters, &self.limits.budget) {
+                stream.data = StreamData::Decoded(decoded);
+            }
+        }
+        dict.insert("JBIG2Globals", PdfValue::Stream(stream));
+        true
     }
 
     /// Build AST nodes from content streams

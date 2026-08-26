@@ -26,7 +26,7 @@ The next release will be cut after the full CI and signed-tag checklist passes.
   fixtures; PDF `/JBIG2Globals` plumbing and full codec conformance remain
   pending.
 - Preserved direct `/JBIG2Globals` bytes through stream filter parameters;
-  indirect document-reference resolution remains pending.
+  parsed indirect document references are now resolved before stream decoding.
 - Added JBIG2 segment, bitmap-dimension, and organization preflight so
   unbounded inputs are rejected before the decoder allocates or iterates.
 

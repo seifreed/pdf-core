@@ -1,5 +1,6 @@
 use pdf_ast::filters::decode_stream_with_limits;
 use pdf_ast::filters::jbig2::decode_jbig2;
+use pdf_ast::parser::PdfParser;
 use pdf_ast::types::{PdfDictionary, PdfName, PdfStream, PdfValue, StreamFilter};
 
 // Minimal sequential JBIG2 file: a 4x4 all-white page using MMR encoding.
@@ -55,4 +56,83 @@ fn preserves_direct_jbig2_globals_from_decode_params() {
             }
         )]
     );
+}
+
+#[test]
+fn resolves_indirect_jbig2_globals_in_parsed_streams() {
+    let mut pdf = b"%PDF-1.4\n".to_vec();
+    let mut offsets = vec![0usize; 6];
+    append_object(
+        &mut pdf,
+        &mut offsets,
+        1,
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+    );
+    append_object(
+        &mut pdf,
+        &mut offsets,
+        2,
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    );
+    append_object(
+        &mut pdf,
+        &mut offsets,
+        3,
+        b"<< /Type /Page /Parent 2 0 R /Resources << /XObject << /Im1 4 0 R >> >> /MediaBox [0 0 4 4] >>",
+    );
+
+    let image_data = b"not-decoded-in-this-test";
+    let image_dict = format!(
+        "<< /Type /XObject /Subtype /Image /Width 4 /Height 4 /ColorSpace /DeviceGray /BitsPerComponent 1 /Filter /JBIG2Decode /DecodeParms << /JBIG2Globals 5 0 R >> /Length {} >>\nstream\n",
+        image_data.len()
+    );
+    let mut image_body = image_dict.into_bytes();
+    image_body.extend_from_slice(image_data);
+    image_body.extend_from_slice(b"\nendstream");
+    append_object(&mut pdf, &mut offsets, 4, &image_body);
+
+    let global_body = b"<< /Length 3 >>\nstream\n\x01\x02\x03\nendstream";
+    append_object(&mut pdf, &mut offsets, 5, global_body);
+
+    let xref_offset = pdf.len();
+    pdf.extend_from_slice(b"xref\n0 6\n0000000000 65535 f \n");
+    for offset in offsets.iter().skip(1) {
+        pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(
+        format!("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref_offset}\n%%EOF\n").as_bytes(),
+    );
+
+    let document = PdfParser::new()
+        .parse_bytes(&pdf)
+        .expect("PDF with indirect JBIG2 globals should parse");
+    let stream = document
+        .ast
+        .get_all_nodes()
+        .into_iter()
+        .find_map(|node| {
+            node.as_stream().filter(|stream| {
+                stream
+                    .dict
+                    .get("Subtype")
+                    .and_then(PdfValue::as_name)
+                    .is_some_and(|name| name.without_slash() == "Image")
+            })
+        })
+        .expect("parsed image stream should be present");
+    assert_eq!(
+        stream.get_filters_with_params(),
+        vec![StreamFilter::JBIG2Decode(
+            pdf_ast::types::JBIG2DecodeParams {
+                globals: Some(vec![1, 2, 3]),
+            }
+        )]
+    );
+}
+
+fn append_object(pdf: &mut Vec<u8>, offsets: &mut [usize], id: usize, body: &[u8]) {
+    offsets[id] = pdf.len();
+    pdf.extend_from_slice(format!("{id} 0 obj\n").as_bytes());
+    pdf.extend_from_slice(body);
+    pdf.extend_from_slice(b"\nendobj\n");
 }
