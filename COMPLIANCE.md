@@ -71,6 +71,8 @@ rechecks the exact veraPDF IDs when `VERAPDF_BIN` and
 `PDF_COMPLIANCE_CORPUS` are configured: PDF/A `6.3.4:1`, `6.5.2:1`, and
 `6.6.1:1`, plus PDF/UA `7.1:11`, `7.2:2`, `7.2:29`, and `7.3:1`; the local
 PDF/A and PDF/UA validators are then run against those serialized bytes.
+The complete manifest check also passed locally with veraPDF 1.30.2: all 205
+Isartor mappings were present and every expected failed rule ID was observed.
 
 The latest local parser gate (2026-08-26 UTC, corpus commit
 `9979a2a8618dcdf23ad3f20c760c1f06e5b36fe6`) processed 2,809 files and
