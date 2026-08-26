@@ -95,7 +95,7 @@ pub extern "C" fn pdf_ast_plugin_author() -> *const u8 {
 
 #[allow(dead_code)]
 pub extern "C" fn pdf_ast_plugin_license() -> *const u8 {
-    b"MIT OR Apache-2.0\0".as_ptr()
+    b"MIT\0".as_ptr()
 }
 
 #[allow(dead_code)]

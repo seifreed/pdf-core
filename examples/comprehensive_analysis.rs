@@ -5,7 +5,7 @@ use pdf_ast::{
 // Removed unused imports: File, BufReader
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("PDF-AST Universal - Comprehensive Analysis Demo");
+    println!("pdf-core - Experimental Analysis Demo");
     println!("===============================================\n");
 
     // Create a comprehensive test document
@@ -26,8 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 5. Metadata Analysis
     perform_metadata_analysis(&document);
 
-    println!("\nComprehensive analysis complete!");
-    println!("All features of PDF-AST Universal have been demonstrated.");
+    println!("\nExperimental analysis complete.");
 
     Ok(())
 }
@@ -222,7 +221,7 @@ fn add_info_dictionary(doc: &mut PdfDocument) {
     info_dict.insert(
         "Title",
         PdfValue::String(pdf_ast::PdfString::new_literal(
-            b"PDF-AST Universal Test Document",
+            b"pdf-core experimental test document",
         )),
     );
     info_dict.insert(
@@ -246,7 +245,7 @@ fn add_info_dictionary(doc: &mut PdfDocument) {
     info_dict.insert(
         "Creator",
         PdfValue::String(pdf_ast::PdfString::new_literal(
-            b"PDF-AST Universal Library v0.1.0",
+            b"pdf-core experimental library v0.1.0",
         )),
     );
     info_dict.insert(

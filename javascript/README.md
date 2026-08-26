@@ -1,15 +1,17 @@
 # PDF-AST Node.js Bindings
 
-This package provides Node.js bindings for the PDF-AST library, a universal AST (Abstract Syntax Tree) implementation for PDF documents based on ISO 32000-2 (PDF 2.0).
+This package provides experimental Node.js bindings for `pdf-core` and its
+published `pdf-ast` crate. It exposes structural parsing and selected
+preflight checks; it is not a complete PDF 2.0 or compliance implementation.
 
 ## Features
 
-- **Complete PDF parsing**: Parse any PDF document into a structured AST
-- **PDF validation**: Validate documents against PDF/A, PDF/X, PDF/UA standards
+- **Structural parsing**: Parse supported PDF objects into an AST
+- **Experimental preflight**: Run selected PDF/A and PDF/UA checks
 - **Plugin system**: Extensible architecture for custom document processing
 - **Performance optimized**: Fast parsing with native Rust implementation
 - **TypeScript support**: Full TypeScript definitions included
-- **Industry standard**: Based on ISO 32000-2 specification
+- **Scope**: See the repository capability and compliance matrices
 
 ## Installation
 
@@ -36,10 +38,10 @@ console.log(`PDF version: ${stats.version}`);
 const pages = document.getNodesByType('Page');
 console.log(`Document has ${pages.length} pages`);
 
-// Validate against PDF/A-1b
+// Run selected PDF/A-1b preflight checks
 const report = document.validate('PDF/A-1b');
 if (report.isValid()) {
-    console.log('Document is PDF/A-1b compliant');
+    console.log('No implemented PDF/A-1b preflight rule failed');
 } else {
     console.log(`Validation failed with ${report.getIssues().length} issues`);
     report.getIssues().forEach(issue => {
@@ -261,12 +263,11 @@ const nodeTypes = pdfAst.getNodeTypes();
 
 ## Standards Support
 
-The library supports validation against major PDF standards:
+The binding exposes experimental checks for selected standards:
 
-- **PDF 2.0**: ISO 32000-2 base standard
-- **PDF/A**: Long-term archival (PDF/A-1a, PDF/A-1b, PDF/A-2a, PDF/A-2b, PDF/A-2u, PDF/A-3a, PDF/A-3b, PDF/A-3u)
-- **PDF/X**: Graphics exchange (PDF/X-1a, PDF/X-3, PDF/X-4, PDF/X-4p, PDF/X-5g, PDF/X-5n, PDF/X-5pg)
-- **PDF/UA**: Universal accessibility (PDF/UA-1, PDF/UA-2)
+- **PDF 2.0**: Selected structural constraints
+- **PDF/A-1b**: Selected preflight rules
+- **PDF/UA-1**: Selected preflight rules
 
 ## Performance
 
@@ -313,9 +314,4 @@ See the `examples/` directory for more usage examples:
 
 ## License
 
-This project is licensed under either of
-
-- Apache License, Version 2.0
-- MIT License
-
-at your option.
+This project is licensed under the MIT License.

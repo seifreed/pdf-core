@@ -4,7 +4,7 @@ use pdf_ast::{
 // Removed unused imports: File, BufReader
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("PDF-AST Universal - Basic Usage Example\n");
+    println!("pdf-core - Basic Usage Example\n");
 
     demonstrate_ast_creation();
     demonstrate_visitor_pattern();

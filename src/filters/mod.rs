@@ -393,10 +393,10 @@ fn decode_ccitt_fax(data: &[u8], params: &CCITTFaxDecodeParams) -> Result<Vec<u8
 }
 
 fn decode_jbig2(data: &[u8]) -> Result<Vec<u8>, FilterError> {
-    let mut decoder = jbig2::Jbig2Decoder::new();
-    decoder
-        .decode(data, None)
-        .map_err(|e| FilterError::Jbig2Error(format!("{:?}", e)))
+    let _ = data;
+    Err(FilterError::Jbig2Error(
+        "JBIG2 decoding is not supported; inspect the raw stream instead".to_string(),
+    ))
 }
 
 fn decode_dct(data: &[u8]) -> Result<Vec<u8>, FilterError> {

@@ -1,7 +1,7 @@
 {
   "name": "pdf-ast",
   "version": "0.1.0",
-  "description": "Universal AST library for PDF documents based on ISO 32000-2",
+  "description": "Experimental PDF AST bindings for structural and security analysis",
   "main": "index.node",
   "types": "index.d.ts",
   "scripts": {
@@ -30,7 +30,7 @@
     "document-processing"
   ],
   "author": "Marc Rivero López",
-  "license": "(MIT OR Apache-2.0)",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/seifreed/pdf-core/issues"
   },

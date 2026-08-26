@@ -146,7 +146,7 @@ impl Pkcs7Handler {
             .any(|window| window == sequence)
     }
 
-    /// Extract version from PKCS#7 data (simplified)
+    /// Extract the SignedData version from PKCS#7 data.
     fn extract_version(&self, data: &[u8]) -> CryptoResult<u32> {
         // Look for INTEGER tag (0x02) near the beginning
         for i in 0..data.len().min(50) {
@@ -154,7 +154,9 @@ impl Pkcs7Handler {
                 return Ok(data[i + 2] as u32);
             }
         }
-        Ok(1) // Default version
+        Err(CryptoError::InvalidSignatureFormat(
+            "SignedData version INTEGER not found".to_string(),
+        ))
     }
 
     /// Extract digest algorithms (simplified)
@@ -165,8 +167,10 @@ impl Pkcs7Handler {
         }
         #[cfg(not(feature = "crypto"))]
         {
-            // Simplified implementation - would parse AlgorithmIdentifier structures
-            Ok(vec!["SHA-256".to_string()])
+            let _ = data;
+            Err(CryptoError::UnsupportedAlgorithm(
+                "PKCS#7 algorithm inspection requires the crypto feature".to_string(),
+            ))
         }
     }
 
@@ -205,25 +209,28 @@ impl Pkcs7Handler {
                     }
                 }
             }
-            Err(_) => {
-                // Fall back to default
-                algorithms.push("SHA-256".to_string());
+            Err(err) => {
+                return Err(CryptoError::InvalidSignatureFormat(format!(
+                    "DER parse error: {}",
+                    err
+                )))
             }
         }
 
         if algorithms.is_empty() {
-            algorithms.push("SHA-256".to_string()); // Default
+            return Err(CryptoError::InvalidSignatureFormat(
+                "No digest algorithm found".to_string(),
+            ));
         }
 
         Ok(algorithms)
     }
 
-    /// Extract content info (simplified)
+    /// Extract content info when a complete ASN.1 implementation is available.
     fn extract_content_info(&self, _data: &[u8]) -> CryptoResult<ContentInfo> {
-        Ok(ContentInfo {
-            content_type: "data".to_string(),
-            content: None,
-        })
+        Err(CryptoError::UnsupportedAlgorithm(
+            "PKCS#7 content-info extraction is not implemented".to_string(),
+        ))
     }
 
     /// Extract certificates from PKCS#7 data
@@ -287,110 +294,19 @@ impl Pkcs7Handler {
         }
         #[cfg(not(feature = "crypto"))]
         {
-            // Simplified implementation
-            Ok(vec![SignerInfo {
-                version: 1,
-                issuer_and_serial: IssuerAndSerial {
-                    issuer: "CN=Unknown".to_string(),
-                    serial_number: vec![1],
-                },
-                digest_algorithm: "SHA-256".to_string(),
-                signature_algorithm: "RSA".to_string(),
-                signature: vec![0; 256], // Placeholder
-                authenticated_attributes: Vec::new(),
-                unauthenticated_attributes: Vec::new(),
-            }])
+            let _ = data;
+            Err(CryptoError::UnsupportedAlgorithm(
+                "PKCS#7 signer inspection requires the crypto feature".to_string(),
+            ))
         }
     }
 
     /// Extract signer infos using ASN.1 parsing
     #[cfg(feature = "crypto")]
-    fn extract_signer_infos_asn1(&self, data: &[u8]) -> CryptoResult<Vec<SignerInfo>> {
-        use der_parser::der::*;
-
-        let mut signer_infos = Vec::new();
-
-        // Parse the PKCS#7 structure to find SignerInfos
-        match parse_der(data) {
-            Ok((_remaining, obj)) => {
-                if let DerObjectContent::Sequence(seq) = obj.content {
-                    // Navigate through the PKCS#7 structure to find SignerInfos
-                    // This is a simplified version - a complete implementation would
-                    // properly navigate the ASN.1 structure
-                    for item in seq {
-                        if let DerObjectContent::Set(set) = item.content {
-                            // This might be the signerInfos set
-                            for signer_item in set {
-                                if let DerObjectContent::Sequence(signer_seq) = signer_item.content
-                                {
-                                    // Try to extract signer info from the sequence
-                                    let mut version = 1u32;
-                                    let digest_algorithm = "SHA-256".to_string();
-                                    let signature_algorithm = "RSA".to_string();
-                                    let signature = vec![0; 256];
-
-                                    // Extract version if present
-                                    if let Some(first) = signer_seq.first() {
-                                        if let DerObjectContent::Integer(int_bytes) = &first.content
-                                        {
-                                            if !int_bytes.is_empty() {
-                                                version = int_bytes[0] as u32;
-                                            }
-                                        }
-                                    }
-
-                                    signer_infos.push(SignerInfo {
-                                        version,
-                                        issuer_and_serial: IssuerAndSerial {
-                                            issuer: "CN=PKCS#7 Signer".to_string(),
-                                            serial_number: vec![1, 2, 3, 4],
-                                        },
-                                        digest_algorithm,
-                                        signature_algorithm,
-                                        signature,
-                                        authenticated_attributes: Vec::new(),
-                                        unauthenticated_attributes: Vec::new(),
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Err(_) => {
-                // Fall back to default
-                signer_infos.push(SignerInfo {
-                    version: 1,
-                    issuer_and_serial: IssuerAndSerial {
-                        issuer: "CN=Unknown".to_string(),
-                        serial_number: vec![1],
-                    },
-                    digest_algorithm: "SHA-256".to_string(),
-                    signature_algorithm: "RSA".to_string(),
-                    signature: vec![0; 256],
-                    authenticated_attributes: Vec::new(),
-                    unauthenticated_attributes: Vec::new(),
-                });
-            }
-        }
-
-        if signer_infos.is_empty() {
-            // Ensure we always have at least one signer info
-            signer_infos.push(SignerInfo {
-                version: 1,
-                issuer_and_serial: IssuerAndSerial {
-                    issuer: "CN=Default Signer".to_string(),
-                    serial_number: vec![1],
-                },
-                digest_algorithm: "SHA-256".to_string(),
-                signature_algorithm: "RSA".to_string(),
-                signature: vec![0; 256],
-                authenticated_attributes: Vec::new(),
-                unauthenticated_attributes: Vec::new(),
-            });
-        }
-
-        Ok(signer_infos)
+    fn extract_signer_infos_asn1(&self, _data: &[u8]) -> CryptoResult<Vec<SignerInfo>> {
+        Err(CryptoError::UnsupportedAlgorithm(
+            "PKCS#7 signer-info extraction is not implemented".to_string(),
+        ))
     }
 
     /// Verify PKCS#7 signature using OpenSSL
@@ -636,27 +552,10 @@ impl Pkcs7Handler {
     /// Basic certificate parsing without crypto libraries
     #[cfg(not(feature = "crypto"))]
     fn parse_certificate_basic(&self, cert_data: &[u8]) -> CryptoResult<CertificateInfo> {
-        if cert_data.len() < 100 {
-            return Err(CryptoError::CertificateError(
-                "Certificate too short".to_string(),
-            ));
-        }
-
-        // Very basic parsing - just return placeholder values
-        Ok(CertificateInfo {
-            subject: "CN=PKCS#7 Signer".to_string(),
-            issuer: "CN=Unknown CA".to_string(),
-            serial_number: "123456".to_string(),
-            der: cert_data.to_vec(),
-            not_before: super::chrono::Utc::now(),
-            not_after: super::chrono::Utc::now(),
-            public_key_algorithm: "RSA".to_string(),
-            signature_algorithm: "SHA256withRSA".to_string(),
-            key_usage: vec!["Digital Signature".to_string()],
-            extended_key_usage: vec!["Code Signing".to_string()],
-            is_ca: false,
-            fingerprint_sha256: "basic_cert_fingerprint".to_string(),
-        })
+        let _ = cert_data;
+        Err(CryptoError::UnsupportedAlgorithm(
+            "X.509 certificate inspection requires the crypto feature".to_string(),
+        ))
     }
 
     /// Parse certificate chain
@@ -678,8 +577,9 @@ impl Pkcs7Handler {
             for attr in &signer_info.authenticated_attributes {
                 if attr.oid == "1.2.840.113549.1.9.5" {
                     // signing-time OID
-                    // Parse time from attribute value
-                    return Some(super::chrono::Utc::now()); // Placeholder
+                    // The attribute is present, but its ASN.1 time value is not
+                    // decoded by this parser yet.
+                    return None;
                 }
             }
         }
@@ -832,17 +732,10 @@ impl Pkcs7Handler {
 
     /// Parse signed data from PKCS#7 contents
     pub fn parse_signed_data(&self, contents: &[u8]) -> CryptoResult<SignedData> {
-        // For now, return a simplified SignedData structure
-        // In a full implementation, this would parse the actual ASN.1 structure
-        Ok(SignedData {
-            content_info: ContentInfo {
-                content_type: "1.2.840.113549.1.7.1".to_string(), // id-data
-                content: Some(contents.to_vec()),
-            },
-            certificates: Vec::new(),
-            crls: Vec::new(),
-            signers: Vec::new(),
-        })
+        let _ = contents;
+        Err(CryptoError::UnsupportedAlgorithm(
+            "SignedData parsing is not implemented".to_string(),
+        ))
     }
 }
 

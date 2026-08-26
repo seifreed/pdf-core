@@ -7,16 +7,15 @@ name = "pdf-ast"
 authors = [
     {name = "Marc Rivero López"},
 ]
-description = "Universal AST library for PDF documents based on ISO 32000-2"
+description = "Experimental PDF AST bindings for structural and security analysis"
 readme = "README.md"
-license = {text = "MIT OR Apache-2.0"}
+license = {text = "MIT"}
 keywords = ["pdf", "ast", "document", "parsing", "analysis", "iso32000", "pdf2.0"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: MIT License",
-    "License :: OSI Approved :: Apache Software License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.7",

@@ -190,7 +190,7 @@ impl PdfA1bValidator {
                         .unwrap_or("Unknown");
 
                     // PDF/A-1b requires ALL fonts to be embedded, including the standard 14 fonts
-                    let is_embedded = self.is_font_embedded(font_dict);
+                    let is_embedded = self.is_font_embedded(font_dict, document);
                     if !is_embedded {
                         unembedded_fonts.push(font_name.to_string());
 
@@ -229,16 +229,32 @@ impl PdfA1bValidator {
         }
     }
 
-    fn is_font_embedded(&self, font_dict: &PdfDictionary) -> bool {
-        font_dict.contains_key("FontFile") ||
-        font_dict.contains_key("FontFile2") ||
-        font_dict.contains_key("FontFile3") ||
-        // CID fonts store embedding info in DescendantFonts
-        font_dict.get("DescendantFonts")
-            .and_then(|v| v.as_array())
-            // Assumes embedded if DescendantFonts exists; full validation requires resolving references
-            .map(|arr| !arr.is_empty())
-            .unwrap_or(false)
+    fn is_font_embedded(&self, font_dict: &PdfDictionary, document: &PdfDocument) -> bool {
+        if font_dict.contains_key("FontFile")
+            || font_dict.contains_key("FontFile2")
+            || font_dict.contains_key("FontFile3")
+        {
+            return true;
+        }
+
+        font_dict
+            .get("DescendantFonts")
+            .and_then(|value| value.as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|value| match value {
+                PdfValue::Dictionary(dict) => Some(dict.clone()),
+                PdfValue::Reference(reference) => document
+                    .ast
+                    .get_node_by_object(reference.id())
+                    .and_then(|node| node.as_dict().cloned()),
+                _ => None,
+            })
+            .any(|dict| {
+                dict.contains_key("FontFile")
+                    || dict.contains_key("FontFile2")
+                    || dict.contains_key("FontFile3")
+            })
     }
 
     fn is_standard_font(&self, font_name: &str) -> bool {

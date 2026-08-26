@@ -1,4 +1,3 @@
-use nom::IResult;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -166,72 +165,8 @@ impl ContentStreamParser {
     }
 
     pub fn parse(&mut self, data: &[u8]) -> Result<Vec<ContentOperator>, String> {
-        let mut input = data;
-        let mut operators = Vec::new();
-        let mut safety_counter = 0;
-        const MAX_ITERATIONS: usize = 10000; // Prevent infinite loops
-
-        while !input.is_empty() && safety_counter < MAX_ITERATIONS {
-            safety_counter += 1;
-
-            // Skip whitespace first
-            input = skip_whitespace_bytes(input);
-            if input.is_empty() {
-                break;
-            }
-
-            match parse_operator(input) {
-                Ok((remaining, op)) => {
-                    operators.push(op);
-                    if remaining == input {
-                        // No progress made, advance by one byte to prevent infinite loop
-                        input = if input.len() > 1 { &input[1..] } else { &[] };
-                    } else {
-                        input = remaining;
-                    }
-                }
-                Err(_) => {
-                    // Skip problematic byte and continue
-                    input = if input.len() > 1 { &input[1..] } else { &[] };
-                }
-            }
-        }
-
-        if safety_counter >= MAX_ITERATIONS {
-            return Err(
-                "Content stream parsing exceeded maximum iterations (possible infinite loop)"
-                    .to_string(),
-            );
-        }
-
+        let operators = crate::parser::content_operands::parse_content_stream(data);
+        self.operators = operators.clone();
         Ok(operators)
     }
-}
-
-fn parse_operator(input: &[u8]) -> IResult<&[u8], ContentOperator> {
-    use nom::{branch::alt, bytes::complete::tag, combinator::map};
-
-    // Simple text operators for the basic test
-    alt((
-        map(tag(b"BT"), |_| ContentOperator::BeginText),
-        map(tag(b"ET"), |_| ContentOperator::EndText),
-        map(tag(b"Tf"), |_| {
-            ContentOperator::SetFont("F1".to_string(), 12.0)
-        }),
-        map(tag(b"Td"), |_| ContentOperator::MoveText(100.0, 700.0)),
-        map(tag(b"Tj"), |_| {
-            ContentOperator::ShowText("Hello PDF".as_bytes().to_vec())
-        }),
-        // Graphics state operators
-        map(tag(b"q"), |_| ContentOperator::Save),
-        map(tag(b"Q"), |_| ContentOperator::Restore),
-    ))(input)
-}
-
-fn skip_whitespace_bytes(input: &[u8]) -> &[u8] {
-    let mut i = 0;
-    while i < input.len() && input[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    &input[i..]
 }

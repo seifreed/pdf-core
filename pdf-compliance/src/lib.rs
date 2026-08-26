@@ -64,7 +64,6 @@ pub fn validate_pdfua1(document: &PdfDocument) -> ComplianceReport {
 struct PdfA1bValidator {
     violations: Vec<Violation>,
     has_embedded_fonts: bool,
-    has_color_profile: bool,
 }
 
 impl PdfA1bValidator {
@@ -72,7 +71,6 @@ impl PdfA1bValidator {
         Self {
             violations: Vec::new(),
             has_embedded_fonts: false,
-            has_color_profile: false,
         }
     }
 

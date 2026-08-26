@@ -1,14 +1,16 @@
 # PDF-AST Python Bindings
 
-This package provides Python bindings for the PDF-AST library, a universal AST (Abstract Syntax Tree) implementation for PDF documents based on ISO 32000-2 (PDF 2.0).
+This package provides experimental Python bindings for `pdf-core` and its
+published `pdf-ast` crate. It exposes structural parsing and selected
+preflight checks; it is not a complete PDF 2.0 or compliance implementation.
 
 ## Features
 
-- **Complete PDF parsing**: Parse any PDF document into a structured AST
-- **PDF validation**: Validate documents against PDF/A, PDF/X, PDF/UA standards
+- **Structural parsing**: Parse supported PDF objects into a structured AST
+- **Experimental preflight**: Run selected PDF/A and PDF/UA checks
 - **Plugin system**: Extensible architecture for custom document processing
 - **Performance optimized**: Fast parsing with optional parallel processing
-- **Industry standard**: Based on ISO 32000-2 specification
+- **Scope**: See the repository capability and compliance matrices
 
 ## Installation
 
@@ -34,10 +36,10 @@ print(f"PDF version: {stats['version']}")
 pages = document.get_nodes_by_type("Page")
 print(f"Document has {len(pages)} pages")
 
-# Validate against PDF/A-1b
+# Run selected PDF/A-1b preflight checks
 report = document.validate("PDF/A-1b")
 if report.is_valid():
-    print("Document is PDF/A-1b compliant")
+    print("No implemented PDF/A-1b preflight rule failed")
 else:
     print(f"Validation failed with {len(report.get_issues())} issues")
     for issue in report.get_issues():
@@ -182,12 +184,11 @@ The library supports all standard PDF node types:
 
 ## Standards Support
 
-The library supports validation against major PDF standards:
+The binding exposes experimental checks for selected standards:
 
-- **PDF 2.0**: ISO 32000-2 base standard
-- **PDF/A**: Long-term archival (PDF/A-1a, PDF/A-1b, PDF/A-2a, PDF/A-2b, PDF/A-2u, PDF/A-3a, PDF/A-3b, PDF/A-3u)
-- **PDF/X**: Graphics exchange (PDF/X-1a, PDF/X-3, PDF/X-4, PDF/X-4p, PDF/X-5g, PDF/X-5n, PDF/X-5pg)
-- **PDF/UA**: Universal accessibility (PDF/UA-1, PDF/UA-2)
+- **PDF 2.0**: Selected structural constraints
+- **PDF/A-1b**: Selected preflight rules
+- **PDF/UA-1**: Selected preflight rules
 
 ## Performance
 
@@ -214,9 +215,4 @@ except ValueError as e:
 
 ## License
 
-This project is licensed under either of
-
-- Apache License, Version 2.0
-- MIT License
-
-at your option.
+This project is licensed under the MIT License.
