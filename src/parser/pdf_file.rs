@@ -668,9 +668,14 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             .get("W")
             .and_then(|v| v.as_array())
             .ok_or_else(|| AstError::ParseError("Missing W in xref stream".to_string()))?;
+        if w_array.len() != 3 {
+            return Err(AstError::ParseError(
+                "Xref field widths must contain exactly 3 entries".to_string(),
+            ));
+        }
 
         let mut widths = [0usize; 3];
-        for (i, w) in w_array.iter().take(3).enumerate() {
+        for (i, w) in w_array.iter().enumerate() {
             let width = w
                 .as_integer()
                 .ok_or_else(|| AstError::ParseError("Invalid xref field width".to_string()))?;
@@ -2964,5 +2969,27 @@ mod tests {
         let mut negative_size = PdfDictionary::new();
         negative_size.insert("Size", PdfValue::Integer(-1));
         assert!(Parser::extract_xref_index_ranges(&negative_size).is_err());
+    }
+
+    #[test]
+    fn rejects_xref_stream_width_arrays_with_wrong_length() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut dict = PdfDictionary::new();
+        dict.insert("W", PdfValue::Array(vec![PdfValue::Integer(1)].into()));
+        assert!(Parser::extract_xref_field_widths(&dict).is_err());
+
+        dict.insert(
+            "W",
+            PdfValue::Array(
+                vec![
+                    PdfValue::Integer(1),
+                    PdfValue::Integer(2),
+                    PdfValue::Integer(3),
+                    PdfValue::Integer(4),
+                ]
+                .into(),
+            ),
+        );
+        assert!(Parser::extract_xref_field_widths(&dict).is_err());
     }
 }
