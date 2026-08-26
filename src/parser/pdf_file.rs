@@ -357,19 +357,29 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
             revision_number = revision_number.saturating_add(1);
 
-            if let Some(prev) = trailer.get("Prev").and_then(|v| v.as_integer()) {
-                if prev <= 0 {
-                    let message = format!("Invalid /Prev xref offset: {prev}");
-                    if self.tolerant {
-                        self.record_anomaly("invalid_prev", &message, Some(offset))?;
-                        break;
+            match trailer.get("Prev") {
+                None => break,
+                Some(value) => {
+                    let Some(prev) = value.as_integer() else {
+                        let message = "Invalid /Prev xref offset type".to_string();
+                        if self.tolerant {
+                            self.record_anomaly("invalid_prev_type", &message, Some(offset))?;
+                            break;
+                        }
+                        return Err(AstError::ParseError(message));
+                    };
+                    if prev <= 0 {
+                        let message = format!("Invalid /Prev xref offset: {prev}");
+                        if self.tolerant {
+                            self.record_anomaly("invalid_prev", &message, Some(offset))?;
+                            break;
+                        }
+                        return Err(AstError::ParseError(message));
                     }
-                    return Err(AstError::ParseError(message));
+                    offset = u64::try_from(prev).map_err(|_| {
+                        AstError::ParseError("Negative /Prev xref offset".to_string())
+                    })?;
                 }
-                offset = u64::try_from(prev)
-                    .map_err(|_| AstError::ParseError("Negative /Prev xref offset".to_string()))?;
-            } else {
-                break;
             }
         }
 
