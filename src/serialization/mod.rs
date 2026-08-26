@@ -263,6 +263,7 @@ pub struct GraphDeserializer;
 
 impl GraphDeserializer {
     pub fn deserialize(serialized: SerializableGraph) -> Result<PdfAstGraph, String> {
+        let serialized = Self::migrate(serialized)?;
         if serialized.metadata.serialization_version != AST_SCHEMA_VERSION {
             return Err(format!(
                 "Unsupported AST serialization version: {}; expected {}",
@@ -325,6 +326,27 @@ impl GraphDeserializer {
         }
 
         Ok(ast)
+    }
+
+    fn migrate(mut serialized: SerializableGraph) -> Result<SerializableGraph, String> {
+        match serialized.metadata.serialization_version.as_str() {
+            "1.0" | "1.0.0" => {
+                if serialized
+                    .nodes
+                    .iter()
+                    .any(|node| node.node_type == "Object" && node.object_id.is_none())
+                {
+                    return Err("Cannot migrate AST 1.0 object node without object_id".to_string());
+                }
+                serialized.metadata.serialization_version = AST_SCHEMA_VERSION.to_string();
+                Ok(serialized)
+            }
+            AST_SCHEMA_VERSION => Ok(serialized),
+            _ => Err(format!(
+                "Unsupported AST serialization version: {}; expected {}",
+                serialized.metadata.serialization_version, AST_SCHEMA_VERSION
+            )),
+        }
     }
 
     fn parse_node_type(
@@ -756,11 +778,38 @@ mod tests {
         ast.set_root(root_id);
         let mut graph = SerializableGraph::from_ast(&ast);
 
-        for version in ["1", "1.0.0", "1.2.0", "2.0.0"] {
+        for version in ["1", "1.2.0", "2.0.0"] {
             graph.metadata.serialization_version = version.to_string();
             let error = GraphDeserializer::deserialize(graph.clone()).unwrap_err();
             assert!(error.contains("Unsupported AST serialization version"));
         }
+    }
+
+    #[test]
+    fn migrates_ast_1_0_graphs_without_losing_object_identity() {
+        let mut ast = PdfAstGraph::new();
+        let object_id = crate::types::ObjectId::new(42, 7);
+        let node_id = ast.create_node(NodeType::Object(object_id), PdfValue::Null);
+        ast.set_root(node_id);
+        let mut graph = SerializableGraph::from_ast(&ast);
+        graph.metadata.serialization_version = "1.0".to_string();
+
+        let restored = GraphDeserializer::deserialize(graph).unwrap();
+        assert!(restored.get_node_by_object(object_id).is_some());
+    }
+
+    #[test]
+    fn rejects_ast_1_0_object_nodes_without_identity_during_migration() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.create_node(NodeType::Root, PdfValue::Null);
+        ast.set_root(root_id);
+        let mut graph = SerializableGraph::from_ast(&ast);
+        graph.nodes[0].node_type = "Object".to_string();
+        graph.nodes[0].object_id = None;
+        graph.metadata.serialization_version = "1.0".to_string();
+
+        let error = GraphDeserializer::deserialize(graph).unwrap_err();
+        assert!(error.contains("Cannot migrate AST 1.0 object node"));
     }
 
     #[test]

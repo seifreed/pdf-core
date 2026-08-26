@@ -48,4 +48,5 @@ The next release will be cut after the full CI and signed-tag checklist passes.
 - Locked JavaScript binding dependencies and switched binding workflows to `npm ci`.
 - Added corpus latency percentiles and rejected malformed xref, image, and function dimensions safely.
 - Deserializers now reject unsupported AST schema versions and inconsistent graph metadata instead of silently repairing input.
+- Added an explicit AST `1.0` to `1.1.0` migration and fuzz coverage for JSON/CBOR deserialization.
 - Fixed the corpus benchmark to ignore non-PDF metadata files.
