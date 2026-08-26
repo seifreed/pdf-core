@@ -3,6 +3,7 @@
 /// CCITT Fax decoding implementation for PDF
 /// Supports Group 3 (1D and 2D) and Group 4 fax compression
 use crate::filters::ccitt_tables::{FaxTabEnt, FAX_BLACK_TABLE, FAX_MAIN_TABLE, FAX_WHITE_TABLE};
+use crate::performance::ResourceBudget;
 
 const S_NULL: u8 = 0;
 const S_PASS: u8 = 1;
@@ -43,7 +44,10 @@ impl CcittDecoder {
             end_of_block: true,
             black_is_1: false,
             damaged_rows_before_error: 0,
-            max_output_bytes: None,
+            max_output_bytes: Some(
+                usize::try_from(ResourceBudget::default().max_decoded_bytes_per_stream)
+                    .unwrap_or(usize::MAX),
+            ),
         }
     }
 
@@ -137,6 +141,14 @@ fn append_row(
     Ok(())
 }
 
+fn row_width(columns: usize, max_output_bytes: Option<usize>) -> Result<usize, String> {
+    let bytes_per_row = columns.div_ceil(8);
+    if max_output_bytes.is_some_and(|limit| bytes_per_row > limit) {
+        return Err("CCITT row exceeds output limit".to_string());
+    }
+    Ok(bytes_per_row)
+}
+
 /// Group 3 Fax decoder
 struct Group3Decoder {
     columns: usize,
@@ -169,7 +181,7 @@ impl Group3Decoder {
 
     fn decode_1d(&mut self, data: &[u8]) -> Result<Vec<u8>, String> {
         let mut reader = BitReader::new(data);
-        let bytes_per_row = self.columns.div_ceil(8);
+        let bytes_per_row = row_width(self.columns, self.max_output_bytes)?;
         let mut output = Vec::new();
         let rows = if self.rows == 0 {
             usize::MAX
@@ -218,7 +230,7 @@ impl Group3Decoder {
 
     fn decode_2d(&mut self, data: &[u8]) -> Result<Vec<u8>, String> {
         let mut reader = BitReader::new(data);
-        let bytes_per_row = self.columns.div_ceil(8);
+        let bytes_per_row = row_width(self.columns, self.max_output_bytes)?;
         let mut output = Vec::new();
         let rows = if self.rows == 0 {
             usize::MAX
@@ -409,7 +421,7 @@ impl Group4Decoder {
 
     fn decode(&mut self, data: &[u8]) -> Result<Vec<u8>, String> {
         let mut reader = BitReader::new(data);
-        let bytes_per_row = self.columns.div_ceil(8);
+        let bytes_per_row = row_width(self.columns, self.max_output_bytes)?;
         let mut output = Vec::new();
         let rows = if self.rows == 0 {
             usize::MAX
@@ -786,5 +798,11 @@ mod tests {
             .with_max_output_bytes(0);
         let data = pack_bits_lsb(&[1, 0, 0, 1, 1]);
         assert!(decoder.decode_group3_1d(&data).is_err());
+    }
+
+    #[test]
+    fn rejects_rows_too_wide_for_the_output_budget() {
+        let decoder = CcittDecoder::new(usize::MAX, 1);
+        assert!(decoder.decode_group4(&[]).is_err());
     }
 }
