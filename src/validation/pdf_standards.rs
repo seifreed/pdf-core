@@ -114,7 +114,7 @@ impl PdfSchema for Pdf20Schema {
     }
 
     fn description(&self) -> &str {
-        "ISO 32000-2 PDF 2.0 standard compliance"
+        "Experimental structural checks for selected PDF 2.0 constraints"
     }
 
     fn reference_url(&self) -> Option<&str> {
