@@ -1,5 +1,5 @@
 use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
-use crate::filters::decode_stream_with_limits;
+use crate::filters::decode_stream_with_budget;
 use crate::metadata::icc::parse_icc_profile;
 use crate::parser::reference_resolver::ObjectNodeMap;
 use crate::performance::PerformanceLimits;
@@ -169,21 +169,9 @@ impl<'a> ColorSpaceParser<'a> {
         };
 
         let filters = stream.get_filters();
-        let decoded = decode_stream_with_limits(
-            raw,
-            &filters,
-            self.limits.max_object_size_mb.saturating_mul(1024 * 1024),
-            self.limits.max_stream_decode_ratio,
-        )
-        .ok()
-        .and_then(|decoded| {
-            self.limits
-                .budget
-                .consume_decoded(decoded.len() as u64)
-                .ok()
-                .map(|_| decoded)
-        })
-        .unwrap_or_default();
+        let decoded = decode_stream_with_budget(raw, &filters, &self.limits.budget)
+            .ok()
+            .unwrap_or_default();
 
         let info = match parse_icc_profile(&decoded) {
             Some(info) => info,

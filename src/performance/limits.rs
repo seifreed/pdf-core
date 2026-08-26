@@ -113,27 +113,30 @@ impl ResourceBudget {
     }
 
     pub fn consume_input(&self, bytes: u64) -> Result<(), ResourceBudgetError> {
-        self.check()?;
-        let total = self
-            .input_bytes
-            .fetch_add(bytes, Ordering::Relaxed)
-            .saturating_add(bytes);
-        if total > self.max_input_bytes {
-            return Err(ResourceBudgetError::InputBytes);
-        }
-        Ok(())
+        self.consume_bytes(
+            &self.input_bytes,
+            self.max_input_bytes,
+            bytes,
+            ResourceBudgetError::InputBytes,
+        )
     }
 
     pub fn consume_decoded(&self, bytes: u64) -> Result<(), ResourceBudgetError> {
         self.check()?;
-        let total = self
-            .decoded_bytes_total
-            .fetch_add(bytes, Ordering::Relaxed)
-            .saturating_add(bytes);
-        if total > self.max_decoded_bytes_total || bytes > self.max_decoded_bytes_per_stream {
+        if bytes > self.max_decoded_bytes_per_stream {
             return Err(ResourceBudgetError::DecodedBytes);
         }
-        Ok(())
+        self.consume_bytes(
+            &self.decoded_bytes_total,
+            self.max_decoded_bytes_total,
+            bytes,
+            ResourceBudgetError::DecodedBytes,
+        )
+    }
+
+    pub fn remaining_decoded_bytes(&self) -> u64 {
+        self.max_decoded_bytes_total
+            .saturating_sub(self.decoded_bytes_total.load(Ordering::Acquire))
     }
 
     pub fn consume_object(&self) -> Result<(), ResourceBudgetError> {
@@ -159,11 +162,42 @@ impl ResourceBudget {
         error: ResourceBudgetError,
     ) -> Result<(), ResourceBudgetError> {
         self.check()?;
-        let total = counter.fetch_add(1, Ordering::Relaxed).saturating_add(1);
-        if total > limit as u64 {
-            return Err(error);
+        let limit = limit as u64;
+        loop {
+            let current = counter.load(Ordering::Acquire);
+            if current >= limit {
+                return Err(error);
+            }
+            if counter
+                .compare_exchange(current, current + 1, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return Ok(());
+            }
         }
-        Ok(())
+    }
+
+    fn consume_bytes(
+        &self,
+        counter: &AtomicU64,
+        limit: u64,
+        bytes: u64,
+        error: ResourceBudgetError,
+    ) -> Result<(), ResourceBudgetError> {
+        self.check()?;
+        loop {
+            let current = counter.load(Ordering::Acquire);
+            let next = current.checked_add(bytes).ok_or_else(|| error.clone())?;
+            if next > limit {
+                return Err(error);
+            }
+            if counter
+                .compare_exchange(current, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                return Ok(());
+            }
+        }
     }
 }
 
@@ -639,5 +673,18 @@ mod tests {
 
         clone.cancellation.cancel();
         assert_eq!(budget.check(), Err(ResourceBudgetError::Cancelled));
+    }
+
+    #[test]
+    fn resource_budget_does_not_overconsume_decoded_bytes() {
+        let budget = ResourceBudget::new(100, 8, 8, 10, 1, 1, 1, 1);
+
+        budget.consume_decoded(6).unwrap();
+        assert_eq!(budget.remaining_decoded_bytes(), 2);
+        assert_eq!(
+            budget.consume_decoded(3),
+            Err(ResourceBudgetError::DecodedBytes)
+        );
+        assert_eq!(budget.remaining_decoded_bytes(), 2);
     }
 }

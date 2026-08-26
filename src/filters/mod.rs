@@ -1,3 +1,4 @@
+use crate::performance::ResourceBudget;
 use crate::types::{CCITTFaxDecodeParams, FlateDecodeParams, LZWDecodeParams, StreamFilter};
 use flate2::read::ZlibDecoder;
 use std::cmp::Ordering;
@@ -42,6 +43,34 @@ pub type FilterResult<T> = Result<T, FilterError>;
 
 pub fn decode_stream(data: &[u8], filters: &[StreamFilter]) -> Result<Vec<u8>, FilterError> {
     decode_stream_with_limits(data, filters, 10 * 1024 * 1024, 100)
+}
+
+pub fn decode_stream_with_budget(
+    data: &[u8],
+    filters: &[StreamFilter],
+    budget: &ResourceBudget,
+) -> Result<Vec<u8>, FilterError> {
+    budget
+        .check()
+        .map_err(|err| FilterError::DecompressionError(err.to_string()))?;
+
+    if filters.is_empty() {
+        budget
+            .consume_decoded(data.len() as u64)
+            .map_err(|err| FilterError::DecompressionError(err.to_string()))?;
+        return Ok(data.to_vec());
+    }
+
+    let max_output_bytes = budget
+        .max_decoded_bytes_per_stream
+        .min(budget.remaining_decoded_bytes());
+    let max_output_bytes = usize::try_from(max_output_bytes).unwrap_or(usize::MAX);
+    let max_ratio = usize::try_from(budget.max_decode_ratio).unwrap_or(usize::MAX);
+    let decoded = decode_stream_with_limits(data, filters, max_output_bytes, max_ratio)?;
+    budget
+        .consume_decoded(decoded.len() as u64)
+        .map_err(|err| FilterError::DecompressionError(err.to_string()))?;
+    Ok(decoded)
 }
 
 pub fn decode_stream_with_limits(
@@ -486,7 +515,8 @@ fn decode_jpx(data: &[u8]) -> Result<Vec<u8>, FilterError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_predictor, decode_ccitt_fax};
+    use super::{apply_predictor, decode_ccitt_fax, decode_stream_with_budget};
+    use crate::performance::ResourceBudget;
     use crate::types::CCITTFaxDecodeParams;
 
     #[test]
@@ -504,5 +534,14 @@ mod tests {
         };
         let error = decode_ccitt_fax(&[], &params, 1024).expect_err("negative columns");
         assert!(error.to_string().contains("columns"));
+    }
+
+    #[test]
+    fn budgeted_decode_rejects_unfiltered_data_before_cloning() {
+        let budget = ResourceBudget::new(100, 4, 4, 10, 1, 1, 1, 1);
+        let error = decode_stream_with_budget(b"12345", &[], &budget)
+            .expect_err("decoded data must respect the shared budget");
+        assert!(error.to_string().contains("DecodedBytes"));
+        assert_eq!(budget.remaining_decoded_bytes(), 4);
     }
 }

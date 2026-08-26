@@ -1,6 +1,6 @@
 use crate::ast::document::XRefEntry;
 use crate::ast::linearization::LinearizationInfo;
-use crate::filters::decode_stream_with_limits;
+use crate::filters::decode_stream_with_budget;
 use crate::performance::PerformanceLimits;
 use crate::types::{ObjectId, PdfStream, PdfValue};
 use nom::{
@@ -161,26 +161,8 @@ pub fn parse_xref_stream(
         }
     };
 
-    let decoded_data = if filters.is_empty() {
-        limits
-            .budget
-            .consume_decoded(raw_data.len() as u64)
-            .map_err(|err| err.to_string())?;
-        raw_data.to_vec()
-    } else {
-        let decoded = decode_stream_with_limits(
-            raw_data,
-            &filters,
-            limits.max_object_size_mb.saturating_mul(1024 * 1024),
-            limits.max_stream_decode_ratio,
-        )
+    let decoded_data = decode_stream_with_budget(raw_data, &filters, &limits.budget)
         .map_err(|e| format!("Failed to decode XRef stream: {}", e))?;
-        limits
-            .budget
-            .consume_decoded(decoded.len() as u64)
-            .map_err(|err| err.to_string())?;
-        decoded
-    };
 
     let mut entries = Vec::new();
     let mut data_offset: usize = 0;

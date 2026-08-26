@@ -1,6 +1,6 @@
 use crate::ast::document::XRefEntry;
 use crate::ast::{EdgeType, NodeId, NodeType, PdfAstGraph, PdfDocument};
-use crate::filters::decode_stream_with_limits;
+use crate::filters::decode_stream_with_budget;
 use crate::parser::{content_operands, content_stream, object_parser};
 use crate::performance::PerformanceLimits;
 use crate::types::{ObjectId, PdfDictionary, PdfReference, PdfValue, StreamData};
@@ -754,17 +754,8 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .raw_data()
             .ok_or_else(|| "Object stream has no data".to_string())?;
 
-        let decoded = decode_stream_with_limits(
-            raw,
-            &filters,
-            self.limits.max_object_size_mb.saturating_mul(1024 * 1024),
-            self.limits.max_stream_decode_ratio,
-        )
-        .map_err(|e| format!("Failed to decode object stream: {}", e))?;
-        self.limits
-            .budget
-            .consume_decoded(decoded.len() as u64)
-            .map_err(|err| err.to_string())?;
+        let decoded = decode_stream_with_budget(raw, &filters, &self.limits.budget)
+            .map_err(|e| format!("Failed to decode object stream: {}", e))?;
 
         Ok((decoded, stream.dict))
     }
@@ -931,12 +922,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                         _ => continue, // Skip lazy streams for now
                     };
                     let filters = stream.get_filters();
-                    match decode_stream_with_limits(
-                        data,
-                        &filters,
-                        self.limits.max_object_size_mb * 1024 * 1024,
-                        self.limits.max_stream_decode_ratio,
-                    ) {
+                    match decode_stream_with_budget(data, &filters, &self.limits.budget) {
                         Ok(decoded) => decoded,
                         Err(e) => {
                             warn!("Failed to decode stream: {}", e);

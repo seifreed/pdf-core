@@ -1,3 +1,4 @@
+use crate::performance::ResourceBudget;
 use crate::types::{PdfDictionary, PdfName, PdfValue};
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -172,6 +173,17 @@ impl PdfStream {
                 } else {
                     crate::filters::decode_stream(data, &filters).map_err(|e| e.to_string())
                 }
+            }
+            StreamData::Lazy(_) => Err("Lazy stream decoding not implemented".to_string()),
+        }
+    }
+
+    pub fn decode_with_budget(&self, budget: &ResourceBudget) -> Result<Vec<u8>, String> {
+        match &self.data {
+            StreamData::Raw(data) | StreamData::Decoded(data) => {
+                let filters = self.get_filters_with_params();
+                crate::filters::decode_stream_with_budget(data, &filters, budget)
+                    .map_err(|e| e.to_string())
             }
             StreamData::Lazy(_) => Err("Lazy stream decoding not implemented".to_string()),
         }

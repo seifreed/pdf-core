@@ -592,11 +592,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         };
 
         let filters = stream.get_filters();
-        let decoded = match crate::filters::decode_stream_with_limits(
+        let decoded = match crate::filters::decode_stream_with_budget(
             raw_data,
             &filters,
-            self.limits.max_object_size_mb * 1024 * 1024,
-            self.limits.max_stream_decode_ratio,
+            &self.limits.budget,
         ) {
             Ok(data) => data,
             Err(err) => {
@@ -1026,11 +1025,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     let filters = stream.get_filters();
 
                     if let Some(raw_data) = stream.raw_data() {
-                        match crate::filters::decode_stream_with_limits(
+                        match crate::filters::decode_stream_with_budget(
                             raw_data,
                             &filters,
-                            self.limits.max_object_size_mb * 1024 * 1024,
-                            self.limits.max_stream_decode_ratio,
+                            &self.limits.budget,
                         ) {
                             Ok(decoded) => {
                                 self.parse_xref_stream_data(&decoded, &stream.dict)?;
@@ -2052,17 +2050,12 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             // Decode stream
             let filters = stream.get_filters();
             if let Some(raw_data) = stream.raw_data() {
-                match crate::filters::decode_stream_with_limits(
+                match crate::filters::decode_stream_with_budget(
                     raw_data,
                     &filters,
-                    self.limits.max_object_size_mb.saturating_mul(1024 * 1024),
-                    self.limits.max_stream_decode_ratio,
+                    &self.limits.budget,
                 ) {
                     Ok(decoded) => {
-                        self.limits
-                            .budget
-                            .consume_decoded(decoded.len() as u64)
-                            .map_err(|err| AstError::ParseError(err.to_string()))?;
                         return match self.parse_object_from_stream(&decoded, index, &stream.dict) {
                             Ok(value) => Ok(value),
                             Err(err) if self.tolerant => {
