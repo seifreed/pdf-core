@@ -104,7 +104,7 @@ jobs:
           shared-key: clippy-cache
 
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
     name: Test Suite
