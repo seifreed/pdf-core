@@ -137,8 +137,12 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         limits: &PerformanceLimits,
     ) -> Result<HashMap<ObjectId, u64>, String> {
         // Find startxref offset
+        let file_size = reader
+            .seek(SeekFrom::End(0))
+            .map_err(|e| format!("Seek error: {}", e))?;
+        let tail_size = file_size.min(1024);
         reader
-            .seek(SeekFrom::End(-1024))
+            .seek(SeekFrom::Start(file_size.saturating_sub(tail_size)))
             .map_err(|e| format!("Seek error: {}", e))?;
 
         let mut buffer = Vec::new();
@@ -1478,6 +1482,16 @@ mod tests {
             result,
             Err(error) if error.contains("Input exceeds resource limit")
         ));
+    }
+
+    #[test]
+    fn resolver_handles_inputs_smaller_than_xref_tail_window() {
+        let result = ReferenceResolver::new(
+            Cursor::new(vec![0u8; 16]),
+            true,
+            crate::performance::PerformanceLimits::default(),
+        );
+        assert!(result.is_ok());
     }
 
     #[test]
