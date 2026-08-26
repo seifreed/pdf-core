@@ -96,6 +96,14 @@ const PDFUA_VERAPDF_CASES: &[(&str, &str)] = &[
         "ISO 14289-1:2014:7.1:11",
     ),
     (
+        "verapdf-pdfua-1/7.2 Text/7.2-t02-fail-a.pdf",
+        "ISO 14289-1:2014:7.2:2",
+    ),
+    (
+        "verapdf-pdfua-1/7.2 Text/7.2-t29-fail-n.pdf",
+        "ISO 14289-1:2014:7.2:29",
+    ),
+    (
         "verapdf-pdfua-1/7.3 Graphics/7.3-t01-fail-a.pdf",
         "ISO 14289-1:2014:7.3:1",
     ),
