@@ -430,7 +430,19 @@ mod parser_tests {
             .unwrap();
         assert_eq!(objects.len(), 2);
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].recovery_action, "returned_partial_sequence");
+        assert_eq!(diagnostics[0].recovery_action, "skipped_to_next_line");
+    }
+
+    #[test]
+    fn tolerant_object_sequence_resumes_after_a_malformed_line() {
+        let (objects, diagnostics) = PdfParser::new()
+            .with_max_errors(2)
+            .parse_objects_with_diagnostics(b"1 nope\n2\n")
+            .expect("tolerant recovery should continue at the next line");
+
+        assert_eq!(objects, vec![PdfValue::Integer(1), PdfValue::Integer(2)]);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].recovery_action, "skipped_to_next_line");
     }
 
     #[test]

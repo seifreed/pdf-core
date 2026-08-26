@@ -267,6 +267,9 @@ impl PdfParser {
             let object_input = crate::parser::lexer::skip_whitespace_and_comments(remaining)
                 .map(|(remaining, _)| remaining)
                 .unwrap_or(remaining);
+            if object_input.is_empty() {
+                break;
+            }
             let parsed = if object_parser::parse_indirect_object_header(object_input).is_ok() {
                 object_parser::parse_indirect_object_with_max_depth(
                     object_input,
@@ -274,7 +277,7 @@ impl PdfParser {
                 )
                 .map(|(rest, (_, value))| (rest, value))
             } else {
-                object_parser::parse_value_with_max_depth(remaining, self.limits.max_depth)
+                object_parser::parse_value_with_max_depth(object_input, self.limits.max_depth)
             };
 
             match parsed {
@@ -295,12 +298,20 @@ impl PdfParser {
                         object_id: None,
                         offset: Some(bytes_consumed),
                         error_code: "standalone_object_parse".to_string(),
-                        recovery_action: "returned_partial_sequence".to_string(),
+                        recovery_action: "skipped_to_next_line".to_string(),
                         confidence: 0.0,
                         bytes_consumed,
                         message: format!("Failed to parse object: {:?}", err),
                     });
-                    break;
+                    let skip = remaining
+                        .iter()
+                        .position(|byte| *byte == b'\n')
+                        .map(|position| position + 1)
+                        .unwrap_or(remaining.len());
+                    if skip == 0 || skip == remaining.len() {
+                        break;
+                    }
+                    remaining = &remaining[skip..];
                 }
             }
         }
