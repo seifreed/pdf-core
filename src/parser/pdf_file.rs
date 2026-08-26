@@ -658,7 +658,12 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 .as_integer()
                 .ok_or_else(|| AstError::ParseError("Invalid xref field width".to_string()))?;
             widths[i] = usize::try_from(width)
-                .map_err(|_| AstError::ParseError("Xref field width is too large".to_string()))?;
+                .map_err(|_| AstError::ParseError("Xref field width is invalid".to_string()))?;
+            if widths[i] > 8 {
+                return Err(AstError::ParseError(
+                    "Xref field width cannot exceed 8 bytes".to_string(),
+                ));
+            }
         }
         Ok(widths)
     }
@@ -980,6 +985,12 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let (input, _) = nom::character::complete::multispace1(input)?;
         let (input, gen_num) = integer(input)?;
         let (input, _) = nom::bytes::complete::tag(" obj")(input)?;
+        if obj_num < 0 || gen_num < 0 || obj_num > u32::MAX as i64 || gen_num > u16::MAX as i64 {
+            return Err(nom::Err::Failure(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Verify,
+            )));
+        }
         Ok((input, ObjectId::new(obj_num as u32, gen_num as u16)))
     }
 
@@ -2668,5 +2679,18 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PdfFileParser;
+    use std::io::{BufReader, Cursor};
+
+    #[test]
+    fn rejects_wrapped_recovery_object_ids() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        assert!(Parser::parse_object_header(b"-1 0 obj").is_err());
+        assert!(Parser::parse_object_header(b"1 -1 obj").is_err());
     }
 }
