@@ -38,6 +38,6 @@ jobs:
 
       - name: Run veraPDF comparison
         env:
-          PDF_EXTERNAL_CORPUS: ${{ runner.temp }}/verapdf-corpus
+          PDF_VERAPDF_CORPUS: ${{ runner.temp }}/verapdf-corpus/verapdf-pdfa-1b
           PDF_EXTERNAL_MAX_FILES: "3000"
         run: cargo test --test verapdf_tests --locked -- --test-threads=1
