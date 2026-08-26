@@ -11,8 +11,72 @@ permissions:
   attestations: write
 
 jobs:
+  bindings:
+    name: Build bindings (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+          - os: macos-latest
+            target: macos-arm64
+          - os: windows-latest
+            target: windows-x86_64
+    steps:
+      - name: Checkout signed tag
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-01-01
+        with:
+          toolchain: stable
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build Python wheel
+        working-directory: python
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip maturin
+          maturin build --locked --release --manifest-path Cargo.toml --out "$GITHUB_WORKSPACE/dist/python"
+
+      - name: Build Node package
+        working-directory: javascript
+        shell: bash
+        run: |
+          npm install --ignore-scripts
+          npm run build-release
+          mkdir -p "$GITHUB_WORKSPACE/dist/node-package"
+          cp index.node index.d.ts README.md package.json "$GITHUB_WORKSPACE/dist/node-package/"
+          tar -czf "$GITHUB_WORKSPACE/dist/pdf-ast-node-${{ matrix.target }}.tar.gz" \
+            -C "$GITHUB_WORKSPACE/dist/node-package" .
+
+      - name: Upload binding artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: binding-${{ matrix.target }}
+          path: |
+            dist/python/*.whl
+            dist/pdf-ast-node-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
   release:
     name: Build and attest Linux artifacts
+    needs: bindings
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -63,9 +127,21 @@ jobs:
             --override-filename dist/pdf-core-${{ steps.metadata.outputs.version }}-sbom.json \
             --all-features
 
+      - name: Download binding artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: binding-*
+          path: dist/bindings
+          merge-multiple: true
+
+      - name: Flatten binding artifacts
+        run: |
+          find dist/bindings -type f -exec cp {} dist/ \;
+          rm -rf dist/bindings dist/node-package dist/python
+
       - name: Write checksums
         working-directory: dist
-        run: sha256sum *.tar.gz *.json > SHA256SUMS
+        run: sha256sum -- *.tar.gz *.whl *.json > SHA256SUMS
 
       - name: Attest release archive
         uses: actions/attest@v4
@@ -81,4 +157,4 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes
+        run: gh release create "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.whl dist/*.json dist/SHA256SUMS --verify-tag --generate-notes
