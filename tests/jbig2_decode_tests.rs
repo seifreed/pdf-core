@@ -34,6 +34,20 @@ fn decodes_embedded_jbig2_bitmap_with_output_limit() {
 }
 
 #[test]
+fn decodes_random_access_jbig2_file_with_output_limit() {
+    let random_access = random_access_variant(MINIMAL_JBIG2);
+    let decoded = decode_jbig2(&random_access, None, 4).expect("random-access JBIG2 should decode");
+    assert_eq!(decoded, [0, 0, 0, 0]);
+}
+
+#[test]
+fn rejects_reserved_jbig2_file_header_flags() {
+    let mut invalid = MINIMAL_JBIG2.to_vec();
+    invalid[8] = 0x04;
+    assert!(decode_jbig2(&invalid, None, 4).is_err());
+}
+
+#[test]
 fn preserves_direct_jbig2_globals_from_decode_params() {
     let mut params = PdfDictionary::new();
     params.insert(
@@ -135,4 +149,27 @@ fn append_object(pdf: &mut Vec<u8>, offsets: &mut [usize], id: usize, body: &[u8
     pdf.extend_from_slice(format!("{id} 0 obj\n").as_bytes());
     pdf.extend_from_slice(body);
     pdf.extend_from_slice(b"\nendobj\n");
+}
+
+fn random_access_variant(sequential: &[u8]) -> Vec<u8> {
+    let mut headers = Vec::new();
+    let mut data = Vec::new();
+    let mut pos = 13;
+    while pos + 11 <= sequential.len() {
+        let segment_type = sequential[pos + 4] & 0x3f;
+        let data_length =
+            u32::from_be_bytes(sequential[pos + 7..pos + 11].try_into().unwrap()) as usize;
+        headers.extend_from_slice(&sequential[pos..pos + 11]);
+        data.extend_from_slice(&sequential[pos + 11..pos + 11 + data_length]);
+        pos += 11 + data_length;
+        if segment_type == 51 {
+            break;
+        }
+    }
+
+    let mut random_access = sequential[..8].to_vec();
+    random_access.extend_from_slice(&[0x00, 0x00, 0x00, 0x00, 0x01]);
+    random_access.extend_from_slice(&headers);
+    random_access.extend_from_slice(&data);
+    random_access
 }

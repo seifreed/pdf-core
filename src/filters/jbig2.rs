@@ -55,14 +55,9 @@ fn validate_jbig2_input(
         let flags = *data
             .get(pos)
             .ok_or_else(|| FilterError::Jbig2Error("JBIG2 file header is truncated".to_string()))?;
-        if flags & 0xF0 != 0 {
+        if flags & 0xFC != 0 {
             return Err(FilterError::Jbig2Error(
                 "JBIG2 file header has reserved flags".to_string(),
-            ));
-        }
-        if flags & 0x01 == 0 {
-            return Err(FilterError::Jbig2Error(
-                "JBIG2 random-access organization is not bounded".to_string(),
             ));
         }
         pos += 1;
@@ -71,7 +66,11 @@ fn validate_jbig2_input(
                 .checked_add(4)
                 .ok_or_else(|| FilterError::Jbig2Error("JBIG2 header overflow".to_string()))?;
         }
-        validate_segment_sequence(&data[pos..], max_output_bytes, true)
+        if flags & 0x01 != 0 {
+            validate_segment_sequence(&data[pos..], max_output_bytes, true)
+        } else {
+            validate_random_access_sequence(&data[pos..], max_output_bytes)
+        }
     } else {
         if let Some(globals) = globals {
             validate_segment_sequence(globals, max_output_bytes, false)?;
@@ -97,58 +96,7 @@ fn validate_segment_sequence(
             ));
         }
 
-        let header_start = pos;
-        let segment_number = read_u32(data, &mut pos)?;
-        let flags = read_byte(data, &mut pos)?;
-        let segment_type = flags & 0x3F;
-        let count_and_retention = read_byte(data, &mut pos)?;
-        let short_count = (count_and_retention >> 5) & 0x07;
-        if short_count == 5 || short_count == 6 {
-            return Err(FilterError::Jbig2Error(
-                "JBIG2 referred-segment count is invalid".to_string(),
-            ));
-        }
-        let referred_count = if short_count == 7 {
-            let low = count_and_retention & 0x1F;
-            let b1 = read_byte(data, &mut pos)?;
-            let b2 = read_byte(data, &mut pos)?;
-            let b3 = read_byte(data, &mut pos)?;
-            u32::from_be_bytes([low, b1, b2, b3])
-        } else {
-            u32::from(short_count)
-        };
-        if referred_count > MAX_JBIG2_REFERENCES {
-            return Err(FilterError::Jbig2Error(
-                "JBIG2 referred-segment count exceeds limit".to_string(),
-            ));
-        }
-        if short_count == 7 {
-            let retention_bytes = (referred_count as usize + 1).div_ceil(8);
-            skip_bytes(data, &mut pos, retention_bytes)?;
-        }
-
-        let reference_width = if segment_number <= 256 {
-            1
-        } else if segment_number <= 65_536 {
-            2
-        } else {
-            4
-        };
-        let reference_bytes = (referred_count as usize)
-            .checked_mul(reference_width)
-            .ok_or_else(|| FilterError::Jbig2Error("JBIG2 reference overflow".to_string()))?;
-        skip_bytes(data, &mut pos, reference_bytes)?;
-        skip_bytes(data, &mut pos, if flags & 0x40 != 0 { 4 } else { 1 })?;
-
-        let data_length = read_u32(data, &mut pos)?;
-        if data_length == u32::MAX {
-            return Err(FilterError::Jbig2Error(
-                "JBIG2 unknown segment length is not bounded".to_string(),
-            ));
-        }
-        let data_length = usize::try_from(data_length).map_err(|_| {
-            FilterError::Jbig2Error("JBIG2 segment length exceeds platform size".to_string())
-        })?;
+        let (segment_type, data_length) = parse_segment_header_limited(data, &mut pos)?;
         let segment_end = pos
             .checked_add(data_length)
             .ok_or_else(|| FilterError::Jbig2Error("JBIG2 segment length overflow".to_string()))?;
@@ -170,12 +118,6 @@ fn validate_segment_sequence(
         if segment_type == 51 {
             break;
         }
-
-        if pos == header_start {
-            return Err(FilterError::Jbig2Error(
-                "JBIG2 segment parser made no progress".to_string(),
-            ));
-        }
     }
 
     if require_page_info && !found_page_info {
@@ -184,6 +126,113 @@ fn validate_segment_sequence(
         ));
     }
     Ok(())
+}
+
+fn validate_random_access_sequence(data: &[u8], max_output_bytes: usize) -> FilterResult<()> {
+    let mut header_pos = 0usize;
+    let mut headers = Vec::new();
+
+    loop {
+        if headers.len() >= MAX_JBIG2_SEGMENTS {
+            return Err(FilterError::Jbig2Error(
+                "JBIG2 segment count exceeds limit".to_string(),
+            ));
+        }
+        let (segment_type, data_length) = parse_segment_header_limited(data, &mut header_pos)?;
+        headers.push((segment_type, data_length));
+        if segment_type == 51 {
+            break;
+        }
+    }
+
+    let mut data_pos = header_pos;
+    let mut found_page_info = false;
+    for (segment_type, data_length) in headers {
+        let segment_end = data_pos
+            .checked_add(data_length)
+            .ok_or_else(|| FilterError::Jbig2Error("JBIG2 segment length overflow".to_string()))?;
+        let segment_data = data.get(data_pos..segment_end).ok_or_else(|| {
+            FilterError::Jbig2Error("JBIG2 segment extends beyond input".to_string())
+        })?;
+        data_pos = segment_end;
+
+        if segment_type == 48 {
+            validate_bitmap_dimensions(segment_data, max_output_bytes)?;
+            found_page_info = true;
+        } else if matches!(
+            segment_type,
+            4 | 6 | 7 | 20 | 22 | 23 | 36 | 38 | 39 | 40 | 42 | 43
+        ) {
+            validate_region_dimensions(segment_data, max_output_bytes)?;
+        }
+    }
+
+    if data_pos != data.len() {
+        return Err(FilterError::Jbig2Error(
+            "JBIG2 random-access data has trailing bytes".to_string(),
+        ));
+    }
+    if !found_page_info {
+        return Err(FilterError::Jbig2Error(
+            "JBIG2 page information segment is missing".to_string(),
+        ));
+    }
+    Ok(())
+}
+
+fn parse_segment_header_limited(data: &[u8], pos: &mut usize) -> FilterResult<(u8, usize)> {
+    let segment_number = read_u32(data, pos)?;
+    let flags = read_byte(data, pos)?;
+    let segment_type = flags & 0x3F;
+    let count_and_retention = read_byte(data, pos)?;
+    let short_count = (count_and_retention >> 5) & 0x07;
+    if short_count == 5 || short_count == 6 {
+        return Err(FilterError::Jbig2Error(
+            "JBIG2 referred-segment count is invalid".to_string(),
+        ));
+    }
+    let referred_count = if short_count == 7 {
+        let low = count_and_retention & 0x1F;
+        let b1 = read_byte(data, pos)?;
+        let b2 = read_byte(data, pos)?;
+        let b3 = read_byte(data, pos)?;
+        u32::from_be_bytes([low, b1, b2, b3])
+    } else {
+        u32::from(short_count)
+    };
+    if referred_count > MAX_JBIG2_REFERENCES {
+        return Err(FilterError::Jbig2Error(
+            "JBIG2 referred-segment count exceeds limit".to_string(),
+        ));
+    }
+    if short_count == 7 {
+        let retention_bytes = (referred_count as usize + 1).div_ceil(8);
+        skip_bytes(data, pos, retention_bytes)?;
+    }
+
+    let reference_width = if segment_number <= 256 {
+        1
+    } else if segment_number <= 65_536 {
+        2
+    } else {
+        4
+    };
+    let reference_bytes = (referred_count as usize)
+        .checked_mul(reference_width)
+        .ok_or_else(|| FilterError::Jbig2Error("JBIG2 reference overflow".to_string()))?;
+    skip_bytes(data, pos, reference_bytes)?;
+    skip_bytes(data, pos, if flags & 0x40 != 0 { 4 } else { 1 })?;
+
+    let data_length = read_u32(data, pos)?;
+    if data_length == u32::MAX {
+        return Err(FilterError::Jbig2Error(
+            "JBIG2 unknown segment length is not bounded".to_string(),
+        ));
+    }
+    let data_length = usize::try_from(data_length).map_err(|_| {
+        FilterError::Jbig2Error("JBIG2 segment length exceeds platform size".to_string())
+    })?;
+    Ok((segment_type, data_length))
 }
 
 fn validate_bitmap_dimensions(data: &[u8], max_output_bytes: usize) -> FilterResult<()> {
