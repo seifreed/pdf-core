@@ -907,10 +907,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
     fn record_anomaly(&mut self, code: &str, message: &str, offset: Option<u64>) -> AstResult<()> {
         self.record_diagnostic(None, offset, code, "xref recovery", 0.5, 0, message)?;
-        let node_id = self
-            .document
-            .ast
-            .create_node(NodeType::Other, PdfValue::Null);
+        let node_id = self.add_to_ast(PdfValue::Null, NodeType::Other)?;
         if let Some(node) = self.document.ast.get_node_mut(node_id) {
             node.metadata.errors.push(crate::ast::node::ParseError {
                 code: crate::ast::node::ErrorCode::MalformedStructure,
