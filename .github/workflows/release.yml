@@ -1,0 +1,84 @@
+name: Release Artifacts
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  release:
+    name: Build and attest Linux artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout signed tag
+        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify tag signature
+        run: git verify-tag "$GITHUB_REF_NAME"
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # stable 2024-01-01
+        with:
+          toolchain: stable
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y libssl-dev pkg-config
+
+      - name: Set reproducible build metadata
+        id: metadata
+        run: |
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "source_date_epoch=$(git log -1 --format=%ct)" >> "$GITHUB_OUTPUT"
+
+      - name: Build Rust and C artifacts
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.source_date_epoch }}
+        run: |
+          cargo build --locked --release --bin pdf-ast --bin pdf-ast-simple
+          mkdir -p dist/pdf-core-${{ steps.metadata.outputs.version }}-linux-x86_64
+          cp target/release/pdf-ast dist/pdf-core-${{ steps.metadata.outputs.version }}-linux-x86_64/
+          cp target/release/pdf-ast-simple dist/pdf-core-${{ steps.metadata.outputs.version }}-linux-x86_64/
+          cp target/release/libpdf_ast.a dist/pdf-core-${{ steps.metadata.outputs.version }}-linux-x86_64/
+          cp target/release/libpdf_ast.so dist/pdf-core-${{ steps.metadata.outputs.version }}-linux-x86_64/
+          cp include/pdf_ast.h LICENSE dist/pdf-core-${{ steps.metadata.outputs.version }}-linux-x86_64/
+          tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+            -czf dist/pdf-core-${{ steps.metadata.outputs.version }}-linux-x86_64.tar.gz \
+            -C dist pdf-core-${{ steps.metadata.outputs.version }}-linux-x86_64
+
+      - name: Generate CycloneDX SBOM
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.metadata.outputs.source_date_epoch }}
+        run: |
+          cargo install cargo-cyclonedx --version 0.5.9 --locked
+          cargo cyclonedx --manifest-path Cargo.toml --format json --spec-version 1.5 \
+            --override-filename dist/pdf-core-${{ steps.metadata.outputs.version }}-sbom.json \
+            --all-features
+
+      - name: Write checksums
+        working-directory: dist
+        run: sha256sum *.tar.gz *.json > SHA256SUMS
+
+      - name: Attest release archive
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/pdf-core-${{ steps.metadata.outputs.version }}-linux-x86_64.tar.gz
+
+      - name: Attest release SBOM
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/pdf-core-${{ steps.metadata.outputs.version }}-linux-x86_64.tar.gz
+          sbom-path: dist/pdf-core-${{ steps.metadata.outputs.version }}-sbom.json
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes

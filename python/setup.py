@@ -28,7 +28,7 @@ ext_modules = [
             "src/lib.rs",
         ],
         crate_path=".",
-        rust_version=">=1.70",
+        rust_version=">=1.85",
         py_limited_api=True,
     ),
 ]
