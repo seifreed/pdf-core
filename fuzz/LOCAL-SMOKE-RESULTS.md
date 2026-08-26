@@ -20,3 +20,9 @@ done
 
 The campaign also exercises the checked-in seed corpus. Any future crash
 should be retained under `fuzz/artifacts/` and promoted to a regression test.
+
+Follow-up after JBIG2 decoder integration:
+
+- Target: `filters`, 1,000 runs, `-timeout=5`, no crashes or findings
+- Peak RSS: 295 MB
+- Result: passed with the bounded JBIG2 preflight active

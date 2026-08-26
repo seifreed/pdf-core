@@ -126,7 +126,9 @@ fn decode_single_filter(
         StreamFilter::LZWDecode(params) => decode_lzw_with_params(data, params, max_output_bytes),
         StreamFilter::RunLengthDecode => decode_run_length(data, max_output_bytes),
         StreamFilter::CCITTFaxDecode(params) => decode_ccitt_fax(data, params, max_output_bytes),
-        StreamFilter::JBIG2Decode => jbig2::decode_jbig2(data, None, max_output_bytes),
+        StreamFilter::JBIG2Decode(params) => {
+            jbig2::decode_jbig2(data, params.globals.as_deref(), max_output_bytes)
+        }
         StreamFilter::DCTDecode => decode_dct(data, max_output_bytes),
         StreamFilter::JPXDecode => decode_jpx(data, max_output_bytes),
         StreamFilter::Crypt(_) => Err(FilterError::CryptError(

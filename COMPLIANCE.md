@@ -42,7 +42,7 @@ certificate.
 | ISO 14289-1:2014 | 7.1 structure tree | Preflight | `NO_TAGGED_STRUCTURE`, `STRUCT_ELEM_MISSING` |
 | ISO 14289-1:2014 | 7.2 document language | Preflight | `LANG_MISSING`, `LANG_EMPTY` |
 | ISO 19005 / ISO 14289 | Full profile conformance | Not implemented | Requires rule-complete validation and veraPDF comparison |
-| ISO 32000-1/2 | JBIG2 pixel decoding | Partial | Bounded pure-Rust embedded/standalone decode; `/JBIG2Globals` stream plumbing remains pending |
+| ISO 32000-1/2 | JBIG2 pixel decoding | Partial | Bounded pure-Rust embedded/standalone decode with direct `/JBIG2Globals`; indirect reference resolution remains pending |
 | ISO 32000-1/2 | JPX pixel decoding | Partial | Bounded pure-Rust JPEG 2000 decode; parser and codec edge coverage remains incomplete |
 
 ## Published Rule Matrix

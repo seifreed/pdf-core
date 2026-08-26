@@ -25,6 +25,10 @@ The next release will be cut after the full CI and signed-tag checklist passes.
 - Added bounded pure-Rust JBIG2 and JPEG 2000 pixel decoding with regression
   fixtures; PDF `/JBIG2Globals` plumbing and full codec conformance remain
   pending.
+- Preserved direct `/JBIG2Globals` bytes through stream filter parameters;
+  indirect document-reference resolution remains pending.
+- Added JBIG2 segment, bitmap-dimension, and organization preflight so
+  unbounded inputs are rejected before the decoder allocates or iterates.
 
 ## 0.2.0-alpha.1
 

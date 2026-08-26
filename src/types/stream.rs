@@ -86,7 +86,7 @@ pub enum StreamFilter {
     FlateDecode(FlateDecodeParams),
     RunLengthDecode,
     CCITTFaxDecode(CCITTFaxDecodeParams),
-    JBIG2Decode,
+    JBIG2Decode(JBIG2DecodeParams),
     DCTDecode,
     JPXDecode,
     Crypt(CryptFilter),
@@ -119,6 +119,13 @@ pub struct CCITTFaxDecodeParams {
     pub end_of_block: Option<bool>,
     pub black_is_1: Option<bool>,
     pub damaged_rows_before_error: Option<i32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct JBIG2DecodeParams {
+    /// Directly embedded `/JBIG2Globals` bytes, when available.
+    /// Indirect references require document-level resolution before decoding.
+    pub globals: Option<Vec<u8>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -280,7 +287,9 @@ impl PdfStream {
                 }
                 Some(StreamFilter::CCITTFaxDecode(parsed))
             }
-            "JBIG2Decode" => Some(StreamFilter::JBIG2Decode),
+            "JBIG2Decode" => Some(StreamFilter::JBIG2Decode(
+                params.map(parse_jbig2_params).unwrap_or_default(),
+            )),
             "DCTDecode" | "DCT" => Some(StreamFilter::DCTDecode),
             "JPXDecode" => Some(StreamFilter::JPXDecode),
             "Crypt" => {
@@ -314,6 +323,16 @@ fn parse_flate_params(params: &PdfDictionary) -> FlateDecodeParams {
             .get("Columns")
             .and_then(|v| v.as_integer())
             .map(|v| v as i32),
+    }
+}
+
+fn parse_jbig2_params(params: &PdfDictionary) -> JBIG2DecodeParams {
+    JBIG2DecodeParams {
+        globals: params
+            .get("JBIG2Globals")
+            .and_then(PdfValue::as_stream)
+            .and_then(|stream| stream.data.as_bytes())
+            .map(ToOwned::to_owned),
     }
 }
 
@@ -384,7 +403,7 @@ impl StreamFilter {
             "CCITTFaxDecode" | "CCF" => {
                 Some(StreamFilter::CCITTFaxDecode(CCITTFaxDecodeParams::default()))
             }
-            "JBIG2Decode" => Some(StreamFilter::JBIG2Decode),
+            "JBIG2Decode" => Some(StreamFilter::JBIG2Decode(JBIG2DecodeParams::default())),
             "DCTDecode" | "DCT" => Some(StreamFilter::DCTDecode),
             "JPXDecode" => Some(StreamFilter::JPXDecode),
             _ => None,
@@ -399,7 +418,7 @@ impl StreamFilter {
             StreamFilter::FlateDecode(_) => "FlateDecode",
             StreamFilter::RunLengthDecode => "RunLengthDecode",
             StreamFilter::CCITTFaxDecode(_) => "CCITTFaxDecode",
-            StreamFilter::JBIG2Decode => "JBIG2Decode",
+            StreamFilter::JBIG2Decode(_) => "JBIG2Decode",
             StreamFilter::DCTDecode => "DCTDecode",
             StreamFilter::JPXDecode => "JPXDecode",
             StreamFilter::Crypt(_) => "Crypt",

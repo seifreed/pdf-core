@@ -51,7 +51,7 @@
 | Object streams | Partial, bounded and validated |
 | Flate, ASCII85, LZW, RunLength | Implemented |
 | CCITT | Experimental |
-| JBIG2 | Partial; bounded embedded/standalone bitmap decoding, globals plumbing pending |
+| JBIG2 | Partial; bounded embedded/sequential-standalone decoding with direct globals, indirect globals pending |
 | JPX | Partial; bounded JPEG 2000 pixel decoding with container inspection |
 | Text extraction | Experimental |
 | PDF/A and PDF/UA | Partial preflight checks, not certifiable |

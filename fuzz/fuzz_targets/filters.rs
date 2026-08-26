@@ -12,7 +12,7 @@ fuzz_target!(|data: &[u8]| {
         vec![StreamFilter::LZWDecode(Default::default())],
         vec![StreamFilter::RunLengthDecode],
         vec![StreamFilter::CCITTFaxDecode(Default::default())],
-        vec![StreamFilter::JBIG2Decode],
+        vec![StreamFilter::JBIG2Decode(Default::default())],
         vec![StreamFilter::DCTDecode],
         vec![StreamFilter::JPXDecode],
         vec![StreamFilter::Crypt(CryptFilter {
