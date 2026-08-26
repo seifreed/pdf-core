@@ -1,7 +1,10 @@
 use crate::filters::FilterError;
+use crate::performance::ResourceBudget;
 
 pub fn decode_jpx_to_codestream(data: &[u8]) -> Result<Vec<u8>, FilterError> {
-    decode_jpx_to_codestream_with_limit(data, usize::MAX)
+    let max_output_bytes = usize::try_from(ResourceBudget::default().max_decoded_bytes_per_stream)
+        .unwrap_or(usize::MAX);
+    decode_jpx_to_codestream_with_limit(data, max_output_bytes)
 }
 
 pub fn decode_jpx_to_codestream_with_limit(
