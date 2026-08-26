@@ -136,6 +136,8 @@ pub enum SerializableValue {
         dictionary: HashMap<String, SerializableValue>,
         data: Vec<u8>,
         lazy: Option<crate::types::StreamReference>,
+        #[serde(default)]
+        decoded: bool,
     },
     Reference {
         object_id: u32,
@@ -280,6 +282,7 @@ impl GraphSerializer {
                         crate::types::StreamData::Lazy(reference) => Some(reference.clone()),
                         _ => None,
                     },
+                    decoded: matches!(stream.data, crate::types::StreamData::Decoded(_)),
                 }
             }
             PdfValue::Reference(r) => SerializableValue::Reference {
@@ -523,6 +526,7 @@ impl GraphDeserializer {
                 dictionary,
                 data,
                 lazy,
+                decoded,
             } => {
                 let mut dict = crate::types::PdfDictionary::new();
                 for (key, val) in dictionary {
@@ -530,6 +534,11 @@ impl GraphDeserializer {
                 }
                 let stream = if let Some(reference) = lazy {
                     crate::types::PdfStream::new_lazy(dict, reference.clone())
+                } else if *decoded {
+                    crate::types::PdfStream {
+                        dict,
+                        data: crate::types::StreamData::Decoded(data.clone()),
+                    }
                 } else {
                     crate::types::PdfStream {
                         dict,
@@ -942,6 +951,37 @@ mod tests {
             restored_node.metadata.properties.get("decode_state"),
             Some(&"recovered".to_string())
         );
+    }
+
+    #[test]
+    fn preserves_stream_decode_state_across_round_trip() {
+        let mut ast = PdfAstGraph::new();
+        let mut dictionary = PdfDictionary::new();
+        dictionary.insert("Length", PdfValue::Integer(3));
+        let stream_id = ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream(crate::types::PdfStream {
+                dict: dictionary,
+                data: crate::types::StreamData::Decoded(b"abc".to_vec()),
+            }),
+        );
+        ast.set_root(stream_id);
+
+        let serialized = SerializableGraph::from_ast(&ast);
+        let SerializableValue::Stream { decoded, .. } = &serialized.nodes[0].value else {
+            panic!("expected serialized stream");
+        };
+        assert!(*decoded);
+
+        let restored = GraphDeserializer::deserialize(serialized).unwrap();
+        let stream = restored
+            .get_node(restored.root.unwrap())
+            .and_then(|node| node.value.as_stream())
+            .expect("restored stream");
+        assert!(matches!(
+            stream.data,
+            crate::types::StreamData::Decoded(ref data) if data == b"abc"
+        ));
     }
 
     #[test]
