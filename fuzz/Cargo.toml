@@ -88,4 +88,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "page_tree"
+path = "fuzz_targets/page_tree.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
