@@ -183,9 +183,7 @@ impl ParallelProcessor {
     }
 
     fn extract_page_text(&self, _page: &AstNode) -> String {
-        // Extract text from page content streams
-        // Simplified implementation
-        "Text from page (simplified extraction)".to_string()
+        String::new()
     }
 
     fn analyze_pages(&self, nodes: &[AstNode]) -> TypeAnalysis {
@@ -250,8 +248,7 @@ impl ParallelProcessor {
     }
 
     fn estimate_node_size(&self, _node: &AstNode) -> usize {
-        // Estimate node size - simplified
-        1024
+        std::mem::size_of::<AstNode>()
     }
 
     fn is_font_embedded(&self, _node: &AstNode) -> bool {
@@ -260,18 +257,17 @@ impl ParallelProcessor {
     }
 
     fn validate_object(&self, object_id: u32, _node: &AstNode) -> ValidationResult {
-        // Validate PDF object structure
         ValidationResult {
             object_id,
-            is_valid: true, // Simplified - would need real validation
+            is_valid: false,
             errors: Vec::new(),
-            warnings: Vec::new(),
+            warnings: vec!["Parallel object validation is not implemented".to_string()],
         }
     }
 }
 
 // Parallel-safe data structures
-pub type StreamData = Vec<u8>; // Simplified - would use actual stream data type
+pub type StreamData = Vec<u8>;
 
 #[derive(Debug, Clone)]
 pub struct PageText {

@@ -437,39 +437,6 @@ impl BoundedBuffer {
     }
 }
 
-// Add uuid dependency placeholder (would need to be added to Cargo.toml)
-mod uuid {
-    #[derive(Debug, Clone, Copy)]
-    pub struct Uuid([u8; 16]);
-
-    impl Uuid {
-        pub fn new_v4() -> Self {
-            use std::time::{SystemTime, UNIX_EPOCH};
-            let nanos = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_nanos();
-
-            let mut bytes = [0u8; 16];
-            bytes[..8].copy_from_slice(&nanos.to_le_bytes()[..8]);
-            bytes[8..12].copy_from_slice(&std::process::id().to_le_bytes());
-            // bytes[12..16] remain as 0s for padding
-
-            Self(bytes)
-        }
-    }
-
-    impl std::fmt::Display for Uuid {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
-                self.0[0], self.0[1], self.0[2], self.0[3],
-                self.0[4], self.0[5], self.0[6], self.0[7],
-                self.0[8], self.0[9], self.0[10], self.0[11],
-                self.0[12], self.0[13], self.0[14], self.0[15])
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

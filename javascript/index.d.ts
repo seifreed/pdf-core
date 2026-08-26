@@ -1,6 +1,6 @@
 /**
  * PDF-AST TypeScript Definitions
- * Universal AST library for PDF documents based on ISO 32000-2
+ * Experimental AST bindings for selected PDF structures.
  */
 
 export interface NodeMetadata {

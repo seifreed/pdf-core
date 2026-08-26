@@ -1,4 +1,4 @@
-use super::{CryptoError, CryptoResult, SignatureVerificationResult, TimestampInfo};
+use super::{CryptoError, CryptoResult, SignatureVerificationResult};
 use crate::types::PdfValue;
 
 /// PDF signature handler with support for multiple signature formats
@@ -137,15 +137,10 @@ impl PdfSignatureHandler {
         }
         #[cfg(not(feature = "crypto"))]
         {
-            Ok(SignatureVerificationResult {
-                is_valid: false,
-                signer_certificate: None,
-                signing_time: None,
-                algorithm: "PKCS#7".to_string(),
-                error_message: Some("PKCS#7 verification requires crypto feature".to_string()),
-                certificate_chain: Vec::new(),
-                timestamp_info: None,
-            })
+            let _ = (contents, byte_range);
+            Err(CryptoError::UnsupportedAlgorithm(
+                "PKCS#7 verification requires the crypto feature".to_string(),
+            ))
         }
     }
 
@@ -161,15 +156,10 @@ impl PdfSignatureHandler {
         }
         #[cfg(not(feature = "crypto"))]
         {
-            Ok(SignatureVerificationResult {
-                is_valid: false,
-                signer_certificate: None,
-                signing_time: None,
-                algorithm: "X.509 RSA".to_string(),
-                error_message: Some("X.509 verification requires crypto feature".to_string()),
-                certificate_chain: Vec::new(),
-                timestamp_info: None,
-            })
+            let _ = (contents, byte_range);
+            Err(CryptoError::UnsupportedAlgorithm(
+                "X.509 verification requires the crypto feature".to_string(),
+            ))
         }
     }
 
@@ -185,15 +175,10 @@ impl PdfSignatureHandler {
         }
         #[cfg(not(feature = "crypto"))]
         {
-            Ok(SignatureVerificationResult {
-                is_valid: false,
-                signer_certificate: None,
-                signing_time: None,
-                algorithm: "CAdES".to_string(),
-                error_message: Some("CAdES verification requires crypto feature".to_string()),
-                certificate_chain: Vec::new(),
-                timestamp_info: None,
-            })
+            let _ = (contents, byte_range);
+            Err(CryptoError::UnsupportedAlgorithm(
+                "CAdES verification requires the crypto feature".to_string(),
+            ))
         }
     }
 
@@ -209,15 +194,10 @@ impl PdfSignatureHandler {
         }
         #[cfg(not(feature = "crypto"))]
         {
-            Ok(SignatureVerificationResult {
-                is_valid: false,
-                signer_certificate: None,
-                signing_time: None,
-                algorithm: "RFC3161 Timestamp".to_string(),
-                error_message: Some("Timestamp verification requires crypto feature".to_string()),
-                certificate_chain: Vec::new(),
-                timestamp_info: None,
-            })
+            let _ = (contents, byte_range);
+            Err(CryptoError::UnsupportedAlgorithm(
+                "RFC3161 verification requires the crypto feature".to_string(),
+            ))
         }
     }
 
@@ -228,19 +208,9 @@ impl PdfSignatureHandler {
         _contents: &[u8],
         _byte_range: &[u64],
     ) -> CryptoResult<SignatureVerificationResult> {
-        // This would implement actual PKCS#7 verification using OpenSSL
-        // For now, return a placeholder
-        Ok(SignatureVerificationResult {
-            is_valid: false,
-            signer_certificate: None,
-            signing_time: None,
-            algorithm: "PKCS#7".to_string(),
-            error_message: Some(
-                "OpenSSL PKCS#7 verification not yet fully implemented".to_string(),
-            ),
-            certificate_chain: Vec::new(),
-            timestamp_info: None,
-        })
+        Err(CryptoError::UnsupportedAlgorithm(
+            "OpenSSL PKCS#7 verification is not implemented".to_string(),
+        ))
     }
 
     #[cfg(feature = "crypto")]
@@ -249,16 +219,9 @@ impl PdfSignatureHandler {
         _contents: &[u8],
         _byte_range: &[u64],
     ) -> CryptoResult<SignatureVerificationResult> {
-        // This would implement actual X.509 verification using OpenSSL
-        Ok(SignatureVerificationResult {
-            is_valid: false,
-            signer_certificate: None,
-            signing_time: None,
-            algorithm: "X.509 RSA".to_string(),
-            error_message: Some("OpenSSL X.509 verification not yet fully implemented".to_string()),
-            certificate_chain: Vec::new(),
-            timestamp_info: None,
-        })
+        Err(CryptoError::UnsupportedAlgorithm(
+            "OpenSSL X.509 verification is not implemented".to_string(),
+        ))
     }
 
     #[cfg(feature = "crypto")]
@@ -267,16 +230,9 @@ impl PdfSignatureHandler {
         _contents: &[u8],
         _byte_range: &[u64],
     ) -> CryptoResult<SignatureVerificationResult> {
-        // This would implement CAdES verification
-        Ok(SignatureVerificationResult {
-            is_valid: false,
-            signer_certificate: None,
-            signing_time: None,
-            algorithm: "CAdES".to_string(),
-            error_message: Some("CAdES verification not yet fully implemented".to_string()),
-            certificate_chain: Vec::new(),
-            timestamp_info: None,
-        })
+        Err(CryptoError::UnsupportedAlgorithm(
+            "CAdES verification is not implemented".to_string(),
+        ))
     }
 
     #[cfg(feature = "crypto")]
@@ -285,22 +241,9 @@ impl PdfSignatureHandler {
         _contents: &[u8],
         _byte_range: &[u64],
     ) -> CryptoResult<SignatureVerificationResult> {
-        // This would implement RFC3161 timestamp verification
-        Ok(SignatureVerificationResult {
-            is_valid: false,
-            signer_certificate: None,
-            signing_time: None,
-            algorithm: "RFC3161 Timestamp".to_string(),
-            error_message: Some("RFC3161 verification not yet fully implemented".to_string()),
-            certificate_chain: Vec::new(),
-            timestamp_info: Some(TimestampInfo {
-                timestamp: super::chrono::Utc::now(),
-                timestamp_authority: "Unknown TSA".to_string(),
-                hash_algorithm: "SHA-256".to_string(),
-                is_valid: false,
-                error_message: Some("Not implemented".to_string()),
-            }),
-        })
+        Err(CryptoError::UnsupportedAlgorithm(
+            "RFC3161 verification is not implemented".to_string(),
+        ))
     }
 }
 
