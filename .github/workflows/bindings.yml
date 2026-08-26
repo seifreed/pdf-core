@@ -81,3 +81,6 @@ jobs:
       - name: Run binding smoke test
         working-directory: javascript
         run: npm test
+      - name: Run packaged install smoke test
+        working-directory: javascript
+        run: node test/package-smoke.js
