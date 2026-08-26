@@ -64,7 +64,8 @@ pub mod schema;
 pub mod streaming;
 
 pub use ast::{
-    AstError, AstNode, AstResult, NodeId, NodeType, PdfAstGraph, PdfDocument, PdfVersion,
+    AstError, AstNode, AstResult, NodeId, NodeType, ParseDiagnostic, PdfAstGraph, PdfDocument,
+    PdfVersion,
 };
 pub use compression::{
     create_optimal_compressor, AdvancedCompressor, CompressionConfig, CompressionLevel,
