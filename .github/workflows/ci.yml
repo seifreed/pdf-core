@@ -104,7 +104,7 @@ jobs:
           shared-key: clippy-cache
 
       - name: Run clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   test:
     name: Test Suite
@@ -135,7 +135,7 @@ jobs:
         run: cargo install cargo-llvm-cov --locked
 
       - name: Run tests with coverage
-        run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov --all-features --workspace --locked --lcov --output-path lcov.info
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5
@@ -162,7 +162,7 @@ jobs:
         run: test -s pdfs/CORPUS.json
 
       - name: Run corpus tests
-        run: cargo test --test corpus_tests
+        run: cargo test --test corpus_tests --locked
 
   build:
     name: Build Release (${{ matrix.os }})
@@ -209,7 +209,7 @@ jobs:
           shared-key: build-cache-${{ runner.os }}
 
       - name: Build release binary
-        run: cargo build --workspace --all-targets --release --verbose
+        run: cargo build --workspace --all-targets --release --locked --verbose
 
       - name: Verify binary artifacts (non-Windows)
         if: runner.os != 'Windows'
