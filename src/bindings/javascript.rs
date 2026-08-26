@@ -17,17 +17,19 @@ pub struct JsPdfDocument {
 impl Finalize for JsPdfDocument {}
 
 impl JsPdfDocument {
-    fn js_new(mut cx: FunctionContext) -> JsResult<JsBox<JsPdfDocument>> {
+    fn js_new(mut cx: FunctionContext) -> JsResult<JsObject> {
         let document = JsPdfDocument {
             inner: Arc::new(Mutex::new(PdfDocument::new(PdfVersion {
                 major: 1,
                 minor: 7,
             }))),
         };
-        Ok(cx.boxed(document))
+        let document = wrap_box(&mut cx, document)?;
+        attach_pdf_document_methods(&mut cx, document)?;
+        Ok(document)
     }
 
-    fn js_from_buffer(mut cx: FunctionContext) -> JsResult<JsBox<JsPdfDocument>> {
+    fn js_from_buffer(mut cx: FunctionContext) -> JsResult<JsObject> {
         let buffer = cx.argument::<JsBuffer>(0)?;
         let data = buffer.as_slice(&cx);
 
@@ -37,7 +39,9 @@ impl JsPdfDocument {
                 let js_document = JsPdfDocument {
                     inner: Arc::new(Mutex::new(document)),
                 };
-                Ok(cx.boxed(js_document))
+                let js_document = wrap_box(&mut cx, js_document)?;
+                attach_pdf_document_methods(&mut cx, js_document)?;
+                Ok(js_document)
             }
             Err(e) => cx.throw_error(format!("Failed to parse PDF: {:?}", e)),
         }
@@ -46,7 +50,8 @@ impl JsPdfDocument {
     fn js_get_version(mut cx: FunctionContext) -> JsResult<JsObject> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsPdfDocument>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsPdfDocument>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let document = this.inner.lock().unwrap();
 
         let version = cx.empty_object();
@@ -62,7 +67,8 @@ impl JsPdfDocument {
     fn js_get_all_nodes(mut cx: FunctionContext) -> JsResult<JsArray> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsPdfDocument>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsPdfDocument>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let document = this.inner.lock().unwrap();
 
         let nodes = document.ast.get_all_nodes();
@@ -79,7 +85,8 @@ impl JsPdfDocument {
     fn js_get_root(mut cx: FunctionContext) -> JsResult<JsValue> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsPdfDocument>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsPdfDocument>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let document = this.inner.lock().unwrap();
 
         if let Some(root_id) = document.ast.get_root() {
@@ -95,7 +102,8 @@ impl JsPdfDocument {
     fn js_get_node(mut cx: FunctionContext) -> JsResult<JsValue> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsPdfDocument>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsPdfDocument>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let node_id = cx.argument::<JsNumber>(0)?.value(&mut cx) as u64;
         let document = this.inner.lock().unwrap();
 
@@ -115,7 +123,8 @@ impl JsPdfDocument {
     fn js_get_children(mut cx: FunctionContext) -> JsResult<JsArray> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsPdfDocument>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsPdfDocument>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let node_id = cx.argument::<JsNumber>(0)?.value(&mut cx) as u64;
         let document = this.inner.lock().unwrap();
 
@@ -140,7 +149,8 @@ impl JsPdfDocument {
     fn js_get_nodes_by_type(mut cx: FunctionContext) -> JsResult<JsArray> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsPdfDocument>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsPdfDocument>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let type_str = cx.argument::<JsString>(0)?.value(&mut cx);
         let document = this.inner.lock().unwrap();
 
@@ -160,10 +170,11 @@ impl JsPdfDocument {
         Ok(js_array)
     }
 
-    fn js_validate(mut cx: FunctionContext) -> JsResult<JsBox<JsValidationReport>> {
+    fn js_validate(mut cx: FunctionContext) -> JsResult<JsObject> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsPdfDocument>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsPdfDocument>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let schema_name = cx.argument::<JsString>(0)?.value(&mut cx);
         let document = this.inner.lock().unwrap();
 
@@ -174,7 +185,9 @@ impl JsPdfDocument {
                 let js_report = JsValidationReport {
                     inner: Arc::new(report),
                 };
-                Ok(cx.boxed(js_report))
+                let js_report = wrap_box(&mut cx, js_report)?;
+                attach_validation_report_methods(&mut cx, js_report)?;
+                Ok(js_report)
             }
             None => cx.throw_error(format!("Schema '{}' not found", schema_name)),
         }
@@ -183,7 +196,8 @@ impl JsPdfDocument {
     fn js_get_statistics(mut cx: FunctionContext) -> JsResult<JsObject> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsPdfDocument>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsPdfDocument>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let document = this.inner.lock().unwrap();
 
         let stats = cx.empty_object();
@@ -221,25 +235,26 @@ pub struct JsAstNode {
 impl Finalize for JsAstNode {}
 
 impl JsAstNode {
-    fn from_node<'a>(
-        cx: &mut FunctionContext<'a>,
-        node: AstNode,
-    ) -> JsResult<'a, JsBox<JsAstNode>> {
+    fn from_node<'a>(cx: &mut FunctionContext<'a>, node: AstNode) -> JsResult<'a, JsObject> {
         let js_node = JsAstNode { inner: node };
-        Ok(cx.boxed(js_node))
+        let js_node = wrap_box(cx, js_node)?;
+        attach_ast_node_methods(cx, js_node)?;
+        Ok(js_node)
     }
 
     fn js_get_id(mut cx: FunctionContext) -> JsResult<JsNumber> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsAstNode>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsAstNode>, _, _>(&mut cx, "__pdf_ast_inner")?;
         Ok(cx.number(this.inner.id.0 as f64))
     }
 
     fn js_get_type(mut cx: FunctionContext) -> JsResult<JsString> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsAstNode>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsAstNode>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let type_name = super::utils::node_type_to_string(&this.inner.node_type);
         Ok(cx.string(type_name))
     }
@@ -247,7 +262,8 @@ impl JsAstNode {
     fn js_get_value(mut cx: FunctionContext) -> JsResult<JsString> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsAstNode>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsAstNode>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let value_str = format!("{:?}", this.inner.value);
         Ok(cx.string(value_str))
     }
@@ -255,7 +271,8 @@ impl JsAstNode {
     fn js_get_metadata(mut cx: FunctionContext) -> JsResult<JsValue> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsAstNode>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsAstNode>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let meta = cx.empty_object();
         if let Some(offset) = this.inner.metadata.offset {
             let offset_value = cx.number(offset as f64);
@@ -279,7 +296,8 @@ impl JsAstNode {
     fn js_has_property(mut cx: FunctionContext) -> JsResult<JsBoolean> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsAstNode>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsAstNode>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let key = cx.argument::<JsString>(0)?.value(&mut cx);
 
         let has_prop = match &this.inner.value {
@@ -293,7 +311,8 @@ impl JsAstNode {
     fn js_get_property(mut cx: FunctionContext) -> JsResult<JsValue> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsAstNode>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsAstNode>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let key = cx.argument::<JsString>(0)?.value(&mut cx);
 
         match &this.inner.value {
@@ -321,28 +340,32 @@ impl JsValidationReport {
     fn js_is_valid(mut cx: FunctionContext) -> JsResult<JsBoolean> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsValidationReport>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsValidationReport>, _, _>(&mut cx, "__pdf_ast_inner")?;
         Ok(cx.boolean(this.inner.is_valid))
     }
 
     fn js_get_schema_name(mut cx: FunctionContext) -> JsResult<JsString> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsValidationReport>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsValidationReport>, _, _>(&mut cx, "__pdf_ast_inner")?;
         Ok(cx.string(&this.inner.schema_name))
     }
 
     fn js_get_schema_version(mut cx: FunctionContext) -> JsResult<JsString> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsValidationReport>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsValidationReport>, _, _>(&mut cx, "__pdf_ast_inner")?;
         Ok(cx.string(&this.inner.schema_version))
     }
 
     fn js_get_issues(mut cx: FunctionContext) -> JsResult<JsArray> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsValidationReport>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsValidationReport>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let js_array = cx.empty_array();
 
         for (i, issue) in this.inner.issues.iter().enumerate() {
@@ -356,7 +379,8 @@ impl JsValidationReport {
     fn js_get_statistics(mut cx: FunctionContext) -> JsResult<JsObject> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsValidationReport>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsValidationReport>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let stats = cx.empty_object();
 
         let total_checks_value = cx.number(this.inner.statistics.total_checks as f64);
@@ -389,15 +413,18 @@ impl JsValidationIssue {
     fn from_issue<'a>(
         cx: &mut FunctionContext<'a>,
         issue: crate::validation::ValidationIssue,
-    ) -> JsResult<'a, JsBox<JsValidationIssue>> {
+    ) -> JsResult<'a, JsObject> {
         let js_issue = JsValidationIssue { inner: issue };
-        Ok(cx.boxed(js_issue))
+        let js_issue = wrap_box(cx, js_issue)?;
+        attach_validation_issue_methods(cx, js_issue)?;
+        Ok(js_issue)
     }
 
     fn js_get_severity(mut cx: FunctionContext) -> JsResult<JsString> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsValidationIssue>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsValidationIssue>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let severity = format!("{:?}", this.inner.severity);
         Ok(cx.string(severity))
     }
@@ -405,21 +432,24 @@ impl JsValidationIssue {
     fn js_get_code(mut cx: FunctionContext) -> JsResult<JsString> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsValidationIssue>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsValidationIssue>, _, _>(&mut cx, "__pdf_ast_inner")?;
         Ok(cx.string(&this.inner.code))
     }
 
     fn js_get_message(mut cx: FunctionContext) -> JsResult<JsString> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsValidationIssue>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsValidationIssue>, _, _>(&mut cx, "__pdf_ast_inner")?;
         Ok(cx.string(&this.inner.message))
     }
 
     fn js_get_node_id(mut cx: FunctionContext) -> JsResult<JsValue> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsValidationIssue>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsValidationIssue>, _, _>(&mut cx, "__pdf_ast_inner")?;
 
         if let Some(node_id) = this.inner.node_id {
             Ok(cx.number(node_id.0 as f64).upcast())
@@ -431,7 +461,8 @@ impl JsValidationIssue {
     fn js_get_location(mut cx: FunctionContext) -> JsResult<JsValue> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsValidationIssue>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsValidationIssue>, _, _>(&mut cx, "__pdf_ast_inner")?;
 
         if let Some(ref location) = this.inner.location {
             Ok(cx.string(location).upcast())
@@ -443,7 +474,8 @@ impl JsValidationIssue {
     fn js_get_suggestion(mut cx: FunctionContext) -> JsResult<JsValue> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsValidationIssue>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsValidationIssue>, _, _>(&mut cx, "__pdf_ast_inner")?;
 
         if let Some(ref suggestion) = this.inner.suggestion {
             Ok(cx.string(suggestion).upcast())
@@ -461,18 +493,23 @@ pub struct JsPluginManager {
 impl Finalize for JsPluginManager {}
 
 impl JsPluginManager {
-    fn js_new(mut cx: FunctionContext) -> JsResult<JsBox<JsPluginManager>> {
+    fn js_new(mut cx: FunctionContext) -> JsResult<JsObject> {
         let manager = JsPluginManager {
             inner: Arc::new(Mutex::new(PluginManager::new())),
         };
-        Ok(cx.boxed(manager))
+        let manager = wrap_box(&mut cx, manager)?;
+        attach_plugin_manager_methods(&mut cx, manager)?;
+        Ok(manager)
     }
 
     fn js_execute_plugins(mut cx: FunctionContext) -> JsResult<JsObject> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsPluginManager>, _>(&mut cx)?;
-        let js_document = cx.argument::<JsBox<JsPdfDocument>>(0)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsPluginManager>, _, _>(&mut cx, "__pdf_ast_inner")?;
+        let js_document = cx
+            .argument::<JsObject>(0)?
+            .get::<JsBox<JsPdfDocument>, _, _>(&mut cx, "__pdf_ast_inner")?;
 
         let manager = this.inner.lock().unwrap();
         let mut document = js_document.inner.lock().unwrap().clone();
@@ -506,7 +543,8 @@ impl JsPluginManager {
     fn js_list_plugins(mut cx: FunctionContext) -> JsResult<JsArray> {
         let this = cx
             .this()
-            .downcast_or_throw::<JsBox<JsPluginManager>, _>(&mut cx)?;
+            .downcast_or_throw::<JsObject, _>(&mut cx)?
+            .get::<JsBox<JsPluginManager>, _, _>(&mut cx, "__pdf_ast_inner")?;
         let manager = this.inner.lock().unwrap();
 
         let plugins = manager.list_plugins();
@@ -537,8 +575,136 @@ impl JsPluginManager {
     }
 }
 
+fn wrap_box<'a, T>(cx: &mut FunctionContext<'a>, value: T) -> JsResult<'a, JsObject>
+where
+    T: Finalize + Send + 'static,
+{
+    let inner = cx.boxed(value);
+    let object = cx.empty_object();
+    object.set(cx, "__pdf_ast_inner", inner)?;
+    Ok(object)
+}
+
+fn attach_method<R>(
+    cx: &mut FunctionContext,
+    object: Handle<JsObject>,
+    name: &str,
+    method: fn(FunctionContext) -> JsResult<R>,
+) -> NeonResult<()>
+where
+    R: Value,
+{
+    let function = JsFunction::new(cx, method)?;
+    object.set(cx, name, function)?;
+    Ok(())
+}
+
+fn attach_pdf_document_methods(
+    cx: &mut FunctionContext,
+    object: Handle<JsObject>,
+) -> NeonResult<()> {
+    attach_method(cx, object, "getVersion", JsPdfDocument::js_get_version)?;
+    attach_method(cx, object, "getAllNodes", JsPdfDocument::js_get_all_nodes)?;
+    attach_method(cx, object, "getRoot", JsPdfDocument::js_get_root)?;
+    attach_method(cx, object, "getNode", JsPdfDocument::js_get_node)?;
+    attach_method(cx, object, "getChildren", JsPdfDocument::js_get_children)?;
+    attach_method(
+        cx,
+        object,
+        "getNodesByType",
+        JsPdfDocument::js_get_nodes_by_type,
+    )?;
+    attach_method(cx, object, "validate", JsPdfDocument::js_validate)?;
+    attach_method(
+        cx,
+        object,
+        "getStatistics",
+        JsPdfDocument::js_get_statistics,
+    )?;
+    Ok(())
+}
+
+fn attach_ast_node_methods(cx: &mut FunctionContext, object: Handle<JsObject>) -> NeonResult<()> {
+    attach_method(cx, object, "getId", JsAstNode::js_get_id)?;
+    attach_method(cx, object, "getType", JsAstNode::js_get_type)?;
+    attach_method(cx, object, "getValue", JsAstNode::js_get_value)?;
+    attach_method(cx, object, "getMetadata", JsAstNode::js_get_metadata)?;
+    attach_method(cx, object, "hasProperty", JsAstNode::js_has_property)?;
+    attach_method(cx, object, "getProperty", JsAstNode::js_get_property)?;
+    Ok(())
+}
+
+fn attach_validation_report_methods(
+    cx: &mut FunctionContext,
+    object: Handle<JsObject>,
+) -> NeonResult<()> {
+    attach_method(cx, object, "isValid", JsValidationReport::js_is_valid)?;
+    attach_method(
+        cx,
+        object,
+        "getSchemaName",
+        JsValidationReport::js_get_schema_name,
+    )?;
+    attach_method(
+        cx,
+        object,
+        "getSchemaVersion",
+        JsValidationReport::js_get_schema_version,
+    )?;
+    attach_method(cx, object, "getIssues", JsValidationReport::js_get_issues)?;
+    attach_method(
+        cx,
+        object,
+        "getStatistics",
+        JsValidationReport::js_get_statistics,
+    )?;
+    Ok(())
+}
+
+fn attach_validation_issue_methods(
+    cx: &mut FunctionContext,
+    object: Handle<JsObject>,
+) -> NeonResult<()> {
+    attach_method(
+        cx,
+        object,
+        "getSeverity",
+        JsValidationIssue::js_get_severity,
+    )?;
+    attach_method(cx, object, "getCode", JsValidationIssue::js_get_code)?;
+    attach_method(cx, object, "getMessage", JsValidationIssue::js_get_message)?;
+    attach_method(cx, object, "getNodeId", JsValidationIssue::js_get_node_id)?;
+    attach_method(
+        cx,
+        object,
+        "getLocation",
+        JsValidationIssue::js_get_location,
+    )?;
+    attach_method(
+        cx,
+        object,
+        "getSuggestion",
+        JsValidationIssue::js_get_suggestion,
+    )?;
+    Ok(())
+}
+
+fn attach_plugin_manager_methods(
+    cx: &mut FunctionContext,
+    object: Handle<JsObject>,
+) -> NeonResult<()> {
+    attach_method(
+        cx,
+        object,
+        "executePlugins",
+        JsPluginManager::js_execute_plugins,
+    )?;
+    attach_method(cx, object, "listPlugins", JsPluginManager::js_list_plugins)?;
+    Ok(())
+}
+
 /// Module-level functions
-fn js_parse_pdf(cx: FunctionContext) -> JsResult<JsBox<JsPdfDocument>> {
+fn js_parse_pdf(cx: FunctionContext) -> JsResult<JsObject> {
     JsPdfDocument::js_from_buffer(cx)
 }
 
