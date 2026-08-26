@@ -72,6 +72,25 @@ fn test_incremental_xref_chain() {
         .contains(&ObjectId::new(4, 0)));
 }
 
+#[test]
+fn invalid_prev_is_an_error_in_strict_mode_and_a_diagnostic_in_tolerant_mode() {
+    let pdf = build_incremental_pdf();
+    let old_prev = format!("/Prev {}", pdf.xref1_offset);
+    let new_prev = "/Prev -1";
+    let mut text = String::from_utf8(pdf.data).expect("test PDF should be UTF-8");
+    text = text.replace(&old_prev, new_prev);
+    let data = text.into_bytes();
+
+    assert!(PdfParser::strict().parse_bytes(&data).is_err());
+    let document = PdfParser::new()
+        .parse_bytes(&data)
+        .expect("tolerant parser should retain the current revision");
+    assert!(document
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.error_code == "invalid_prev"));
+}
+
 fn build_hybrid_pdf() -> (Vec<u8>, u64, u64) {
     let mut pdf = b"%PDF-1.5\n".to_vec();
     let objects = [

@@ -359,7 +359,12 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
             if let Some(prev) = trailer.get("Prev").and_then(|v| v.as_integer()) {
                 if prev <= 0 {
-                    break;
+                    let message = format!("Invalid /Prev xref offset: {prev}");
+                    if self.tolerant {
+                        self.record_anomaly("invalid_prev", &message, Some(offset))?;
+                        break;
+                    }
+                    return Err(AstError::ParseError(message));
                 }
                 offset = u64::try_from(prev)
                     .map_err(|_| AstError::ParseError("Negative /Prev xref offset".to_string()))?;
