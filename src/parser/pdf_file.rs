@@ -1135,16 +1135,24 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         let entry = match entry_type {
             0 => XRefEntry::Free {
-                next_free_object: field2 as u32,
-                generation: field3 as u16,
+                next_free_object: u32::try_from(field2).map_err(|_| {
+                    AstError::ParseError("XRef free-object number overflow".to_string())
+                })?,
+                generation: u16::try_from(field3)
+                    .map_err(|_| AstError::ParseError("XRef generation overflow".to_string()))?,
             },
             1 => XRefEntry::InUse {
                 offset: field2,
-                generation: field3 as u16,
+                generation: u16::try_from(field3)
+                    .map_err(|_| AstError::ParseError("XRef generation overflow".to_string()))?,
             },
             2 => XRefEntry::Compressed {
-                stream_object: field2 as u32,
-                index: field3 as u32,
+                stream_object: u32::try_from(field2).map_err(|_| {
+                    AstError::ParseError("XRef object stream number overflow".to_string())
+                })?,
+                index: u32::try_from(field3).map_err(|_| {
+                    AstError::ParseError("XRef object stream index overflow".to_string())
+                })?,
             },
             _ => XRefEntry::Free {
                 next_free_object: 0,

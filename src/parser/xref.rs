@@ -278,22 +278,27 @@ fn parse_xref_stream_entry(
         0 => {
             // Free object entry
             Ok(XRefEntry::Free {
-                next_free_object: field2 as u32,
-                generation: field3 as u16,
+                next_free_object: u32::try_from(field2)
+                    .map_err(|_| "XRef free-object number overflow".to_string())?,
+                generation: u16::try_from(field3)
+                    .map_err(|_| "XRef generation overflow".to_string())?,
             })
         }
         1 => {
             // Normal object entry
             Ok(XRefEntry::InUse {
                 offset: field2,
-                generation: field3 as u16,
+                generation: u16::try_from(field3)
+                    .map_err(|_| "XRef generation overflow".to_string())?,
             })
         }
         2 => {
             // Compressed object entry
             Ok(XRefEntry::Compressed {
-                stream_object: field2 as u32,
-                index: field3 as u32,
+                stream_object: u32::try_from(field2)
+                    .map_err(|_| "XRef object stream number overflow".to_string())?,
+                index: u32::try_from(field3)
+                    .map_err(|_| "XRef object stream index overflow".to_string())?,
             })
         }
         _ => Err(format!("Invalid XRef entry type: {}", type_field)),
@@ -465,7 +470,7 @@ impl XRefEntry {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_xref_stream, parse_xref_table};
+    use super::{parse_xref_stream, parse_xref_stream_entry, parse_xref_table};
     use crate::performance::PerformanceLimits;
     use crate::types::{PdfArray, PdfDictionary, PdfStream, PdfValue};
 
@@ -534,6 +539,13 @@ mod tests {
         );
         assert!(parse_xref_table(b"xref\n0 1\n999999999999999999999999 00000 n\n").is_err());
         assert!(parse_xref_table(b"xref\n0 1\n0000000000 99999 n\n").is_err());
+    }
+
+    #[test]
+    fn rejects_xref_stream_field_truncation() {
+        let error = parse_xref_stream_entry(&[1, 0, 0, 0, 0, 0, 1, 0, 0, 0], 1, 5, 4)
+            .expect_err("generation values wider than u16 must be rejected");
+        assert!(error.contains("generation"));
     }
 
     #[test]
