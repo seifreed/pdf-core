@@ -60,7 +60,7 @@ pub struct ReferenceResolver<R: BufRead + Seek> {
 
 impl<R: BufRead + Seek> ReferenceResolver<R> {
     pub fn new(mut reader: R, tolerant: bool, limits: PerformanceLimits) -> Result<Self, String> {
-        let xref_table = Self::build_xref_table(&mut reader)?;
+        let xref_table = Self::build_xref_table(&mut reader, &limits)?;
 
         Ok(Self {
             reader,
@@ -120,7 +120,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
     }
 
     /// Build cross-reference table by scanning the PDF
-    fn build_xref_table(reader: &mut R) -> Result<HashMap<ObjectId, u64>, String> {
+    fn build_xref_table(
+        reader: &mut R,
+        limits: &PerformanceLimits,
+    ) -> Result<HashMap<ObjectId, u64>, String> {
         // Find startxref offset
         reader
             .seek(SeekFrom::End(-1024))
@@ -137,7 +140,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             let xref_section = &content[startxref_pos..];
             if let Some(offset_str) = xref_section.lines().nth(1) {
                 if let Ok(xref_offset) = offset_str.trim().parse::<u64>() {
-                    return Self::parse_xref_table(reader, xref_offset);
+                    return Self::parse_xref_table(reader, xref_offset, limits);
                 }
             }
         }
@@ -147,7 +150,11 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
     }
 
     /// Parse xref table at given offset
-    fn parse_xref_table(reader: &mut R, offset: u64) -> Result<HashMap<ObjectId, u64>, String> {
+    fn parse_xref_table(
+        reader: &mut R,
+        offset: u64,
+        limits: &PerformanceLimits,
+    ) -> Result<HashMap<ObjectId, u64>, String> {
         reader
             .seek(SeekFrom::Start(offset))
             .map_err(|e| format!("Seek error: {}", e))?;
@@ -163,7 +170,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             if let Ok((_, (_obj_id, PdfValue::Stream(stream)))) =
                 object_parser::parse_indirect_object(&buffer)
             {
-                return crate::parser::xref::parse_xref_stream(&stream).map(|entries| {
+                return crate::parser::xref::parse_xref_stream(&stream, limits).map(|entries| {
                     entries
                         .into_iter()
                         .filter_map(|(id, entry)| {

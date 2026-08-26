@@ -1,6 +1,7 @@
 use crate::ast::document::XRefEntry;
 use crate::ast::linearization::LinearizationInfo;
-use crate::filters::decode_stream;
+use crate::filters::decode_stream_with_limits;
+use crate::performance::PerformanceLimits;
 use crate::types::{ObjectId, PdfStream, PdfValue};
 use nom::{
     branch::alt,
@@ -81,7 +82,10 @@ fn parse_xref_entry(input: &[u8]) -> IResult<&[u8], XRefEntry> {
 
 /// Parse XRef Stream (PDF 1.5+)
 /// XRef streams are compressed streams that contain the cross-reference information
-pub fn parse_xref_stream(stream: &PdfStream) -> Result<Vec<(ObjectId, XRefEntry)>, String> {
+pub fn parse_xref_stream(
+    stream: &PdfStream,
+    limits: &PerformanceLimits,
+) -> Result<Vec<(ObjectId, XRefEntry)>, String> {
     let dict = &stream.dict;
 
     // Get W array - widths of the three fields in each entry
@@ -158,10 +162,24 @@ pub fn parse_xref_stream(stream: &PdfStream) -> Result<Vec<(ObjectId, XRefEntry)
     };
 
     let decoded_data = if filters.is_empty() {
-        raw_data.clone()
+        limits
+            .budget
+            .consume_decoded(raw_data.len() as u64)
+            .map_err(|err| err.to_string())?;
+        raw_data.to_vec()
     } else {
-        decode_stream(raw_data, &filters)
-            .map_err(|e| format!("Failed to decode XRef stream: {}", e))?
+        let decoded = decode_stream_with_limits(
+            raw_data,
+            &filters,
+            limits.max_object_size_mb.saturating_mul(1024 * 1024),
+            limits.max_stream_decode_ratio,
+        )
+        .map_err(|e| format!("Failed to decode XRef stream: {}", e))?;
+        limits
+            .budget
+            .consume_decoded(decoded.len() as u64)
+            .map_err(|err| err.to_string())?;
+        decoded
     };
 
     let mut entries = Vec::new();
@@ -453,6 +471,7 @@ impl XRefEntry {
 #[cfg(test)]
 mod tests {
     use super::parse_xref_stream;
+    use crate::performance::PerformanceLimits;
     use crate::types::{PdfArray, PdfDictionary, PdfStream, PdfValue};
 
     fn xref_stream(w: Vec<PdfValue>, index: Option<Vec<PdfValue>>) -> PdfStream {
@@ -476,7 +495,8 @@ mod tests {
             None,
         );
 
-        let error = parse_xref_stream(&stream).expect_err("negative width must be rejected");
+        let error = parse_xref_stream(&stream, &PerformanceLimits::default())
+            .expect_err("negative width must be rejected");
         assert!(error.contains("non-negative"));
     }
 
@@ -491,7 +511,8 @@ mod tests {
             Some(vec![PdfValue::Integer(-1), PdfValue::Integer(1)]),
         );
 
-        let error = parse_xref_stream(&stream).expect_err("negative index must be rejected");
+        let error = parse_xref_stream(&stream, &PerformanceLimits::default())
+            .expect_err("negative index must be rejected");
         assert!(error.contains("non-negative"));
     }
 
@@ -506,8 +527,28 @@ mod tests {
             None,
         );
 
-        let error = parse_xref_stream(&stream).expect_err("wide field must be rejected");
+        let error = parse_xref_stream(&stream, &PerformanceLimits::default())
+            .expect_err("wide field must be rejected");
         assert!(error.contains("8 bytes"));
+    }
+
+    #[test]
+    fn rejects_xref_data_over_shared_decode_budget() {
+        let stream = xref_stream(
+            vec![
+                PdfValue::Integer(1),
+                PdfValue::Integer(1),
+                PdfValue::Integer(1),
+            ],
+            None,
+        );
+        let mut limits = PerformanceLimits::default();
+        limits.max_object_size_mb = 0;
+        limits.refresh_budget();
+
+        let error = parse_xref_stream(&stream, &limits)
+            .expect_err("xref data over the shared budget must be rejected");
+        assert!(error.contains("DecodedBytes"));
     }
 
     #[test]
