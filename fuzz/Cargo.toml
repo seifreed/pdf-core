@@ -95,4 +95,18 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "lexer"
+path = "fuzz_targets/lexer.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "indirect_objects"
+path = "fuzz_targets/indirect_objects.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
