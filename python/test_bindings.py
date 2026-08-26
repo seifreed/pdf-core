@@ -42,41 +42,19 @@ startxref
 200
 %%EOF"""
     
-    print("\n=== Testing PDF parsing ===")
+    doc = pdf_ast.parse_pdf(minimal_pdf)
+    assert doc.get_version() == (1, 4)
+    assert doc.get_root() is not None
+    stats = dict(doc.get_statistics())
+    assert stats["version"] == "1.4"
+    assert pdf_ast.get_available_schemas()
+
     try:
-        doc = pdf_ast.parse_pdf(minimal_pdf)
-        print(f"Document: {doc}")
-        print(f"Version: {doc.get_version()}")
-        stats = doc.get_statistics()
-        print(f"Statistics: {dict(stats)}")
-        
-    except Exception as e:
-        print(f"Error parsing PDF: {e}")
-    
-    print("\n=== Testing validation ===")
-    try:
-        schemas = pdf_ast.get_available_schemas()
-        print(f"Schemas: {schemas}")
-        if "PDF-2.0" in schemas:
-            report = doc.validate("PDF-2.0")
-            print(f"Validation report: {report}")
-            print(f"Is valid: {report.is_valid()}")
-            print(f"Issues: {len(report.get_issues())}")
-    except Exception as e:
-        print(f"Error validating PDF: {e}")
-    
-    print("\n=== Testing invalid PDF ===")
-    try:
-        invalid_data = b"This is not a PDF file"
-        result = pdf_ast.is_pdf(invalid_data)
-        print(f"Is invalid data PDF: {result}")
-        
-        # This should raise an error
-        doc = pdf_ast.parse_pdf(invalid_data)
-        print("ERROR: Should have failed!")
-        
-    except Exception as e:
-        print(f"Expected error for invalid PDF: {e}")
+        pdf_ast.parse_pdf(b"This is not a PDF file")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid PDF input was accepted")
 
 if __name__ == "__main__":
     test_basic_functionality()
