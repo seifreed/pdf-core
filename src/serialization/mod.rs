@@ -1,4 +1,4 @@
-use crate::ast::{EdgeType, NodeId, NodeType, PdfAstGraph, PdfDocument};
+use crate::ast::{AstNode, EdgeType, NodeId, NodeType, PdfAstGraph, PdfDocument};
 use crate::types::PdfValue;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -90,6 +90,9 @@ pub struct SerializableGraph {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableNode {
+    /// Stable node identity; absent in the historical 1.0/1.1 envelope.
+    #[serde(default)]
+    pub original_id: Option<usize>,
     pub id: usize,
     pub node_type: String,
     pub value: SerializableValue,
@@ -200,6 +203,7 @@ impl GraphSerializer {
             };
 
             let serialized_node = SerializableNode {
+                original_id: Some(node.id.0),
                 id: serial_id,
                 node_type: node_type_name(&node.node_type).to_string(),
                 value: Self::serialize_value(&node.value),
@@ -321,6 +325,7 @@ impl GraphDeserializer {
 
         let mut ast = PdfAstGraph::new();
         let mut id_map: HashMap<usize, NodeId> = HashMap::new();
+        let mut restored_ids = std::collections::HashSet::new();
 
         // First pass: create all nodes
         for serialized_node in &serialized.nodes {
@@ -333,7 +338,11 @@ impl GraphDeserializer {
             let node_type =
                 Self::parse_node_type(&serialized_node.node_type, serialized_node.object_id)?;
             let value = Self::deserialize_value(&serialized_node.value)?;
-            let node_id = ast.create_node(node_type, value);
+            let node_id = NodeId(serialized_node.original_id.unwrap_or(serialized_node.id));
+            if !restored_ids.insert(node_id) {
+                return Err(format!("Duplicate restored node ID: {}", node_id.0));
+            }
+            ast.add_node(AstNode::new(node_id, node_type, value));
             let node = ast
                 .get_node_mut(node_id)
                 .ok_or_else(|| format!("Failed to restore node {}", serialized_node.id))?;
@@ -711,22 +720,18 @@ impl SerializableDocument {
             xref_entries.insert(key, serializable_entry);
         }
 
-        // Convert catalog and info to serial IDs
-        let catalog_serial_id = document.catalog.and_then(|node_id| {
-            ast_serializable
-                .nodes
-                .iter()
-                .find(|node| node.id == node_id.0)
-                .map(|node| node.id)
-        });
-
-        let info_serial_id = document.info.and_then(|node_id| {
-            ast_serializable
-                .nodes
-                .iter()
-                .find(|node| node.id == node_id.0)
-                .map(|node| node.id)
-        });
+        // Convert original node IDs to serial IDs.
+        let serial_id_for = |node_id: Option<NodeId>| {
+            node_id.and_then(|node_id| {
+                ast_serializable
+                    .nodes
+                    .iter()
+                    .find(|node| node.original_id.unwrap_or(node.id) == node_id.0)
+                    .map(|node| node.id)
+            })
+        };
+        let catalog_serial_id = serial_id_for(document.catalog);
+        let info_serial_id = serial_id_for(document.info);
 
         SerializableDocument {
             version: document.version.to_string(),
@@ -848,6 +853,7 @@ mod tests {
     fn rejects_object_nodes_without_identity() {
         let graph = SerializableGraph {
             nodes: vec![SerializableNode {
+                original_id: None,
                 id: 0,
                 node_type: "Object".to_string(),
                 value: SerializableValue::Null,
@@ -897,6 +903,28 @@ mod tests {
 
         let restored = GraphDeserializer::deserialize(graph).unwrap();
         assert!(restored.get_node_by_object(object_id).is_some());
+    }
+
+    #[test]
+    fn preserves_non_contiguous_node_ids_across_round_trip() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = NodeId::new(41);
+        let child_id = NodeId::new(9001);
+        ast.add_node(AstNode::new(
+            root_id,
+            NodeType::Root,
+            PdfValue::Dictionary(PdfDictionary::new()),
+        ));
+        ast.add_node(AstNode::new(child_id, NodeType::Metadata, PdfValue::Null));
+        ast.set_root(root_id);
+        ast.add_edge(root_id, child_id, EdgeType::Child);
+
+        let restored = GraphDeserializer::deserialize(SerializableGraph::from_ast(&ast)).unwrap();
+
+        assert!(restored.get_node(root_id).is_some());
+        assert!(restored.get_node(child_id).is_some());
+        assert_eq!(restored.get_children(root_id), vec![child_id]);
+        assert_eq!(restored.get_root(), Some(root_id));
     }
 
     #[test]
