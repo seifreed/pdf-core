@@ -266,8 +266,8 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
     fn locate_xref(&mut self) -> AstResult<()> {
         let file_size = self.reader.seek(SeekFrom::End(0))?;
-        let read_size = std::cmp::min(XREF_TAIL_BUFFER_SIZE, file_size as i64);
-        self.reader.seek(SeekFrom::End(-read_size))?;
+        let read_size = file_size.min(XREF_TAIL_BUFFER_SIZE as u64);
+        self.reader.seek(SeekFrom::End(-(read_size as i64)))?;
 
         let mut buffer = vec![0u8; read_size as usize];
         self.reader.read_exact(&mut buffer)?;
@@ -282,7 +282,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let xref_data = Self::skip_whitespace(xref_data);
 
         if let Ok((_, offset)) = integer(xref_data) {
-            self.xref_offset = Some(offset as u64);
+            self.xref_offset = Some(
+                u64::try_from(offset)
+                    .map_err(|_| AstError::ParseError("Negative xref offset".to_string()))?,
+            );
             log::debug!("Parsing: xref offset {}", offset);
             Ok(())
         } else {
@@ -386,7 +389,8 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 if prev <= 0 {
                     break;
                 }
-                offset = prev as u64;
+                offset = u64::try_from(prev)
+                    .map_err(|_| AstError::ParseError("Negative /Prev xref offset".to_string()))?;
             } else {
                 break;
             }
@@ -494,7 +498,9 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         if let Some(xref_stm) = trailer.get("XRefStm").and_then(|v| v.as_integer()) {
             self.document.xref.hybrid_mode = true;
-            let (stream_entries, _) = self.parse_xref_stream_at(xref_stm as u64)?;
+            let xref_stm = u64::try_from(xref_stm)
+                .map_err(|_| AstError::ParseError("Negative /XRefStm offset".to_string()))?;
+            let (stream_entries, _) = self.parse_xref_stream_at(xref_stm)?;
             entries.extend(stream_entries);
         }
 
