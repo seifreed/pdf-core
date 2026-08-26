@@ -365,8 +365,11 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                         node_id
                     }
                     Err(e) => {
-                        warn!("Failed to resolve reference {}: {}", obj_id, e);
-                        continue;
+                        if self.tolerant {
+                            warn!("Failed to resolve reference {}: {}", obj_id, e);
+                            continue;
+                        }
+                        return Err(e);
                     }
                 }
             } else {
@@ -1578,5 +1581,26 @@ mod tests {
         let node = ast.get_node(node_id).expect("stream node");
         let stream = node.value.as_stream().expect("stream value");
         assert_eq!(stream.raw_data(), Some(b"abcendobjxyz".as_slice()));
+    }
+
+    #[test]
+    fn strict_reference_resolution_rejects_missing_objects() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(Vec::new()),
+            &document,
+            false,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut dict = PdfDictionary::new();
+        dict.insert("Missing", PdfValue::Reference(PdfReference::new(9, 0)));
+        let mut ast = PdfAstGraph::new();
+        let root = ast.create_node(NodeType::Root, PdfValue::Dictionary(dict));
+        resolver.collect_references_from_node(root, &ast.get_node(root).unwrap().value.clone());
+
+        let error = resolver
+            .resolve_references(&mut ast)
+            .expect_err("strict resolution must reject a missing object");
+        assert!(error.contains("not found in xref table"));
     }
 }
