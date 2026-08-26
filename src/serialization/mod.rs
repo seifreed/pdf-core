@@ -14,6 +14,8 @@ pub struct SerializableDocument {
     pub info: Option<usize>,
     pub trailer: SerializableValue,
     pub xref_entries: HashMap<String, SerializableXRefEntry>,
+    #[serde(default)]
+    pub revisions: Vec<SerializableRevision>,
     pub metadata: SerializableDocumentMetadata,
 }
 
@@ -22,6 +24,16 @@ pub struct SerializableXRefEntry {
     pub offset: Option<u64>,
     pub generation: u16,
     pub entry_type: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableRevision {
+    pub revision_number: u32,
+    pub xref_offset: u64,
+    pub trailer: SerializableValue,
+    pub modified_objects: Vec<(u32, u16)>,
+    pub added_objects: Vec<(u32, u16)>,
+    pub deleted_objects: Vec<(u32, u16)>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -625,6 +637,26 @@ pub fn to_json(document: &PdfDocument) -> Result<String, serde_json::Error> {
 }
 
 impl SerializableDocument {
+    pub fn to_json(&self) -> serde_json::Result<String> {
+        serde_json::to_string_pretty(self)
+    }
+
+    pub fn to_cbor(&self) -> serde_cbor::Result<Vec<u8>> {
+        serde_cbor::to_vec(self)
+    }
+
+    pub fn from_json(json: &str) -> serde_json::Result<Self> {
+        serde_json::from_str(json)
+    }
+
+    pub fn from_cbor(data: &[u8]) -> serde_cbor::Result<Self> {
+        serde_cbor::from_slice(data)
+    }
+
+    pub fn deserialize_ast(&self) -> Result<PdfAstGraph, String> {
+        GraphDeserializer::deserialize(self.ast.clone())
+    }
+
     pub fn from_document(document: &PdfDocument) -> Self {
         let ast_serializable = SerializableGraph::from_ast(&document.ast);
 
@@ -681,6 +713,32 @@ impl SerializableDocument {
                 document.trailer.clone(),
             )),
             xref_entries,
+            revisions: document
+                .revisions
+                .iter()
+                .map(|revision| SerializableRevision {
+                    revision_number: revision.revision_number,
+                    xref_offset: revision.xref_offset,
+                    trailer: GraphSerializer::serialize_value(&PdfValue::Dictionary(
+                        revision.trailer.clone(),
+                    )),
+                    modified_objects: revision
+                        .modified_objects
+                        .iter()
+                        .map(|id| (id.number, id.generation))
+                        .collect(),
+                    added_objects: revision
+                        .added_objects
+                        .iter()
+                        .map(|id| (id.number, id.generation))
+                        .collect(),
+                    deleted_objects: revision
+                        .deleted_objects
+                        .iter()
+                        .map(|id| (id.number, id.generation))
+                        .collect(),
+                })
+                .collect(),
             metadata: SerializableDocumentMetadata {
                 file_size: document.metadata.file_size,
                 linearized: document.metadata.linearized,
@@ -726,8 +784,8 @@ impl SerializableDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{NodeType, PdfAstGraph, PdfDocument, PdfVersion};
-    use crate::types::{PdfDictionary, PdfValue};
+    use crate::ast::{DocumentRevision, NodeType, PdfAstGraph, PdfDocument, PdfVersion};
+    use crate::types::{ObjectId, PdfDictionary, PdfValue};
 
     #[test]
     fn test_graph_serialization() {
@@ -870,13 +928,38 @@ mod tests {
     #[test]
     fn test_document_serialization() {
         let version = PdfVersion::new(1, 7);
-        let document = PdfDocument::new(version);
+        let mut document = PdfDocument::new(version);
+        document.revisions.push(DocumentRevision {
+            revision_number: 1,
+            xref_offset: 123,
+            trailer: PdfDictionary::new(),
+            modified_objects: vec![ObjectId::new(1, 0)],
+            added_objects: vec![ObjectId::new(2, 0)],
+            deleted_objects: Vec::new(),
+        });
 
         let json = to_json(&document).unwrap();
         assert!(json.contains("1.7"));
         assert!(json.contains("ast"));
         assert!(json.contains("metadata"));
         assert!(json.contains("schema_version"));
+
+        let deserialized = SerializableDocument::from_json(&json).unwrap();
+        assert_eq!(deserialized.revisions.len(), 1);
+        assert_eq!(deserialized.revisions[0].xref_offset, 123);
+        assert_eq!(deserialized.revisions[0].added_objects, vec![(2, 0)]);
+        deserialized.deserialize_ast().unwrap();
+
+        let cbor = SerializableDocument::from_document(&document)
+            .to_cbor()
+            .unwrap();
+        assert_eq!(
+            SerializableDocument::from_cbor(&cbor)
+                .unwrap()
+                .revisions
+                .len(),
+            1
+        );
     }
 
     #[test]

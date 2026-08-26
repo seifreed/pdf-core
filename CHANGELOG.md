@@ -54,4 +54,5 @@ The next release will be cut after the full CI and signed-tag checklist passes.
 - Hardened predictor dimension arithmetic against zero values and integer overflow.
 - Rejected overflowing ASCII85 tuples and fuzzed every stream-filter variant.
 - Preserved AST node source offsets and sizes through graph serialization.
+- Added JSON/CBOR document envelope round-trips for AST graphs and revisions.
 - Fixed the corpus benchmark to ignore non-PDF metadata files.
