@@ -15,6 +15,8 @@ Actualizacion 2026-08-27: la campana de ClusterFuzzLite encontro y ya tiene
 corregidos dos crashes reproducibles en entradas malformadas, uno en hex
 invalido de CMap y otro en cabeceras JBIG2 truncadas. Las correcciones estan
 en `9b640bb` y `44dd805`, con regresiones locales y fuzz dirigido en verde.
+El validador PDF/A ahora sigue recursos heredados desde `Pages`, incluyendo
+referencias indirectas y ciclos controlados, con regresion dedicada.
 La matriz de CI tambien instala qpdf/MuPDF para el diferencial, conserva el
 log y las metricas de memoria como artefacto, y ejecuta el corpus externo
 completo. Los workflows de CI y ClusterFuzzLite sobre `44dd805` siguen en

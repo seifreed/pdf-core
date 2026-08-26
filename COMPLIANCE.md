@@ -35,7 +35,7 @@ certificate.
 | ISO 32000-1/2 | Xref streams and hybrid xref | Partial | Bounded decoder; `test_hybrid_xref_table_and_stream` |
 | ISO 32000-1/2 | Incremental updates and `/Prev` | Partial | `test_incremental_xref_chain`; no complete conformance suite |
 | ISO 32000-1/2 | Object streams | Partial | Checked offsets and bounded decoding |
-| ISO 32000-1/2 | Inherited page resources | Partial | `test_page_resources_are_inherited_from_pages_node`; category merge with child override |
+| ISO 32000-1/2 | Inherited page resources | Partial | `test_page_resources_are_inherited_from_pages_node`; PDF/A Device color detection also follows `Pages` resources in `test_pdfa_color_space_validation_follows_inherited_page_resources` |
 | ISO 32000-1/2 | CMap and ToUnicode mappings | Partial | Variable-width code spaces, bfrange, and UTF-16BE tests |
 | ISO 19005-1:2005 | 6.3.4 embedded font programs | Preflight | `PDF_A_FONT_EMBEDDING` |
 | ISO 19005-1:2005 | 6.5.2 annotation types and 6.6.1 actions | Preflight | `PDF_A_MULTIMEDIA`, `PDF_A_JAVASCRIPT` |
