@@ -127,6 +127,7 @@ impl DecryptionPipeline {
             o.as_bytes().to_vec(),
             u.as_bytes().to_vec(),
         );
+        handler.set_file_id(self.file_id.clone());
 
         // Handle V4/V5 specific fields
         if v >= 4 {

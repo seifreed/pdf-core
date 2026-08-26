@@ -70,6 +70,7 @@ pub struct StandardSecurityHandler {
     pub stream_filter: String,                       // Default crypt filter for streams
     pub string_filter: String,                       // Default crypt filter for strings
     pub crypt_filters: HashMap<String, CryptFilter>, // Named crypt filters
+    file_id: Vec<u8>,
     encryption_key: Option<Vec<u8>>,
     version: i32,
     revision: i32,
@@ -99,6 +100,7 @@ impl StandardSecurityHandler {
             stream_filter: "StdCF".to_string(),
             string_filter: "StdCF".to_string(),
             crypt_filters: HashMap::new(),
+            file_id: Vec::new(),
             encryption_key: None,
             version: 0,
             revision: 0,
@@ -122,6 +124,7 @@ impl StandardSecurityHandler {
             stream_filter: "StdCF".to_string(),
             string_filter: "StdCF".to_string(),
             crypt_filters: HashMap::new(),
+            file_id: Vec::new(),
             encryption_key: None,
             version: v as i32,
             revision: r as i32,
@@ -129,12 +132,38 @@ impl StandardSecurityHandler {
             authenticated: false,
         }
     }
+
+    pub fn set_file_id(&mut self, file_id: Vec<u8>) {
+        self.file_id = file_id;
+    }
 }
 
 impl SecurityHandler for StandardSecurityHandler {
     fn authenticate(&mut self, password: &str) -> bool {
-        // Simplified authentication - in production would verify password
-        self.authenticated = !password.is_empty();
+        if !(2..=4).contains(&self.r) {
+            self.authenticated = false;
+            return false;
+        }
+
+        let info = EncryptionInfo {
+            algorithm: EncryptionAlgorithm::RC4,
+            version: self.v,
+            revision: self.r,
+            key_length: self.length,
+            permissions: self.p as u32,
+            owner_key: self.o.clone(),
+            user_key: self.u.clone(),
+            filter: "Standard".to_string(),
+            file_id: Some(self.file_id.clone()),
+        };
+        let validator = PasswordValidator;
+        self.authenticated = validator.validate_user_password(password, &info);
+        if self.authenticated {
+            self.encryption_key = PdfEncryptionHandler::new()
+                .compute_key_standard(&info, Some(password), None)
+                .ok();
+            self.authenticated = self.encryption_key.is_some();
+        }
         self.authenticated
     }
 
@@ -554,7 +583,7 @@ impl PdfEncryptionHandler {
     /// Encrypt data using AES
     fn encrypt_aes(&self, data: &[u8], key: &[u8], _key_bits: u32) -> CryptoResult<Vec<u8>> {
         // Generate random IV
-        let iv = self.generate_random_bytes(16);
+        let iv = self.generate_random_bytes(16)?;
 
         // Encrypt using AES-CBC
         let encrypted = aes_encrypt_cbc(data, key, Some(&iv))
@@ -568,13 +597,14 @@ impl PdfEncryptionHandler {
     }
 
     /// Generate random bytes for IV/salt
-    fn generate_random_bytes(&self, len: usize) -> Vec<u8> {
+    fn generate_random_bytes(&self, len: usize) -> CryptoResult<Vec<u8>> {
         use rand::TryRngCore;
         let mut buf = vec![0u8; len];
         let mut rng = rand::rngs::OsRng;
-        rng.try_fill_bytes(&mut buf)
-            .expect("OS randomness unavailable");
-        buf
+        rng.try_fill_bytes(&mut buf).map_err(|err| {
+            CryptoError::EncryptionError(format!("OS randomness unavailable: {err}"))
+        })?;
+        Ok(buf)
     }
 
     /// RC4 cipher implementation
@@ -725,38 +755,36 @@ pub struct PasswordValidator;
 impl PasswordValidator {
     /// Validate user password against encryption parameters
     pub fn validate_user_password(&self, password: &str, _encrypt_info: &EncryptionInfo) -> bool {
-        #[cfg(feature = "crypto")]
-        {
-            let handler = PdfEncryptionHandler::new();
-            let key = match handler.compute_key_standard(_encrypt_info, Some(password), None) {
-                Ok(k) => k,
+        if !(2..=4).contains(&_encrypt_info.revision) {
+            return false;
+        }
+
+        let handler = PdfEncryptionHandler::new();
+        let key = match handler.compute_key_standard(_encrypt_info, Some(password), None) {
+            Ok(k) => k,
+            Err(_) => return false,
+        };
+        let expected =
+            match handler.compute_user_key_standard(_encrypt_info, password.as_bytes(), &key) {
+                Ok(u) => u,
                 Err(_) => return false,
             };
 
-            let expected =
-                match handler.compute_user_key_standard(_encrypt_info, password.as_bytes(), &key) {
-                    Ok(u) => u,
-                    Err(_) => return false,
-                };
-
-            if _encrypt_info.revision >= 3 {
-                _encrypt_info.user_key.len() >= 16
-                    && expected.len() >= 16
-                    && _encrypt_info.user_key[..16] == expected[..16]
-            } else {
-                _encrypt_info.user_key == expected
-            }
-        }
-        #[cfg(not(feature = "crypto"))]
-        {
-            // Simple validation without crypto
-            !password.is_empty()
+        if _encrypt_info.revision >= 3 {
+            _encrypt_info.user_key.len() >= 16
+                && expected.len() >= 16
+                && _encrypt_info.user_key[..16] == expected[..16]
+        } else {
+            _encrypt_info.user_key == expected
         }
     }
 
     /// Validate owner password against encryption parameters
     pub fn validate_owner_password(&self, password: &str, _encrypt_info: &EncryptionInfo) -> bool {
-        #[cfg(feature = "crypto")]
+        if !(2..=4).contains(&_encrypt_info.revision) {
+            return false;
+        }
+
         {
             let handler = PdfEncryptionHandler::new();
             let owner_padded = pad_password(password.as_bytes());
@@ -814,11 +842,6 @@ impl PasswordValidator {
             } else {
                 _encrypt_info.user_key == expected
             }
-        }
-        #[cfg(not(feature = "crypto"))]
-        {
-            // Simple validation without crypto
-            !password.is_empty()
         }
     }
 
@@ -916,9 +939,38 @@ mod tests {
         // Test empty password (should work for this test)
         #[cfg(not(feature = "crypto"))]
         {
-            assert!(_validator.validate_user_password("test", &_encrypt_info));
+            assert!(!_validator.validate_user_password("test", &_encrypt_info));
             assert!(!_validator.validate_user_password("", &_encrypt_info));
         }
+    }
+
+    #[test]
+    fn password_validator_accepts_only_derived_user_key() {
+        let handler = PdfEncryptionHandler::new();
+        let mut info = EncryptionInfo {
+            algorithm: EncryptionAlgorithm::RC4,
+            version: 1,
+            revision: 2,
+            key_length: 40,
+            permissions: 0xFFFFFFFC,
+            owner_key: Vec::new(),
+            user_key: Vec::new(),
+            filter: "Standard".to_string(),
+            file_id: Some(b"file-id".to_vec()),
+        };
+        info.owner_key = handler
+            .compute_owner_key_standard(&info, b"owner", b"user")
+            .unwrap();
+        let key = handler
+            .compute_key_standard(&info, Some("user"), None)
+            .unwrap();
+        info.user_key = handler
+            .compute_user_key_standard(&info, b"user", &key)
+            .unwrap();
+
+        let validator = PasswordValidator;
+        assert!(validator.validate_user_password("user", &info));
+        assert!(!validator.validate_user_password("wrong", &info));
     }
 }
 
