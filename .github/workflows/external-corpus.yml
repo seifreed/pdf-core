@@ -26,18 +26,18 @@ jobs:
 
       - name: Fetch pinned project corpus
         env:
-          PDF_CORPUS_COMMIT: 7920e330d56e730623b75c38613dd5049d3b15c7
+          PDF_CORPUS_COMMIT: 01a9260a0c098940498925a398c273717a1706c4
         run: tools/fetch-verapdf-corpus.sh "fixtures" "$RUNNER_TEMP/verapdf-corpus"
 
       - name: Run panic regression test
         env:
           PDF_EXTERNAL_CORPUS: ${{ runner.temp }}/verapdf-corpus
           PDF_VERAPDF_CORPUS: ${{ runner.temp }}/verapdf-corpus/verapdf-pdfa-1b
-          PDF_EXTERNAL_MAX_FILES: "1000"
+          PDF_EXTERNAL_MAX_FILES: "3000"
         run: cargo test --test external_corpus_tests --locked -- --test-threads=1
 
       - name: Run veraPDF comparison
         env:
           PDF_EXTERNAL_CORPUS: ${{ runner.temp }}/verapdf-corpus
-          PDF_EXTERNAL_MAX_FILES: "1000"
+          PDF_EXTERNAL_MAX_FILES: "3000"
         run: cargo test --test verapdf_tests --locked -- --test-threads=1
