@@ -55,4 +55,5 @@ The next release will be cut after the full CI and signed-tag checklist passes.
 - Rejected overflowing ASCII85 tuples and fuzzed every stream-filter variant.
 - Preserved AST node source offsets and sizes through graph serialization.
 - Added JSON/CBOR document envelope round-trips for AST graphs and revisions.
+- Added dedicated fuzz targets for indirect streams and xref streams.
 - Fixed the corpus benchmark to ignore non-PDF metadata files.

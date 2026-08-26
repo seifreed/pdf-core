@@ -109,4 +109,18 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "streams"
+path = "fuzz_targets/streams.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "xref_streams"
+path = "fuzz_targets/xref_streams.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]
