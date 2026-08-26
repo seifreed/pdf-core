@@ -112,7 +112,8 @@ impl<'a> TextExtractor<'a> {
                     // Get font node from AST
                     // Parse font info
                     let font_info = self.parse_font_info(name.as_str(), font_ref);
-                    self.fonts.insert(name.to_string(), font_info);
+                    self.fonts
+                        .insert(name.without_slash().to_string(), font_info);
                 }
             }
         }

@@ -1,7 +1,7 @@
-use pdf_ast::{AstNode, NodeType, PdfDictionary, PdfDocument, PdfValue};
+use pdf_ast::{NodeType, PdfDocument, PdfValue};
 use serde::{Deserialize, Serialize};
 use similar::{ChangeTag, TextDiff};
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PdfDiffResult {
@@ -152,8 +152,10 @@ impl<'a> DocumentDiffer<'a> {
         self.compare_structure();
         self.compare_pages();
 
-        let total_changes =
-            self.structure_changes.len() + self.content_changes.len() + self.metadata_changes.len();
+        let total_changes = self.structure_changes.len()
+            + self.content_changes.len()
+            + self.metadata_changes.len()
+            + self.page_changes.len();
 
         let similarity_score = self.calculate_similarity();
 
@@ -296,13 +298,12 @@ impl<'a> DocumentDiffer<'a> {
                     });
                 }
                 (true, true) => {
-                    // Compare page content (simplified)
-                    let sample_text1 = format!("Sample text from page {} in doc1", page_num);
-                    let sample_text2 = format!("Sample text from page {} in doc2", page_num);
+                    let page_text1 = self.page_content(self.doc1, page_num);
+                    let page_text2 = self.page_content(self.doc2, page_num);
 
-                    if sample_text1 != sample_text2 {
+                    if page_text1 != page_text2 {
                         let text_changes =
-                            PdfDiffer::find_text_differences(&sample_text1, &sample_text2);
+                            PdfDiffer::find_text_differences(&page_text1, &page_text2);
 
                         if !text_changes.is_empty() {
                             self.page_changes.push(PageChange {
@@ -319,6 +320,50 @@ impl<'a> DocumentDiffer<'a> {
         }
     }
 
+    fn page_content(&self, document: &PdfDocument, page_number: usize) -> String {
+        let Some(page_id) = document.get_page(page_number.saturating_sub(1)) else {
+            return String::new();
+        };
+        let Some(page) = document.ast.get_node(page_id) else {
+            return String::new();
+        };
+        let mut content = String::new();
+        let mut seen = HashSet::new();
+        if let PdfValue::Dictionary(dict) = &page.value {
+            if let Some(contents) = dict.get("Contents") {
+                Self::collect_content(document, contents, &mut seen, &mut content);
+            }
+        }
+        content
+    }
+
+    fn collect_content(
+        document: &PdfDocument,
+        value: &PdfValue,
+        seen: &mut HashSet<pdf_ast::types::ObjectId>,
+        output: &mut String,
+    ) {
+        match value {
+            PdfValue::Stream(stream) => {
+                if let Ok(bytes) = stream.decode_with_limits(5 * 1024 * 1024, 50) {
+                    output.push_str(&String::from_utf8_lossy(&bytes));
+                    output.push('\n');
+                }
+            }
+            PdfValue::Array(items) => {
+                for item in items {
+                    Self::collect_content(document, item, seen, output);
+                }
+            }
+            PdfValue::Reference(reference) if seen.insert(reference.id()) => {
+                if let Some(node) = document.ast.get_node_by_object(reference.id()) {
+                    Self::collect_content(document, &node.value, seen, output);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn calculate_similarity(&self) -> f64 {
         let total_changes = self.structure_changes.len()
             + self.content_changes.len()
@@ -329,10 +374,10 @@ impl<'a> DocumentDiffer<'a> {
             return 1.0; // Identical documents
         }
 
-        let total_items = self.doc1.ast.node_count() + self.doc1.metadata.page_count + 10; // Base metadata items
+        let total_items = (self.doc1.ast.node_count() + self.doc1.metadata.page_count + 10) as f64;
 
-        let similarity = 1.0 - (total_changes as f64 / total_items as f64);
-        similarity.max(0.0).min(1.0)
+        let similarity = 1.0 - (total_changes as f64 / total_items);
+        similarity.clamp(0.0, 1.0)
     }
 
     fn count_pages_added(&self) -> usize {

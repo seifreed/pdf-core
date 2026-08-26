@@ -1,6 +1,7 @@
-use pdf_ast::{AstNode, NodeType, PdfDictionary, PdfDocument, Visitor, VisitorAction};
+use pdf_ast::parser::content_operands::parse_content_stream;
+use pdf_ast::{AstNode, PdfDictionary, PdfDocument, PdfValue, Visitor, VisitorAction};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::HashSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextExtractionResult {
@@ -143,6 +144,16 @@ impl TextExtractor {
     pub fn extract(&mut self, document: &PdfDocument) -> TextExtractionResult {
         let start = std::time::Instant::now();
 
+        self.pages.clear();
+        self.fonts.clear();
+        self.current_page = 0;
+        self.extraction_stats = ExtractionStats {
+            total_words: 0,
+            total_characters: 0,
+            fonts_found: 0,
+            images_found: 0,
+        };
+
         // Initialize pages
         for i in 0..document.metadata.page_count {
             self.pages.push(PageText {
@@ -154,7 +165,17 @@ impl TextExtractor {
             });
         }
 
-        // Walk through AST
+        for (page_index, page_id) in document.get_pages().into_iter().enumerate() {
+            if let Some(page) = document
+                .ast
+                .get_node(page_id)
+                .and_then(|node| node.as_dict())
+            {
+                self.extract_page(document, page, page_index);
+            }
+        }
+
+        // Collect font and image metadata from the resolved AST.
         let mut walker = pdf_ast::visitor::AstWalker::new(&document.ast);
         walker.walk(self);
 
@@ -180,34 +201,82 @@ impl TextExtractor {
             },
         }
     }
+
+    fn extract_page(&mut self, document: &PdfDocument, page: &PdfDictionary, page_index: usize) {
+        let resources = page
+            .get("Resources")
+            .and_then(|value| Self::resolve_dictionary(document, value))
+            .unwrap_or_default();
+        let mut streams = Vec::new();
+        let mut seen = HashSet::new();
+        if let Some(contents) = page.get("Contents") {
+            Self::collect_streams(document, contents, &mut streams, &mut seen);
+        }
+
+        for stream in streams {
+            let bytes = match stream.decode_with_limits(5 * 1024 * 1024, 50) {
+                Ok(bytes) => bytes,
+                Err(_) => continue,
+            };
+            let operators = parse_content_stream(&bytes);
+            let mut extractor =
+                pdf_ast::parser::text_extraction::TextExtractor::new(&document.ast, &resources);
+            for span in extractor.extract_text(&operators) {
+                if let Some(page_text) = self.pages.get_mut(page_index) {
+                    page_text.text.push_str(&span.text);
+                    page_text.formatted_text.push_str(&span.text);
+                    page_text.text_blocks.push(TextBlock {
+                        text: span.text,
+                        x: span.x,
+                        y: span.y,
+                        width: span.width,
+                        height: span.height,
+                        font: span.font_name,
+                        font_size: span.font_size,
+                        color: "unknown".to_string(),
+                    });
+                }
+            }
+        }
+    }
+
+    fn resolve_dictionary(document: &PdfDocument, value: &PdfValue) -> Option<PdfDictionary> {
+        match value {
+            PdfValue::Dictionary(dict) => Some(dict.clone()),
+            PdfValue::Reference(reference) => document
+                .ast
+                .get_node_by_object(reference.id())
+                .and_then(|node| node.as_dict().cloned()),
+            _ => None,
+        }
+    }
+
+    fn collect_streams(
+        document: &PdfDocument,
+        value: &PdfValue,
+        streams: &mut Vec<pdf_ast::types::PdfStream>,
+        seen: &mut HashSet<pdf_ast::types::ObjectId>,
+    ) {
+        match value {
+            PdfValue::Stream(stream) => streams.push(stream.clone()),
+            PdfValue::Array(items) => {
+                for item in items {
+                    Self::collect_streams(document, item, streams, seen);
+                }
+            }
+            PdfValue::Reference(reference) if seen.insert(reference.id()) => {
+                if let Some(node) = document.ast.get_node_by_object(reference.id()) {
+                    Self::collect_streams(document, &node.value, streams, seen);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Visitor for TextExtractor {
     fn visit_page(&mut self, _node: &AstNode, dict: &PdfDictionary) -> VisitorAction {
-        // Extract page content - would need content stream parsing
-        if let Some(contents) = dict.get("Contents") {
-            // Process content streams for text extraction
-            let sample_text = "Sample extracted text from page";
-            if self.current_page < self.pages.len() {
-                self.pages[self.current_page].text.push_str(sample_text);
-                self.pages[self.current_page]
-                    .formatted_text
-                    .push_str(sample_text);
-
-                // Add sample text block
-                self.pages[self.current_page].text_blocks.push(TextBlock {
-                    text: sample_text.to_string(),
-                    x: 72.0,
-                    y: 720.0,
-                    width: 200.0,
-                    height: 12.0,
-                    font: "Times-Roman".to_string(),
-                    font_size: 12.0,
-                    color: "#000000".to_string(),
-                });
-            }
-        }
-
+        let _ = dict;
         self.current_page += 1;
         VisitorAction::Continue
     }
@@ -223,7 +292,7 @@ impl Visitor for TextExtractor {
             .get("Encoding")
             .and_then(|v| v.as_name())
             .map(|n| n.without_slash().to_string())
-            .unwrap_or_else(|| "StandardEncoding".to_string());
+            .unwrap_or_else(|| "Unknown".to_string());
 
         let embedded = dict.get("FontFile").is_some()
             || dict.get("FontFile2").is_some()
@@ -233,7 +302,7 @@ impl Visitor for TextExtractor {
             .get("Subtype")
             .and_then(|v| v.as_name())
             .map(|n| n.without_slash().to_string())
-            .unwrap_or_else(|| "Type1".to_string());
+            .unwrap_or_else(|| "Unknown".to_string());
 
         self.fonts.push(FontInfo {
             name: font_name.clone(),
@@ -248,15 +317,27 @@ impl Visitor for TextExtractor {
     }
 
     fn visit_image(&mut self, _node: &AstNode, dict: &PdfDictionary) -> VisitorAction {
-        let image_name = format!("Image_{}", self.extraction_stats.images_found + 1);
+        let image_name = dict
+            .get("Name")
+            .and_then(|value| value.as_name())
+            .map(|name| name.without_slash().to_string())
+            .unwrap_or_else(|| format!("Image_{}", self.extraction_stats.images_found + 1));
+        let width = dict
+            .get("Width")
+            .and_then(|value| value.as_integer())
+            .unwrap_or(0) as f64;
+        let height = dict
+            .get("Height")
+            .and_then(|value| value.as_integer())
+            .unwrap_or(0) as f64;
 
         if self.current_page > 0 && self.current_page <= self.pages.len() {
             self.pages[self.current_page - 1].images.push(ImageInfo {
                 name: image_name,
-                x: 100.0,
-                y: 500.0,
-                width: 200.0,
-                height: 150.0,
+                x: 0.0,
+                y: 0.0,
+                width,
+                height,
                 alt_text: None,
             });
         }
@@ -319,5 +400,56 @@ mod tests {
         let doc = PdfDocument::new(PdfVersion::new(1, 7));
         let text = extract_plain_text(&doc);
         assert!(text.is_empty());
+    }
+
+    #[test]
+    fn extracts_text_from_a_real_content_stream() {
+        use pdf_ast::ast::NodeType;
+        use pdf_ast::types::{ObjectId, PdfName, PdfReference, PdfStream, StreamData};
+
+        let mut document = PdfDocument::new(PdfVersion::new(1, 7));
+        let mut font = PdfDictionary::new();
+        font.insert("BaseFont", PdfValue::Name(PdfName::new("Helvetica")));
+        document.ast.create_node(
+            NodeType::Object(ObjectId::new(1, 0)),
+            PdfValue::Dictionary(font),
+        );
+
+        let mut resources = PdfDictionary::new();
+        let mut fonts = PdfDictionary::new();
+        fonts.insert("F1", PdfValue::Reference(PdfReference::new(1, 0)));
+        resources.insert("Font", PdfValue::Dictionary(fonts));
+
+        let mut page = PdfDictionary::new();
+        page.insert("Resources", PdfValue::Dictionary(resources));
+        page.insert(
+            "Contents",
+            PdfValue::Stream(PdfStream {
+                dict: PdfDictionary::new(),
+                data: StreamData::Raw(b"BT /F1 12 Tf 10 10 Td (Hello) Tj ET".to_vec()),
+            }),
+        );
+        document
+            .ast
+            .create_node(NodeType::Page, PdfValue::Dictionary(page));
+        document.metadata.page_count = 1;
+
+        assert_eq!(document.get_pages().len(), 1);
+        let operators = parse_content_stream(b"BT /F1 12 Tf 10 10 Td (Hello) Tj ET");
+        assert!(!operators.is_empty());
+        let page_id = document.get_pages()[0];
+        let page = document.ast.get_node(page_id).unwrap();
+        let resources = page
+            .as_dict()
+            .unwrap()
+            .get("Resources")
+            .unwrap()
+            .as_dict()
+            .unwrap();
+        let mut core_extractor =
+            pdf_ast::parser::text_extraction::TextExtractor::new(&document.ast, resources);
+        assert_eq!(core_extractor.extract_text(&operators).len(), 1);
+        let result = extract_text(&document);
+        assert_eq!(result.pages[0].text, "Hello");
     }
 }
