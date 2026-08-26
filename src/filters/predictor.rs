@@ -47,11 +47,9 @@ impl PredictorDecoder {
     }
 
     fn decode_tiff_predictor(&self, data: &[u8]) -> FilterResult<Vec<u8>> {
-        let bytes_per_pixel = (self.colors as u32 * self.bits_per_component as u32).div_ceil(8);
-        let bytes_per_row =
-            (self.columns * self.colors as u32 * self.bits_per_component as u32).div_ceil(8);
+        let (bytes_per_pixel, bytes_per_row) = self.row_dimensions()?;
 
-        if !data.len().is_multiple_of(bytes_per_row as usize) {
+        if !data.len().is_multiple_of(bytes_per_row) {
             return Err(crate::filters::FilterError::InvalidData(
                 "Data length not divisible by row length for TIFF predictor".to_string(),
             ));
@@ -59,11 +57,11 @@ impl PredictorDecoder {
 
         let mut result = Vec::with_capacity(data.len());
 
-        for row in data.chunks_exact(bytes_per_row as usize) {
-            let mut decoded_row = vec![0u8; bytes_per_row as usize];
+        for row in data.chunks_exact(bytes_per_row) {
+            let mut decoded_row = vec![0u8; bytes_per_row];
 
             // Copy first pixel as-is
-            let pixel_size = bytes_per_pixel as usize;
+            let pixel_size = bytes_per_pixel;
             decoded_row[..pixel_size].copy_from_slice(&row[..pixel_size]);
 
             // Decode subsequent pixels
@@ -82,10 +80,12 @@ impl PredictorDecoder {
     }
 
     fn decode_png_predictor(&self, data: &[u8]) -> FilterResult<Vec<u8>> {
-        let bytes_per_pixel = (self.colors as u32 * self.bits_per_component as u32).div_ceil(8);
-        let bytes_per_row =
-            (self.columns * self.colors as u32 * self.bits_per_component as u32).div_ceil(8);
-        let row_length = bytes_per_row as usize + 1; // +1 for predictor byte
+        let (bytes_per_pixel, bytes_per_row) = self.row_dimensions()?;
+        let row_length = bytes_per_row.checked_add(1).ok_or_else(|| {
+            crate::filters::FilterError::InvalidData(
+                "PNG predictor row length overflow".to_string(),
+            )
+        })?; // +1 for predictor byte
 
         if !data.len().is_multiple_of(row_length) {
             return Err(crate::filters::FilterError::InvalidData(
@@ -94,12 +94,12 @@ impl PredictorDecoder {
         }
 
         let mut result = Vec::new();
-        let mut previous_row: Vec<u8> = vec![0; bytes_per_row as usize];
+        let mut previous_row: Vec<u8> = vec![0; bytes_per_row];
 
         for chunk in data.chunks_exact(row_length) {
             let predictor_byte = chunk[0];
             let row_data = &chunk[1..];
-            let mut decoded_row = vec![0u8; bytes_per_row as usize];
+            let mut decoded_row = vec![0u8; bytes_per_row];
 
             match predictor_byte {
                 0 => {
@@ -108,12 +108,11 @@ impl PredictorDecoder {
                 }
                 1 => {
                     // Sub predictor - add left pixel
-                    decoded_row[..bytes_per_pixel as usize]
-                        .copy_from_slice(&row_data[..bytes_per_pixel as usize]);
+                    decoded_row[..bytes_per_pixel].copy_from_slice(&row_data[..bytes_per_pixel]);
 
-                    for i in bytes_per_pixel as usize..decoded_row.len() {
+                    for i in bytes_per_pixel..decoded_row.len() {
                         let current = row_data[i] as u16;
-                        let left = decoded_row[i - bytes_per_pixel as usize] as u16;
+                        let left = decoded_row[i - bytes_per_pixel] as u16;
                         decoded_row[i] = ((current + left) & 0xFF) as u8;
                     }
                 }
@@ -129,8 +128,8 @@ impl PredictorDecoder {
                     // Average predictor
                     for i in 0..decoded_row.len() {
                         let current = row_data[i] as u16;
-                        let left = if i >= bytes_per_pixel as usize {
-                            decoded_row[i - bytes_per_pixel as usize] as u16
+                        let left = if i >= bytes_per_pixel {
+                            decoded_row[i - bytes_per_pixel] as u16
                         } else {
                             0
                         };
@@ -143,14 +142,14 @@ impl PredictorDecoder {
                     // Paeth predictor
                     for i in 0..decoded_row.len() {
                         let current = row_data[i] as u16;
-                        let left = if i >= bytes_per_pixel as usize {
-                            decoded_row[i - bytes_per_pixel as usize] as u16
+                        let left = if i >= bytes_per_pixel {
+                            decoded_row[i - bytes_per_pixel] as u16
                         } else {
                             0
                         };
                         let up = previous_row[i] as u16;
-                        let up_left = if i >= bytes_per_pixel as usize {
-                            previous_row[i - bytes_per_pixel as usize] as u16
+                        let up_left = if i >= bytes_per_pixel {
+                            previous_row[i - bytes_per_pixel] as u16
                         } else {
                             0
                         };
@@ -172,6 +171,44 @@ impl PredictorDecoder {
         }
 
         Ok(result)
+    }
+
+    fn row_dimensions(&self) -> FilterResult<(usize, usize)> {
+        let bits = u64::from(self.bits_per_component);
+        let colors = u64::from(self.colors);
+        let columns = u64::from(self.columns);
+        let bytes_per_pixel = colors
+            .checked_mul(bits)
+            .ok_or_else(|| {
+                crate::filters::FilterError::InvalidData(
+                    "Predictor pixel size overflow".to_string(),
+                )
+            })?
+            .div_ceil(8);
+        let bytes_per_row = columns
+            .checked_mul(colors)
+            .and_then(|value| value.checked_mul(bits))
+            .ok_or_else(|| {
+                crate::filters::FilterError::InvalidData("Predictor row size overflow".to_string())
+            })?
+            .div_ceil(8);
+
+        let bytes_per_pixel = usize::try_from(bytes_per_pixel).map_err(|_| {
+            crate::filters::FilterError::InvalidData(
+                "Predictor pixel size exceeds platform limit".to_string(),
+            )
+        })?;
+        let bytes_per_row = usize::try_from(bytes_per_row).map_err(|_| {
+            crate::filters::FilterError::InvalidData(
+                "Predictor row size exceeds platform limit".to_string(),
+            )
+        })?;
+        if bytes_per_pixel == 0 || bytes_per_row == 0 {
+            return Err(crate::filters::FilterError::InvalidData(
+                "Predictor dimensions must be non-zero".to_string(),
+            ));
+        }
+        Ok((bytes_per_pixel, bytes_per_row))
     }
 }
 
@@ -223,5 +260,16 @@ mod tests {
         let result = decoder.decode(&data).unwrap();
         // Expected: [10, 20] (first row) + [15, 28] (10+5, 20+8)
         assert_eq!(result, vec![10, 20, 15, 28]);
+    }
+
+    #[test]
+    fn rejects_zero_or_overflowing_predictor_dimensions() {
+        for (colors, bits, columns) in [(0, 8, 1), (1, 0, 1), (1, 8, 0)] {
+            let decoder = PredictorDecoder::new(2, colors, bits, columns);
+            assert!(decoder.decode(&[1]).is_err());
+        }
+
+        let decoder = PredictorDecoder::new(2, u8::MAX, u8::MAX, u32::MAX);
+        assert!(decoder.decode(&[1]).is_err());
     }
 }

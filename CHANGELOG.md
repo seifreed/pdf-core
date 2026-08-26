@@ -51,4 +51,5 @@ The next release will be cut after the full CI and signed-tag checklist passes.
 - Added an explicit AST `1.0` to `1.1.0` migration and fuzz coverage for JSON/CBOR deserialization.
 - Compliance adapter reports now preserve rule locations, source offsets, expected actions, and registry ISO references.
 - Hardened color-space and page-tree array parsing against malformed input without unchecked indexing.
+- Hardened predictor dimension arithmetic against zero values and integer overflow.
 - Fixed the corpus benchmark to ignore non-PDF metadata files.
