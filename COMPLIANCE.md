@@ -74,9 +74,19 @@ PDF/A and PDF/UA validators are then run against those serialized bytes.
 
 The latest local parser gate (2026-08-26 UTC, corpus commit
 `9979a2a8618dcdf23ad3f20c760c1f06e5b36fe6`) processed 2,809 files and
-161,227,640 bytes without a panic. It recorded 577 controlled parse errors,
-`peak_rss_kib=215552`, and p50/p95/p99 latencies of 3/59/143 ms. Reproduce it
+161,227,640 bytes without a panic. It recorded 691 controlled parse errors,
+`peak_rss_kib=213520`, and p50/p95/p99 latencies of 3/47/120 ms. Reproduce it
 with `PDF_EXTERNAL_CORPUS=/path/to/pdf-core-corpus/fixtures PDF_EXTERNAL_MAX_FILES=3000 cargo test --test external_corpus_tests --locked -- --test-threads=1 --nocapture`.
+
+The same corpus was run through the tolerant parser and the installed qpdf and
+MuPDF reference tools. It processed all 2,809 files and recorded 2,809,
+2,419, and 2,801 accepted files respectively, with 397 observed differences;
+396 were disagreements between the reference tools and one was a consensus
+difference against both. The run took 269,069 ms with p50/p95/p99 latencies of
+33/115/254 ms. These differences are diagnostic evidence, not a conformance
+claim: the corpus intentionally includes malformed files and the tools use
+different recovery policies. Reproduce it with
+`PDF_EXTERNAL_CORPUS=/path/to/pdf-core-corpus/fixtures PDF_EXTERNAL_MAX_FILES=3000 cargo test --test differential_tests --locked -- --test-threads=1 --nocapture`.
 
 The matching local veraPDF 1.30.2 comparison (same date and corpus revision)
 checked all 569 PDF/A-1b fixtures: 263 were PDF/A-1b conformant, 6 were
