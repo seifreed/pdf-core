@@ -1,4 +1,5 @@
 use crate::ast::{NodeId, NodeType, PdfAstGraph};
+use crate::serialization::{edge_type_name, node_type_name};
 use crate::types::{
     ObjectId, PdfArray, PdfDictionary, PdfName, PdfReference, PdfStream, PdfString, PdfValue,
     StreamData,
@@ -488,7 +489,7 @@ impl SchemaExporter {
 
                 nodes.push(StableNode {
                     id: stable_id,
-                    node_type: format!("{:?}", node.node_type),
+                    node_type: node_type_name(&node.node_type).to_string(),
                     value_type: self.get_value_type(&node.value),
                     value: value_json,
                     metadata,
@@ -520,7 +521,7 @@ impl SchemaExporter {
             edges.push(StableEdge {
                 source: source_id,
                 target: target_id,
-                edge_type: format!("{:?}", edge.edge_type),
+                edge_type: edge_type_name(edge.edge_type).to_string(),
                 metadata: HashMap::new(),
             });
         }

@@ -472,7 +472,7 @@ impl GraphDeserializer {
     }
 }
 
-fn node_type_name(node_type: &NodeType) -> &'static str {
+pub(crate) fn node_type_name(node_type: &NodeType) -> &'static str {
     match node_type {
         NodeType::Root => "Root",
         NodeType::Catalog => "Catalog",
@@ -558,7 +558,7 @@ fn node_type_name(node_type: &NodeType) -> &'static str {
     }
 }
 
-fn edge_type_name(edge_type: EdgeType) -> &'static str {
+pub(crate) fn edge_type_name(edge_type: EdgeType) -> &'static str {
     match edge_type {
         EdgeType::Child => "Child",
         EdgeType::Reference => "Reference",
