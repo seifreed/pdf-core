@@ -161,7 +161,7 @@ fn decode_ascii_hex(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, Fil
 }
 
 /// Powers of 85 for ASCII85 decoding: [85^4, 85^3, 85^2, 85^1, 85^0]
-const ASCII85_POWERS: [u32; 5] = [52200625, 614125, 7225, 85, 1];
+const ASCII85_POWERS: [u64; 5] = [52200625, 614125, 7225, 85, 1];
 
 fn decode_ascii85(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
     let mut result = Vec::new();
@@ -196,7 +196,7 @@ fn decode_ascii85(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, Filte
         tuple.push(byte - b'!');
 
         if tuple.len() == 5 {
-            let value = ascii85_tuple_to_u32(&tuple);
+            let value = ascii85_tuple_to_u32(&tuple)?;
             if 4 > max_output_bytes.saturating_sub(result.len()) {
                 return Err(FilterError::DecompressionError(
                     "ASCII85 output exceeds limit".to_string(),
@@ -210,7 +210,7 @@ fn decode_ascii85(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, Filte
     if !tuple.is_empty() {
         let bytes_to_take = tuple.len() - 1;
         tuple.resize(5, 84);
-        let value = ascii85_tuple_to_u32(&tuple);
+        let value = ascii85_tuple_to_u32(&tuple)?;
         if bytes_to_take > max_output_bytes.saturating_sub(result.len()) {
             return Err(FilterError::DecompressionError(
                 "ASCII85 output exceeds limit".to_string(),
@@ -222,11 +222,15 @@ fn decode_ascii85(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, Filte
     Ok(result)
 }
 
-fn ascii85_tuple_to_u32(tuple: &[u8]) -> u32 {
+fn ascii85_tuple_to_u32(tuple: &[u8]) -> Result<u32, FilterError> {
     tuple
         .iter()
         .zip(ASCII85_POWERS.iter())
-        .fold(0u32, |acc, (&digit, &power)| acc + digit as u32 * power)
+        .try_fold(0u64, |acc, (&digit, &power)| {
+            acc.checked_add(digit as u64 * power)
+        })
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| FilterError::InvalidData("ASCII85 tuple overflow".to_string()))
 }
 
 fn decode_flate_raw(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
@@ -642,5 +646,12 @@ mod tests {
         assert!(run_length_error
             .to_string()
             .contains("RunLength output exceeds limit"));
+    }
+
+    #[test]
+    fn rejects_overflowing_ascii85_tuples() {
+        let error = decode_stream_with_limits(b"uuuuu", &[StreamFilter::ASCII85Decode], 16, 10)
+            .expect_err("an ASCII85 tuple must fit in u32");
+        assert!(error.to_string().contains("ASCII85 tuple overflow"));
     }
 }
