@@ -63,9 +63,8 @@ fn peak_rss_kib() -> Option<u64> {
 
 fn verify_checksums(root: &Path) -> usize {
     let checksum_path = root.join("SHA256SUMS");
-    let Ok(checksums) = fs::read_to_string(&checksum_path) else {
-        return 0;
-    };
+    let checksums = fs::read_to_string(&checksum_path)
+        .unwrap_or_else(|err| panic!("read checksum manifest {}: {err}", checksum_path.display()));
 
     let mut checked = 0;
     for line in checksums.lines().filter(|line| !line.trim().is_empty()) {
@@ -119,6 +118,10 @@ fn external_corpus_has_no_parser_panics() {
 
     assert!(!files.is_empty(), "external corpus contains no PDF files");
     let hashes_verified = verify_checksums(Path::new(&root));
+    assert!(
+        hashes_verified >= files.len(),
+        "checksum manifest must cover the selected external corpus PDFs"
+    );
 
     let parser = PdfParser::new();
     let started = Instant::now();
