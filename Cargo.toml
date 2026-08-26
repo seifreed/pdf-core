@@ -102,14 +102,14 @@ libc = "0.2"
 regex = "1.10"
 rand = "0.9"
 md5 = "0.7"
-sha2 = "0.10"
+sha2 = "0.11"
 sha1 = "0.10"
 
 [dev-dependencies]
 criterion = "0.5"
 pretty_assertions = "1.4"
 proptest = "1.4"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 
 [features]
