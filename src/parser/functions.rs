@@ -504,7 +504,9 @@ impl<'a> FunctionParser<'a> {
         }
 
         let x = input[0];
-        let (d_min, d_max) = func.domain[0];
+        let Some(&(d_min, d_max)) = func.domain.first() else {
+            return Vec::new();
+        };
         let x_clipped = x.max(d_min).min(d_max);
 
         // Find which sub-function to use
@@ -603,7 +605,9 @@ impl<'a> BitReader<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{FunctionParser, PdfFunction, SampledFunction};
+    use super::{
+        ExponentialFunction, FunctionParser, PdfFunction, SampledFunction, StitchingFunction,
+    };
     use crate::ast::PdfAstGraph;
     use crate::parser::reference_resolver::ObjectNodeMap;
 
@@ -624,5 +628,27 @@ mod tests {
         });
 
         assert_eq!(parser.evaluate(&function, &[0.5]).len(), 1);
+    }
+
+    #[test]
+    fn type3_evaluation_rejects_empty_domain() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let parser = FunctionParser::new(&mut ast, &resolver);
+        let function = PdfFunction::Type3(StitchingFunction {
+            domain: Vec::new(),
+            range: Vec::new(),
+            functions: vec![Box::new(PdfFunction::Type2(ExponentialFunction {
+                domain: vec![(0.0, 1.0)],
+                range: Vec::new(),
+                c0: vec![0.0],
+                c1: vec![1.0],
+                n: 1.0,
+            }))],
+            bounds: Vec::new(),
+            encode: Vec::new(),
+        });
+
+        assert!(parser.evaluate(&function, &[0.5]).is_empty());
     }
 }
