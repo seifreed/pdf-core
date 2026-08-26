@@ -2,7 +2,7 @@
 name = "pdf-sec-analyzer"
 version = "0.1.0"
 edition = "2021"
-authors = ["PDF-AST Team"]
+authors = ["Marc Rivero <mriverolopez@gmail.com>"]
 description = "Security analysis library for PDF documents using PDF-AST"
 license = "MIT"
 

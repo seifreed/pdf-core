@@ -2,7 +2,7 @@
 name = "pdf-diff"
 version = "0.1.0"
 edition = "2021"
-authors = ["PDF-AST Team"]
+authors = ["Marc Rivero <mriverolopez@gmail.com>"]
 description = "PDF document comparison and diff library using PDF-AST"
 license = "MIT"
 

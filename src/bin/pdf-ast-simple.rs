@@ -7,8 +7,8 @@ use std::time::Instant;
 
 #[derive(Parser)]
 #[command(name = "pdf-ast-simple")]
-#[command(about = "PDF-AST: Simple PDF Analysis Tool")]
-#[command(version = "1.0.0")]
+#[command(about = "Experimental PDF analysis tool")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -63,7 +63,10 @@ fn main() {
         .format_timestamp_secs()
         .init();
 
-    info!("PDF-AST Simple CLI Tool v1.0.0 starting");
+    info!(
+        "PDF-AST Simple CLI Tool v{} starting",
+        env!("CARGO_PKG_VERSION")
+    );
 
     let result = match cli.command {
         Commands::Parse { input, output } => handle_parse(input, output),

@@ -374,7 +374,7 @@ mod tests {
     #[test]
     fn parses_indirect_stream_length_without_scanning_for_endstream() {
         let data = b"1 0 obj\n<< /Length 9 0 R >>\nstream\nabcendstreamxyz\nendstream\nendobj";
-        let (remaining, (_, value)) = parse_indirect_stream_prefix(data).unwrap();
+        let (remaining, (_, _dict)) = parse_indirect_stream_prefix(data).unwrap();
         assert_eq!(remaining, b"abcendstreamxyz\nendstream\nendobj");
 
         let (_, (_, value)) = parse_indirect_object_with_stream_length(data, 15).unwrap();

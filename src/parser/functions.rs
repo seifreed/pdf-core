@@ -2,7 +2,7 @@ use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
 use crate::parser::reference_resolver::ObjectNodeMap;
 use crate::types::{PdfDictionary, PdfStream, PdfValue};
 
-/// Complete PDF Function parser for all types
+/// Experimental PDF Function parser for the supported function types.
 #[derive(Debug, Clone)]
 pub enum PdfFunction {
     Type0(SampledFunction),     // Sampled function

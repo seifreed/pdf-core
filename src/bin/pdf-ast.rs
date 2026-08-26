@@ -33,9 +33,9 @@ extern crate toml;
 
 #[derive(Parser)]
 #[command(name = "pdf-ast")]
-#[command(about = "PDF-AST: Professional PDF Analysis and AST Generation Tool")]
-#[command(version = "1.0.0")]
-#[command(author = "PDF-AST Team")]
+#[command(about = "Experimental PDF analysis and AST generation tool")]
+#[command(version = env!("CARGO_PKG_VERSION"))]
+#[command(author = "Marc Rivero López")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -272,7 +272,7 @@ fn main() {
         .format_timestamp_secs()
         .init();
 
-    info!("PDF-AST CLI Tool v1.0.0 starting");
+    info!("PDF-AST CLI Tool v{} starting", env!("CARGO_PKG_VERSION"));
 
     let result = match &cli.command {
         Commands::Parse {

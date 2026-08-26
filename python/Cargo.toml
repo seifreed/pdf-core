@@ -2,7 +2,7 @@
 name = "pdf-ast-python"
 version = "0.1.0"
 edition = "2021"
-authors = ["PDF-AST Team"]
+authors = ["Marc Rivero <mriverolopez@gmail.com>"]
 description = "Python bindings for PDF-AST"
 license = "MIT"
 

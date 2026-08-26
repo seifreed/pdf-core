@@ -2,7 +2,7 @@
 name = "pdf-text-intel"
 version = "0.1.0"
 edition = "2021"
-authors = ["PDF-AST Team"]
+authors = ["Marc Rivero <mriverolopez@gmail.com>"]
 description = "Advanced text extraction and analysis library using PDF-AST"
 license = "MIT"
 

@@ -1,8 +1,8 @@
 /// 3D and multimedia support for PDF 2.0
 ///
-/// This module provides comprehensive support for modern PDF 2.0 multimedia
-/// features including 3D models, video, audio, interactive content, and
-/// rich media annotations as defined in ISO 32000-2.
+/// This module provides experimental metadata extraction for PDF multimedia
+/// content, including 3D models, video, audio, interactive content, and rich
+/// media annotations. It does not certify or fully decode those formats.
 use crate::ast::{AstError, AstNode, AstResult, NodeId, NodeMetadata, NodeType};
 use crate::types::{PdfArray, PdfDictionary, PdfName, PdfStream, PdfString, PdfValue};
 use serde::{Deserialize, Serialize};
@@ -133,8 +133,8 @@ impl MultimediaContent for ThreeDContent {
             format_compliance: FormatCompliance {
                 format_name: "Unknown".to_string(),
                 version: "1.0".to_string(),
-                compliance_level: ComplianceLevel::FullyCompliant,
-                missing_features: Vec::new(),
+                compliance_level: ComplianceLevel::BasicCompliant,
+                missing_features: vec!["Format-specific validation is not implemented".to_string()],
                 deprecated_features: Vec::new(),
             },
         }
@@ -193,8 +193,8 @@ impl MultimediaContent for VideoContent {
             format_compliance: FormatCompliance {
                 format_name: "Unknown".to_string(),
                 version: "1.0".to_string(),
-                compliance_level: ComplianceLevel::FullyCompliant,
-                missing_features: Vec::new(),
+                compliance_level: ComplianceLevel::BasicCompliant,
+                missing_features: vec!["Format-specific validation is not implemented".to_string()],
                 deprecated_features: Vec::new(),
             },
         }
@@ -253,8 +253,8 @@ impl MultimediaContent for AudioContent {
             format_compliance: FormatCompliance {
                 format_name: "Unknown".to_string(),
                 version: "1.0".to_string(),
-                compliance_level: ComplianceLevel::FullyCompliant,
-                missing_features: Vec::new(),
+                compliance_level: ComplianceLevel::BasicCompliant,
+                missing_features: vec!["Format-specific validation is not implemented".to_string()],
                 deprecated_features: Vec::new(),
             },
         }
@@ -313,8 +313,8 @@ impl MultimediaContent for InteractiveContent {
             format_compliance: FormatCompliance {
                 format_name: "Unknown".to_string(),
                 version: "1.0".to_string(),
-                compliance_level: ComplianceLevel::FullyCompliant,
-                missing_features: Vec::new(),
+                compliance_level: ComplianceLevel::BasicCompliant,
+                missing_features: vec!["Format-specific validation is not implemented".to_string()],
                 deprecated_features: Vec::new(),
             },
         }
