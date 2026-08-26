@@ -10,7 +10,8 @@ implementation. `validate_profile` exposes the registered experimental
 profiles while preserving their rule identifiers, severity, expected action,
 node ID, and source offset when the AST provides them. Registry reports also
 include `iso.<constraint>` metadata for constraints that declare a normative
-reference.
+reference. The reproducible fixture corpus is maintained at
+https://github.com/seifreed/pdf-core-corpus and pinned by the corpus workflow.
 
 ## Feature Matrix
 

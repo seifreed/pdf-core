@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_url="https://github.com/veraPDF/veraPDF-corpus.git"
-commit="49de56cd987929932c9e4fbbbe67d052bf44ef83"
-source_path="${1:-PDF_A-1b}"
+repo_url="${PDF_CORPUS_REPO_URL:-https://github.com/seifreed/pdf-core-corpus.git}"
+commit="${PDF_CORPUS_COMMIT:-c570bd493d717417ee4b805c2cccd41ca1ad0972}"
+source_path="${1:-fixtures}"
 destination="${2:-.external-corpus/verapdf}"
 max_files="${MAX_FILES:-0}"
 

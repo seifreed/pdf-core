@@ -25,8 +25,10 @@ jobs:
           toolchain: stable
       - name: Install reference parsers
         run: sudo apt-get update && sudo apt-get install -y qpdf mupdf-tools
-      - name: Fetch pinned external corpus
-        run: tools/fetch-verapdf-corpus.sh "PDF_A-1b" "$RUNNER_TEMP/verapdf-corpus"
+      - name: Fetch pinned project corpus
+        env:
+          PDF_CORPUS_COMMIT: c570bd493d717417ee4b805c2cccd41ca1ad0972
+        run: tools/fetch-verapdf-corpus.sh "fixtures/verapdf-pdfa-1b" "$RUNNER_TEMP/verapdf-corpus"
       - name: Run differential corpus test
         env:
           PDF_EXTERNAL_CORPUS: ${{ runner.temp }}/verapdf-corpus

@@ -57,4 +57,6 @@ The next release will be cut after the full CI and signed-tag checklist passes.
 - Added JSON/CBOR document envelope round-trips for AST graphs and revisions.
 - Added dedicated fuzz targets for indirect streams and xref streams.
 - Removed the obsolete commented streaming placeholder from the CLI.
+- Added the pinned `pdf-core-corpus` fixture repository and corrected veraPDF
+  comparison to separate parser acceptance from PDF/A conformance.
 - Fixed the corpus benchmark to ignore non-PDF metadata files.
