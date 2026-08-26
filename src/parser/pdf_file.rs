@@ -686,12 +686,13 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn extract_xref_index_ranges(dict: &PdfDictionary) -> AstResult<Vec<(u32, u32)>> {
-        let default_range = || -> AstResult<Vec<(u32, u32)>> {
-            let size = dict.get("Size").and_then(|v| v.as_integer()).unwrap_or(0);
-            let size = u32::try_from(size)
-                .map_err(|_| AstError::ParseError("Invalid xref Size".to_string()))?;
-            Ok(vec![(0, size)])
-        };
+        let size = dict
+            .get("Size")
+            .and_then(|v| v.as_integer())
+            .ok_or_else(|| AstError::ParseError("Missing xref Size".to_string()))?;
+        let size = u32::try_from(size)
+            .map_err(|_| AstError::ParseError("Invalid xref Size".to_string()))?;
+        let default_range = || -> AstResult<Vec<(u32, u32)>> { Ok(vec![(0, size)]) };
 
         let index_array = match dict.get("Index").and_then(|v| v.as_array()) {
             Some(arr) => arr,
@@ -2873,7 +2874,7 @@ mod tests {
     use super::{PdfFileParser, XRefEntry};
     use crate::parser::ParseMode;
     use crate::performance::PerformanceLimits;
-    use crate::types::{ObjectId, PdfValue};
+    use crate::types::{ObjectId, PdfDictionary, PdfValue};
     use std::io::{BufReader, Cursor};
 
     #[test]
@@ -2952,5 +2953,16 @@ mod tests {
 
         assert!(Parser::try_parse_linearization_dict(negative_length).is_none());
         assert!(Parser::try_parse_linearization_dict(missing_length).is_none());
+    }
+
+    #[test]
+    fn rejects_missing_or_negative_xref_stream_size() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let missing_size = PdfDictionary::new();
+        assert!(Parser::extract_xref_index_ranges(&missing_size).is_err());
+
+        let mut negative_size = PdfDictionary::new();
+        negative_size.insert("Size", PdfValue::Integer(-1));
+        assert!(Parser::extract_xref_index_ranges(&negative_size).is_err());
     }
 }
