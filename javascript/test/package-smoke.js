@@ -40,7 +40,7 @@ try {
     fs.copyFileSync(path.join(root, file), path.join(mainDir, file));
   }
   const packageJson = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
-  packageJson.optionalDependencies = {};
+  packageJson.optionalDependencies = { [packageName]: packageJson.version };
   packageJson.files = ["index.js", "index.d.ts", "README.md"];
   fs.writeFileSync(path.join(mainDir, "package.json"), `${JSON.stringify(packageJson)}\n`);
   const mainTarball = path.join(temp, run(npm, ["pack", mainDir, "--pack-destination", temp], root));
@@ -48,6 +48,12 @@ try {
   const appDir = path.join(temp, "app");
   fs.mkdirSync(appDir);
   run(npm, ["install", "--ignore-scripts", mainTarball, nativeTarball], appDir);
+  const installedPackageJson = require(path.join(appDir, "node_modules", "pdf-ast", "package.json"));
+  assert.equal(installedPackageJson.optionalDependencies[packageName], packageJson.version);
+  assert.equal(
+    require(path.join(appDir, "node_modules", packageName, "package.json")).name,
+    packageName,
+  );
   const installed = require(path.join(appDir, "node_modules", "pdf-ast"));
   const document = installed.parseDocument(Buffer.from(`%PDF-1.4
 1 0 obj
