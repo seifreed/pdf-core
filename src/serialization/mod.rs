@@ -94,6 +94,12 @@ pub struct SerializableNode {
     pub offset: Option<u64>,
     #[serde(default)]
     pub size: Option<usize>,
+    #[serde(default)]
+    pub errors: Vec<crate::ast::ParseError>,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(default)]
+    pub properties: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -194,6 +200,9 @@ impl GraphSerializer {
                 object_id,
                 offset: node.metadata.offset,
                 size: node.metadata.size,
+                errors: node.metadata.errors.clone(),
+                warnings: node.metadata.warnings.clone(),
+                properties: node.metadata.properties.clone(),
             };
 
             self.nodes.push(serialized_node);
@@ -323,6 +332,9 @@ impl GraphDeserializer {
                 .ok_or_else(|| format!("Failed to restore node {}", serialized_node.id))?;
             node.metadata.offset = serialized_node.offset;
             node.metadata.size = serialized_node.size;
+            node.metadata.errors = serialized_node.errors.clone();
+            node.metadata.warnings = serialized_node.warnings.clone();
+            node.metadata.properties = serialized_node.properties.clone();
 
             id_map.insert(serialized_node.id, node_id);
         }
@@ -827,6 +839,9 @@ mod tests {
                 object_id: None,
                 offset: None,
                 size: None,
+                errors: Vec::new(),
+                warnings: Vec::new(),
+                properties: HashMap::new(),
             }],
             edges: Vec::new(),
             root: Some(0),
@@ -876,15 +891,51 @@ mod tests {
         ast.set_root(root_id);
         ast.get_node_mut(root_id).unwrap().metadata.offset = Some(123);
         ast.get_node_mut(root_id).unwrap().metadata.size = Some(45);
+        ast.get_node_mut(root_id)
+            .unwrap()
+            .metadata
+            .errors
+            .push(crate::ast::ParseError {
+                code: crate::ast::ErrorCode::MalformedStructure,
+                message: "recovered dictionary".to_string(),
+                offset: Some(124),
+                recoverable: true,
+            });
+        ast.get_node_mut(root_id)
+            .unwrap()
+            .metadata
+            .warnings
+            .push("missing end marker".to_string());
+        ast.get_node_mut(root_id)
+            .unwrap()
+            .metadata
+            .properties
+            .insert("decode_state".to_string(), "recovered".to_string());
 
         let serialized = SerializableGraph::from_ast(&ast);
         assert_eq!(serialized.nodes[0].offset, Some(123));
         assert_eq!(serialized.nodes[0].size, Some(45));
+        assert_eq!(serialized.nodes[0].errors.len(), 1);
+        assert_eq!(serialized.nodes[0].warnings, vec!["missing end marker"]);
+        assert_eq!(
+            serialized.nodes[0].properties.get("decode_state"),
+            Some(&"recovered".to_string())
+        );
 
         let restored = GraphDeserializer::deserialize(serialized).unwrap();
         let restored_node = restored.get_node(restored.root.unwrap()).unwrap();
         assert_eq!(restored_node.metadata.offset, Some(123));
         assert_eq!(restored_node.metadata.size, Some(45));
+        assert_eq!(restored_node.metadata.errors.len(), 1);
+        assert_eq!(
+            restored_node.metadata.errors[0].code,
+            crate::ast::ErrorCode::MalformedStructure
+        );
+        assert_eq!(restored_node.metadata.warnings, vec!["missing end marker"]);
+        assert_eq!(
+            restored_node.metadata.properties.get("decode_state"),
+            Some(&"recovered".to_string())
+        );
     }
 
     #[test]
