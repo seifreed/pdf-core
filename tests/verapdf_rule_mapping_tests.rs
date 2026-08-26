@@ -154,6 +154,88 @@ fn isartor_rules_match_verapdf_ids() {
 }
 
 #[test]
+fn complete_isartor_manifest_matches_verapdf_ids() {
+    let Some(verapdf) = verapdf_binary() else {
+        eprintln!("Skipping complete veraPDF manifest mapping: veraPDF is not available");
+        return;
+    };
+    let Some(root) = corpus_root() else {
+        eprintln!("Skipping complete veraPDF manifest mapping: corpus root is not configured");
+        return;
+    };
+    let manifest_path = root
+        .parent()
+        .expect("corpus fixtures should have a parent directory")
+        .join("RULE-MAPPINGS.json");
+    if !manifest_path.is_file() {
+        eprintln!(
+            "Skipping complete veraPDF manifest mapping: {} is not available",
+            manifest_path.display()
+        );
+        return;
+    }
+
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(&manifest_path).expect("read mapping manifest"))
+            .expect("valid mapping manifest");
+    let mappings = manifest["mappings"].as_array().expect("mapping entries");
+    assert_eq!(
+        manifest["fixture_count"].as_u64(),
+        Some(mappings.len() as u64)
+    );
+    assert_eq!(mappings.len(), 205);
+
+    let files: Vec<PathBuf> = mappings
+        .iter()
+        .map(|mapping| {
+            root.parent()
+                .expect("corpus fixtures should have a parent directory")
+                .join(mapping["fixture"].as_str().expect("fixture path"))
+        })
+        .collect();
+    for path in &files {
+        assert!(path.is_file(), "missing mapped fixture: {}", path.display());
+    }
+
+    let output = Command::new(verapdf)
+        .args(["--format", "json", "--flavour", "1b"])
+        .args(&files)
+        .output()
+        .expect("veraPDF should run");
+    let report: Value = serde_json::from_slice(&output.stdout).expect("valid veraPDF JSON");
+    let jobs = report["report"]["jobs"].as_array().expect("veraPDF jobs");
+    assert_eq!(jobs.len(), mappings.len());
+
+    for (job, mapping) in jobs.iter().zip(mappings) {
+        let validation = &job["validationResult"][0];
+        assert_eq!(validation["jobEndStatus"], "normal");
+        assert_eq!(validation["compliant"], false);
+        let actual_rules: Vec<String> = validation["details"]["ruleSummaries"]
+            .as_array()
+            .expect("veraPDF rule summaries")
+            .iter()
+            .filter(|rule| rule["ruleStatus"] == "FAILED")
+            .map(|rule| {
+                format!(
+                    "{}:{}:{}",
+                    rule["specification"].as_str().unwrap_or_default(),
+                    rule["clause"].as_str().unwrap_or_default(),
+                    rule["testNumber"].as_u64().unwrap_or_default()
+                )
+            })
+            .collect();
+        for expected_rule in mapping["veraPDF_rules"].as_array().expect("mapped rules") {
+            let expected_rule = expected_rule.as_str().expect("rule ID");
+            assert!(
+                actual_rules.iter().any(|actual| actual == expected_rule),
+                "veraPDF rule {expected_rule} missing for {}",
+                mapping["fixture"].as_str().unwrap_or_default()
+            );
+        }
+    }
+}
+
+#[test]
 fn local_pdfa_rules_match_serialized_isartor_cases() {
     let Some(root) = corpus_root() else {
         eprintln!("Skipping local PDF/A fixture mapping: corpus root is not configured");

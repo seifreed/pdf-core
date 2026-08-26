@@ -18,7 +18,10 @@ plus three local parser regressions. The PDF/A-1b comparison gate uses its 569
 profile fixtures; the other profiles are available for parser and preflight
 campaigns.
 
-The clause-level ISO 32000 inventory is maintained in
+The complete serialized Isartor-to-veraPDF mapping is maintained in
+[`RULE-MAPPINGS.json`](https://github.com/seifreed/pdf-core-corpus/blob/bb9d353181797cf61e81294c071737a09f155d6d/RULE-MAPPINGS.json)
+and covers 205 negative fixtures with 95 distinct veraPDF rule IDs. The
+clause-level ISO 32000 inventory is maintained in
 [ISO-32000-MATRIX.md](ISO-32000-MATRIX.md). It records implementation scope
 and known boundaries for both PDF 1.7 and PDF 2.0; it is not a conformance
 certificate.
