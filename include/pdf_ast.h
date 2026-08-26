@@ -126,7 +126,7 @@ pdf_ast_result_t pdf_ast_get_node_info(const CAstNode* node, pdf_ast_node_info_t
 pdf_ast_result_t pdf_ast_get_children(
     const CPdfDocument* document,
     const CAstNode* parent_node,
-    CAstNode*** children,
+    CAstNode** children,
     size_t* count
 );
 
