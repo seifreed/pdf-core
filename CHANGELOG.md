@@ -60,4 +60,6 @@ The next release will be cut after the full CI and signed-tag checklist passes.
 - Added the pinned `pdf-core-corpus` fixture repository and corrected veraPDF
   comparison to separate parser acceptance from PDF/A conformance.
 - External corpus tests now verify downloaded SHA-256 manifests before parsing.
+- veraPDF comparison now runs as one batch over the pinned corpus and separates
+  tolerant parsing from strict-mode rejection metrics.
 - Fixed the corpus benchmark to ignore non-PDF metadata files.

@@ -1,6 +1,7 @@
 use pdf_ast::parser::PdfParser;
+use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(serde::Deserialize)]
@@ -25,8 +26,15 @@ struct VeraPdfReportBody {
 
 #[derive(serde::Deserialize)]
 struct VeraPdfJob {
+    #[serde(rename = "itemDetails")]
+    item_details: VeraPdfItemDetails,
     #[serde(rename = "validationResult")]
     validation_result: Option<Vec<VeraPdfValidation>>,
+}
+
+#[derive(serde::Deserialize)]
+struct VeraPdfItemDetails {
+    name: String,
 }
 
 #[derive(serde::Deserialize)]
@@ -76,7 +84,9 @@ fn compare_strict_parser_with_verapdf_when_available() {
     };
 
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let mut files = if let Some(external_root) = std::env::var_os("PDF_EXTERNAL_CORPUS") {
+    let external_root =
+        std::env::var_os("PDF_VERAPDF_CORPUS").or_else(|| std::env::var_os("PDF_EXTERNAL_CORPUS"));
+    let mut files = if let Some(external_root) = external_root {
         let mut files = Vec::new();
         collect_pdfs(Path::new(&external_root), &mut files);
         files
@@ -97,42 +107,67 @@ fn compare_strict_parser_with_verapdf_when_available() {
             files.truncate(max_files);
         }
     }
-    let parser = PdfParser::strict();
+    files = files
+        .into_iter()
+        .map(|path| fs::canonicalize(path).expect("corpus PDF path is valid"))
+        .collect();
+
+    let strict_parser = PdfParser::strict();
+    let tolerant_parser = PdfParser::new();
+    let core_results: HashMap<PathBuf, (bool, bool)> = files
+        .iter()
+        .map(|path| {
+            let bytes = fs::read(path).expect("corpus PDF is readable");
+            (
+                path.clone(),
+                (
+                    strict_parser.parse_bytes(&bytes).is_ok(),
+                    tolerant_parser.parse_bytes(&bytes).is_ok(),
+                ),
+            )
+        })
+        .collect();
+    let verapdf_output = Command::new(&verapdf)
+        .args(["--format", "json", "--flavour", "1b"])
+        .args(&files)
+        .output()
+        .expect("veraPDF should run");
+    let report: VeraPdfReport =
+        serde_json::from_slice(&verapdf_output.stdout).unwrap_or_else(|error| {
+            panic!("veraPDF returned invalid JSON: {error}");
+        });
+    assert_eq!(
+        report.report.jobs.len(),
+        files.len(),
+        "veraPDF returned a different number of jobs"
+    );
+
     let mut checked = 0;
     let mut divergences = 0;
     let mut conformant = 0;
+    let mut strict_rejections = 0;
 
-    for path in files {
-        let bytes = fs::read(&path).expect("corpus PDF is readable");
-        let core_accepts = parser.parse_bytes(&bytes).is_ok();
-        let verapdf_output = Command::new(&verapdf)
-            .args(["--format", "json", "--flavour", "1b"])
-            .arg(&path)
-            .output()
-            .expect("veraPDF should run");
-        let report: VeraPdfReport =
-            serde_json::from_slice(&verapdf_output.stdout).unwrap_or_else(|error| {
-                panic!(
-                    "veraPDF returned invalid JSON for {}: {error}",
-                    path.display()
-                )
-            });
-        let validation = report
-            .report
-            .jobs
-            .first()
-            .and_then(|job| job.validation_result.as_ref())
+    for job in report.report.jobs {
+        let path = fs::canonicalize(&job.item_details.name)
+            .unwrap_or_else(|_| PathBuf::from(&job.item_details.name));
+        let (strict_accepts, tolerant_accepts) = *core_results
+            .get(&path)
+            .unwrap_or_else(|| panic!("veraPDF returned an unknown path: {}", path.display()));
+        strict_rejections += !strict_accepts as usize;
+        let validation = job
+            .validation_result
+            .as_ref()
             .and_then(|results| results.first());
         let verapdf_parsed =
             validation.is_some_and(|validation| validation.job_end_status == "normal");
         conformant += validation.is_some_and(|validation| validation.compliant) as usize;
 
-        if core_accepts != verapdf_parsed {
+        if tolerant_accepts != verapdf_parsed {
             divergences += 1;
             eprintln!(
-                "veraPDF parser divergence for {}: pdf-core={}, veraPDF={}",
+                "veraPDF tolerant-parser divergence for {}: pdf-core={}, veraPDF={}",
                 path.display(),
-                core_accepts,
+                tolerant_accepts,
                 verapdf_parsed
             );
         }
@@ -145,6 +180,6 @@ fn compare_strict_parser_with_verapdf_when_available() {
         "veraPDF comparison found {divergences} parser divergences"
     );
     eprintln!(
-        "veraPDF comparison: {checked} checked, {conformant} PDF/A-1b conformant, {divergences} parser divergences"
+        "veraPDF comparison: {checked} checked, {conformant} PDF/A-1b conformant, strict_rejections={strict_rejections}, tolerant_parser_divergences={divergences}"
     );
 }
