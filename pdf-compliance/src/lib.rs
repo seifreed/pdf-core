@@ -24,6 +24,22 @@ pub enum ComplianceProfile {
     PdfUA1,
 }
 
+impl ComplianceProfile {
+    fn schema_name(&self) -> &'static str {
+        match self {
+            Self::PdfA1a => "PDF/A-1a",
+            Self::PdfA1b => "PDF/A-1b",
+            Self::PdfA2a => "PDF/A-2a",
+            Self::PdfA2b => "PDF/A-2b",
+            Self::PdfA2u => "PDF/A-2u",
+            Self::PdfA3a => "PDF/A-3a",
+            Self::PdfA3b => "PDF/A-3b",
+            Self::PdfA3u => "PDF/A-3u",
+            Self::PdfUA1 => "PDF/UA-1",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum ComplianceStatus {
     Compliant,
@@ -48,16 +64,23 @@ pub enum ViolationSeverity {
     Info,
 }
 
+pub fn validate_profile(
+    document: &PdfDocument,
+    profile: ComplianceProfile,
+) -> Option<ComplianceReport> {
+    let report =
+        pdf_ast::validation::SchemaRegistry::new().validate(document, profile.schema_name())?;
+    Some(convert_report(profile, report))
+}
+
 pub fn validate_pdfa1b(document: &PdfDocument) -> ComplianceReport {
-    let report = pdf_ast::validation::pdfa::PdfA1bValidator::new().validate(document);
-    convert_report(ComplianceProfile::PdfA1b, report)
+    validate_profile(document, ComplianceProfile::PdfA1b)
+        .expect("PDF/A-1b is registered by the root validation registry")
 }
 
 pub fn validate_pdfua1(document: &PdfDocument) -> ComplianceReport {
-    let report = pdf_ast::validation::SchemaRegistry::new()
-        .validate(document, "PDF/UA-1")
-        .expect("PDF/UA-1 is registered by the root validation registry");
-    convert_report(ComplianceProfile::PdfUA1, report)
+    validate_profile(document, ComplianceProfile::PdfUA1)
+        .expect("PDF/UA-1 is registered by the root validation registry")
 }
 
 fn convert_report(profile: ComplianceProfile, report: ValidationReport) -> ComplianceReport {
@@ -136,5 +159,23 @@ mod tests {
             .violations
             .iter()
             .any(|violation| violation.rule_id == "CATALOG_MISSING"));
+    }
+
+    #[test]
+    fn validates_all_exposed_profiles_through_the_root_registry() {
+        let doc = PdfDocument::new(PdfVersion::new(1, 7));
+        for profile in [
+            ComplianceProfile::PdfA1a,
+            ComplianceProfile::PdfA1b,
+            ComplianceProfile::PdfA2a,
+            ComplianceProfile::PdfA2b,
+            ComplianceProfile::PdfA2u,
+            ComplianceProfile::PdfA3a,
+            ComplianceProfile::PdfA3b,
+            ComplianceProfile::PdfA3u,
+            ComplianceProfile::PdfUA1,
+        ] {
+            assert!(validate_profile(&doc, profile).is_some());
+        }
     }
 }
