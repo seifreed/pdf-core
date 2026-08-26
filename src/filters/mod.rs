@@ -89,7 +89,7 @@ fn decode_single_filter(
         }
         StreamFilter::LZWDecode(params) => decode_lzw_with_params(data, params),
         StreamFilter::RunLengthDecode => decode_run_length(data),
-        StreamFilter::CCITTFaxDecode(params) => decode_ccitt_fax(data, params),
+        StreamFilter::CCITTFaxDecode(params) => decode_ccitt_fax(data, params, max_output_bytes),
         StreamFilter::JBIG2Decode => decode_jbig2(data),
         StreamFilter::DCTDecode => decode_dct(data),
         StreamFilter::JPXDecode => decode_jpx(data),
@@ -313,11 +313,44 @@ fn apply_predictor(
         return Ok(data);
     }
 
-    let colors = colors.unwrap_or(1) as u8;
-    let bpc = bits_per_component.unwrap_or(8) as u8;
-    let columns = columns.unwrap_or(1) as u32;
+    if !matches!(predictor, 2 | 10..=15) {
+        return Err(FilterError::InvalidData(format!(
+            "Unsupported predictor value: {}",
+            predictor
+        )));
+    }
+    if data.is_empty() {
+        return Ok(data);
+    }
 
-    let predictor_decoder = predictor::PredictorDecoder::new(predictor, colors, bpc, columns);
+    let colors = colors.unwrap_or(1);
+    let bpc = bits_per_component.unwrap_or(8);
+    let columns = columns.unwrap_or(1);
+    if !(1..=255).contains(&colors) || !matches!(bpc, 1 | 2 | 4 | 8 | 16) || columns <= 0 {
+        return Err(FilterError::InvalidData(
+            "Invalid predictor parameters".to_string(),
+        ));
+    }
+
+    let row_bits = u64::try_from(columns)
+        .ok()
+        .and_then(|columns| columns.checked_mul(colors as u64))
+        .and_then(|bits| bits.checked_mul(bpc as u64))
+        .ok_or_else(|| FilterError::InvalidData("Predictor row size overflow".to_string()))?;
+    if row_bits > u32::MAX as u64 {
+        return Err(FilterError::InvalidData(
+            "Predictor row size exceeds supported limit".to_string(),
+        ));
+    }
+    let row_bytes = row_bits.div_ceil(8);
+    if row_bytes == 0 || row_bytes as usize > data.len() {
+        return Err(FilterError::InvalidData(
+            "Predictor row exceeds decoded data".to_string(),
+        ));
+    }
+
+    let predictor_decoder =
+        predictor::PredictorDecoder::new(predictor, colors as u8, bpc as u8, columns as u32);
     predictor_decoder
         .decode(&data)
         .map_err(|e| FilterError::DecompressionError(format!("Predictor decode error: {:?}", e)))
@@ -365,15 +398,42 @@ fn decode_run_length(data: &[u8]) -> Result<Vec<u8>, FilterError> {
     Ok(result)
 }
 
-fn decode_ccitt_fax(data: &[u8], params: &CCITTFaxDecodeParams) -> Result<Vec<u8>, FilterError> {
+fn decode_ccitt_fax(
+    data: &[u8],
+    params: &CCITTFaxDecodeParams,
+    max_output_bytes: usize,
+) -> Result<Vec<u8>, FilterError> {
     let k = params.k.unwrap_or(0);
-    let columns = params.columns.unwrap_or(1728) as usize;
-    let rows = params.rows.unwrap_or(0) as usize;
+    let columns = usize::try_from(params.columns.unwrap_or(1728))
+        .map_err(|_| FilterError::InvalidData("CCITT columns must be non-negative".to_string()))?;
+    let rows = usize::try_from(params.rows.unwrap_or(0))
+        .map_err(|_| FilterError::InvalidData("CCITT rows must be non-negative".to_string()))?;
+    if columns == 0 {
+        return Err(FilterError::InvalidData(
+            "CCITT columns must be positive".to_string(),
+        ));
+    }
+    if rows > 0 {
+        let upper_bound = columns
+            .div_ceil(8)
+            .checked_mul(rows)
+            .ok_or_else(|| FilterError::InvalidData("CCITT output size overflow".to_string()))?;
+        if upper_bound > max_output_bytes {
+            return Err(FilterError::DecompressionError(
+                "CCITT output exceeds limit".to_string(),
+            ));
+        }
+    }
     let black_is_1 = params.black_is_1.unwrap_or(false);
     let end_of_line = params.end_of_line.unwrap_or(false);
     let encoded_byte_align = params.encoded_byte_align.unwrap_or(false);
     let end_of_block = params.end_of_block.unwrap_or(true);
     let damaged_rows_before_error = params.damaged_rows_before_error.unwrap_or(0);
+    if damaged_rows_before_error < 0 {
+        return Err(FilterError::InvalidData(
+            "CCITT damaged rows must be non-negative".to_string(),
+        ));
+    }
 
     let decoder = ccitt::CcittDecoder::new(columns, rows)
         .with_k(k)
@@ -421,4 +481,27 @@ fn decode_dct(data: &[u8]) -> Result<Vec<u8>, FilterError> {
 fn decode_jpx(data: &[u8]) -> Result<Vec<u8>, FilterError> {
     jpx::decode_jpx_to_codestream(data)
         .map_err(|e| FilterError::ImageDecodeError(format!("JPX decode error: {}", e)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_predictor, decode_ccitt_fax};
+    use crate::types::CCITTFaxDecodeParams;
+
+    #[test]
+    fn rejects_negative_predictor_parameters() {
+        let error = apply_predictor(vec![0], Some(10), Some(-1), Some(8), Some(1))
+            .expect_err("negative colors must be rejected");
+        assert!(error.to_string().contains("predictor"));
+    }
+
+    #[test]
+    fn rejects_negative_ccitt_dimensions() {
+        let params = CCITTFaxDecodeParams {
+            columns: Some(-1),
+            ..Default::default()
+        };
+        let error = decode_ccitt_fax(&[], &params, 1024).expect_err("negative columns");
+        assert!(error.to_string().contains("columns"));
+    }
 }
