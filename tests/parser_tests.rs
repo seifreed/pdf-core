@@ -485,6 +485,19 @@ mod parser_tests {
     }
 
     #[test]
+    fn configured_value_depth_is_enforced() {
+        let nested = "[".repeat(2) + "0" + &"]".repeat(2);
+        assert!(PdfParser::new()
+            .with_max_depth(2)
+            .parse_value(nested.as_bytes())
+            .is_err());
+        assert!(PdfParser::new()
+            .with_max_depth(4)
+            .parse_value(nested.as_bytes())
+            .is_ok());
+    }
+
+    #[test]
     fn parse_object_accepts_an_indirect_object() {
         assert_eq!(
             PdfParser::strict()

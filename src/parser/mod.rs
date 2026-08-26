@@ -201,7 +201,7 @@ impl PdfParser {
     /// # Errors
     /// Returns `AstError::ParseError` if the value cannot be parsed
     pub fn parse_value(&self, input: &[u8]) -> AstResult<PdfValue> {
-        object_parser::parse_value(input)
+        object_parser::parse_value_with_max_depth(input, self.limits.max_depth)
             .map(|(_, value)| value)
             .map_err(|e| AstError::ParseError(format!("{:?}", e)))
     }
@@ -223,11 +223,16 @@ impl PdfParser {
         if self.mode == ParseMode::Strict
             && object_parser::parse_indirect_object_header(object_input).is_ok()
         {
-            return object_parser::parse_indirect_object(object_input)
-                .map(|(_, (_, value))| value)
-                .map_err(|e| AstError::ParseError(format!("{:?}", e)));
+            return object_parser::parse_indirect_object_with_max_depth(
+                object_input,
+                self.limits.max_depth,
+            )
+            .map(|(_, (_, value))| value)
+            .map_err(|e| AstError::ParseError(format!("{:?}", e)));
         }
-        if let Ok((_, (_, value))) = object_parser::parse_indirect_object(object_input) {
+        if let Ok((_, (_, value))) =
+            object_parser::parse_indirect_object_with_max_depth(object_input, self.limits.max_depth)
+        {
             return Ok(value);
         }
         self.parse_value(input)
@@ -263,10 +268,13 @@ impl PdfParser {
                 .map(|(remaining, _)| remaining)
                 .unwrap_or(remaining);
             let parsed = if object_parser::parse_indirect_object_header(object_input).is_ok() {
-                object_parser::parse_indirect_object(object_input)
-                    .map(|(rest, (_, value))| (rest, value))
+                object_parser::parse_indirect_object_with_max_depth(
+                    object_input,
+                    self.limits.max_depth,
+                )
+                .map(|(rest, (_, value))| (rest, value))
             } else {
-                object_parser::parse_value(remaining)
+                object_parser::parse_value_with_max_depth(remaining, self.limits.max_depth)
             };
 
             match parsed {

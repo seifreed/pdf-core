@@ -11,13 +11,22 @@ use nom::{
 };
 
 pub fn parse_value(input: &[u8]) -> IResult<&[u8], PdfValue> {
-    parse_value_with_depth(input, 0)
+    parse_value_with_max_depth(input, MAX_NESTING_DEPTH)
 }
 
 const MAX_NESTING_DEPTH: usize = 256;
 
-fn parse_value_with_depth(input: &[u8], depth: usize) -> IResult<&[u8], PdfValue> {
-    if depth > MAX_NESTING_DEPTH {
+/// Parse a value with a caller-selected nesting limit.
+pub fn parse_value_with_max_depth(input: &[u8], max_depth: usize) -> IResult<&[u8], PdfValue> {
+    parse_value_with_depth(input, 0, max_depth)
+}
+
+fn parse_value_with_depth(
+    input: &[u8],
+    depth: usize,
+    max_depth: usize,
+) -> IResult<&[u8], PdfValue> {
+    if depth > max_depth {
         return Err(nom::Err::Failure(nom::error::Error::new(
             input,
             nom::error::ErrorKind::TooLarge,
@@ -33,8 +42,8 @@ fn parse_value_with_depth(input: &[u8], depth: usize) -> IResult<&[u8], PdfValue
             parse_real_or_integer,
             parse_string,
             parse_name_value,
-            |i| parse_array_with_depth(i, depth + 1),
-            |i| parse_dictionary_with_depth(i, depth + 1),
+            |i| parse_array_with_depth(i, depth + 1, max_depth),
+            |i| parse_dictionary_with_depth(i, depth + 1, max_depth),
         )),
     )(input)
 }
@@ -69,25 +78,33 @@ fn parse_name_value(input: &[u8]) -> IResult<&[u8], PdfValue> {
     map(name, |n| PdfValue::Name(PdfName::new(n)))(input)
 }
 
-fn parse_array_with_depth(input: &[u8], depth: usize) -> IResult<&[u8], PdfValue> {
+fn parse_array_with_depth(
+    input: &[u8],
+    depth: usize,
+    max_depth: usize,
+) -> IResult<&[u8], PdfValue> {
     map(
         delimited(
             terminated(char('['), skip_whitespace_and_comments),
-            many0(|i| parse_value_with_depth(i, depth + 1)),
+            many0(|i| parse_value_with_depth(i, depth + 1, max_depth)),
             preceded(skip_whitespace_and_comments, char(']')),
         ),
         |values| PdfValue::Array(PdfArray::from(values)),
     )(input)
 }
 
-fn parse_dictionary_with_depth(input: &[u8], depth: usize) -> IResult<&[u8], PdfValue> {
+fn parse_dictionary_with_depth(
+    input: &[u8],
+    depth: usize,
+    max_depth: usize,
+) -> IResult<&[u8], PdfValue> {
     map(
         delimited(
             terminated(tag(b"<<"), skip_whitespace_and_comments),
             many0(preceded(
                 skip_whitespace_and_comments,
                 separated_pair(name, skip_whitespace_and_comments, |i| {
-                    parse_value_with_depth(i, depth + 1)
+                    parse_value_with_depth(i, depth + 1, max_depth)
                 }),
             )),
             preceded(skip_whitespace_and_comments, tag(b">>")),
@@ -126,9 +143,16 @@ fn parse_reference(input: &[u8]) -> IResult<&[u8], PdfValue> {
 }
 
 pub fn parse_indirect_object(input: &[u8]) -> IResult<&[u8], (ObjectId, PdfValue)> {
+    parse_indirect_object_with_max_depth(input, MAX_NESTING_DEPTH)
+}
+
+pub fn parse_indirect_object_with_max_depth(
+    input: &[u8],
+    max_depth: usize,
+) -> IResult<&[u8], (ObjectId, PdfValue)> {
     let (input, obj_id) = parse_indirect_object_header(input)?;
     let (input, _) = skip_whitespace_and_comments(input)?;
-    let (input, value) = parse_value(input)?;
+    let (input, value) = parse_value_with_max_depth(input, max_depth)?;
     let (input, _) = skip_whitespace_and_comments(input)?;
 
     let (input, value) =
@@ -161,6 +185,13 @@ pub(crate) fn parse_indirect_object_header(input: &[u8]) -> IResult<&[u8], Objec
 }
 
 pub fn parse_indirect_stream_prefix(input: &[u8]) -> IResult<&[u8], (ObjectId, PdfDictionary)> {
+    parse_indirect_stream_prefix_with_max_depth(input, MAX_NESTING_DEPTH)
+}
+
+pub fn parse_indirect_stream_prefix_with_max_depth(
+    input: &[u8],
+    max_depth: usize,
+) -> IResult<&[u8], (ObjectId, PdfDictionary)> {
     let (input, obj_num) = integer(input)?;
     let (input, _) = skip_whitespace(input)?;
     let (input, gen_num) = integer(input)?;
@@ -173,7 +204,7 @@ pub fn parse_indirect_stream_prefix(input: &[u8]) -> IResult<&[u8], (ObjectId, P
         )));
     }
     let (input, _) = skip_whitespace_and_comments(input)?;
-    let (input, value) = parse_value(input)?;
+    let (input, value) = parse_value_with_max_depth(input, max_depth)?;
     let dict = match value {
         PdfValue::Dictionary(dict) => dict,
         _ => {
@@ -194,7 +225,15 @@ pub fn parse_indirect_object_with_stream_length(
     input: &[u8],
     length: usize,
 ) -> IResult<&[u8], (ObjectId, PdfValue)> {
-    let (input, (obj_id, dict)) = parse_indirect_stream_prefix(input)?;
+    parse_indirect_object_with_stream_length_and_max_depth(input, length, MAX_NESTING_DEPTH)
+}
+
+pub fn parse_indirect_object_with_stream_length_and_max_depth(
+    input: &[u8],
+    length: usize,
+    max_depth: usize,
+) -> IResult<&[u8], (ObjectId, PdfValue)> {
+    let (input, (obj_id, dict)) = parse_indirect_stream_prefix_with_max_depth(input, max_depth)?;
     let (input, data) = nom::bytes::complete::take(length)(input)?;
     let (input, _) = skip_whitespace(input)?;
     let (input, _) = tag(b"endstream")(input)?;
