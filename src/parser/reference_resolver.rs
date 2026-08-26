@@ -498,41 +498,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .consume_object()
             .map_err(|err| err.to_string())?;
         if let Some(&offset) = self.xref_table.get(&obj_id) {
-            // Read and parse the object
-            self.reader
-                .seek(SeekFrom::Start(offset))
-                .map_err(|e| format!("Seek error: {}", e))?;
-
-            let mut buffer = Vec::new();
-            let max_bytes = self.limits.max_object_size_mb.saturating_mul(1024 * 1024);
-            let mut total_read = 0usize;
-            let mut chunk = vec![0u8; 65536];
-            let mut found_endobj = false;
-
-            while total_read < max_bytes {
-                let to_read = std::cmp::min(chunk.len(), max_bytes - total_read);
-                let bytes_read = self
-                    .reader
-                    .read(&mut chunk[..to_read])
-                    .map_err(|e| format!("Read error: {}", e))?;
-                if bytes_read == 0 {
-                    break;
-                }
-                buffer.extend_from_slice(&chunk[..bytes_read]);
-                total_read += bytes_read;
-
-                if buffer.windows(6).any(|w| w == b"endobj") {
-                    found_endobj = true;
-                    break;
-                }
-            }
-
-            if !found_endobj && total_read >= max_bytes && !self.tolerant {
-                return Err(format!(
-                    "Object {} exceeds max size {}MB",
-                    obj_id.number, self.limits.max_object_size_mb
-                ));
-            }
+            let buffer = self.read_object_buffer(offset)?;
 
             // Resolve an indirect stream length before parsing stream bytes.
             let parsed = match object_parser::parse_indirect_stream_prefix_with_max_depth(
@@ -850,38 +816,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .get(&stream_id)
             .copied()
             .ok_or_else(|| format!("Object stream {} offset missing", stream_object))?;
-
-        self.reader
-            .seek(SeekFrom::Start(offset))
-            .map_err(|e| format!("Seek error: {}", e))?;
-
-        let mut buffer = Vec::new();
-        let max_bytes = self.limits.max_object_size_mb.saturating_mul(1024 * 1024);
-        let mut total_read = 0usize;
-        let mut chunk = vec![0u8; 65536];
-        let mut found_endobj = false;
-
-        while total_read < max_bytes {
-            let to_read = std::cmp::min(chunk.len(), max_bytes - total_read);
-            let bytes_read = self
-                .reader
-                .read(&mut chunk[..to_read])
-                .map_err(|e| format!("Read error: {}", e))?;
-            if bytes_read == 0 {
-                break;
-            }
-            buffer.extend_from_slice(&chunk[..bytes_read]);
-            total_read += bytes_read;
-
-            if buffer.windows(6).any(|w| w == b"endobj") {
-                found_endobj = true;
-                break;
-            }
-        }
-
-        if !found_endobj && !self.tolerant {
-            return Err("Object stream missing endobj".to_string());
-        }
+        let buffer = self.read_object_buffer(offset)?;
 
         let (_, (_obj_id, value)) =
             object_parser::parse_indirect_object_with_max_depth(&buffer, self.limits.max_depth)
@@ -1349,27 +1284,49 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
     fn load_object_value(&mut self, obj_id: ObjectId) -> Option<PdfValue> {
         self.limits.budget.consume_object().ok()?;
         let offset = self.xref_table.get(&obj_id).copied()?;
-        self.reader.seek(SeekFrom::Start(offset)).ok()?;
-        let mut buffer = Vec::new();
-        let max_bytes = self.limits.max_object_size_mb.saturating_mul(1024 * 1024);
-        let mut total_read = 0usize;
-        let mut chunk = vec![0u8; 65536];
-        while total_read < max_bytes {
-            let to_read = std::cmp::min(chunk.len(), max_bytes - total_read);
-            let bytes_read = self.reader.read(&mut chunk[..to_read]).ok()?;
-            if bytes_read == 0 {
-                break;
-            }
-            buffer.extend_from_slice(&chunk[..bytes_read]);
-            total_read += bytes_read;
-            if buffer.windows(6).any(|w| w == b"endobj") {
-                break;
-            }
-        }
+        let buffer = self.read_object_buffer(offset).ok()?;
 
         object_parser::parse_indirect_object_with_max_depth(&buffer, self.limits.max_depth)
             .ok()
             .map(|(_, (_, value))| value)
+    }
+
+    fn read_object_buffer(&mut self, offset: u64) -> Result<Vec<u8>, String> {
+        let file_size = self
+            .reader
+            .seek(SeekFrom::End(0))
+            .map_err(|e| format!("Seek error: {}", e))?;
+        if offset >= file_size {
+            return Err(format!("Object offset {} is outside the file", offset));
+        }
+
+        let max_bytes =
+            self.limits
+                .max_object_size_mb
+                .checked_mul(1024 * 1024)
+                .ok_or_else(|| "Object size limit overflow".to_string())? as u64;
+        let next_offset = self
+            .xref_table
+            .values()
+            .copied()
+            .filter(|candidate| *candidate > offset)
+            .min()
+            .unwrap_or(file_size);
+        let bound = next_offset
+            .saturating_sub(offset)
+            .min(file_size.saturating_sub(offset))
+            .min(max_bytes);
+
+        self.reader
+            .seek(SeekFrom::Start(offset))
+            .map_err(|e| format!("Seek error: {}", e))?;
+        let mut buffer = Vec::new();
+        self.reader
+            .by_ref()
+            .take(bound)
+            .read_to_end(&mut buffer)
+            .map_err(|e| format!("Read error: {}", e))?;
+        Ok(buffer)
     }
 
     fn create_operator_node(
@@ -1583,5 +1540,43 @@ mod tests {
             node.metadata.properties.get("recovery"),
             Some(&"object_id_mismatch".to_string())
         );
+    }
+
+    #[test]
+    fn stream_data_can_contain_endobj_without_truncating_resolution() {
+        let mut data =
+            b"2 0 obj\n<< /Length 12 >>\nstream\nabcendobjxyz\nendstream\nendobj\n".to_vec();
+        let next_offset = data.len() as u64;
+        data.extend_from_slice(b"3 0 obj\n42\nendobj\n");
+
+        let mut document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        document.xref.entries.insert(
+            ObjectId::new(2, 0),
+            XRefEntry::InUse {
+                offset: 0,
+                generation: 0,
+            },
+        );
+        document.xref.entries.insert(
+            ObjectId::new(3, 0),
+            XRefEntry::InUse {
+                offset: next_offset,
+                generation: 0,
+            },
+        );
+
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(data),
+            &document,
+            false,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut ast = PdfAstGraph::new();
+        let node_id = resolver
+            .resolve_object(ObjectId::new(2, 0), &mut ast)
+            .expect("stream object should resolve");
+        let node = ast.get_node(node_id).expect("stream node");
+        let stream = node.value.as_stream().expect("stream value");
+        assert_eq!(stream.raw_data(), Some(b"abcendobjxyz".as_slice()));
     }
 }
