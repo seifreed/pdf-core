@@ -126,7 +126,7 @@ fn decode_single_filter(
         StreamFilter::LZWDecode(params) => decode_lzw_with_params(data, params, max_output_bytes),
         StreamFilter::RunLengthDecode => decode_run_length(data, max_output_bytes),
         StreamFilter::CCITTFaxDecode(params) => decode_ccitt_fax(data, params, max_output_bytes),
-        StreamFilter::JBIG2Decode => decode_jbig2(data),
+        StreamFilter::JBIG2Decode => jbig2::decode_jbig2(data, None, max_output_bytes),
         StreamFilter::DCTDecode => decode_dct(data, max_output_bytes),
         StreamFilter::JPXDecode => decode_jpx(data, max_output_bytes),
         StreamFilter::Crypt(_) => Err(FilterError::CryptError(
@@ -539,13 +539,6 @@ fn decode_ccitt_fax(
     result.map_err(FilterError::DecompressionError)
 }
 
-fn decode_jbig2(data: &[u8]) -> Result<Vec<u8>, FilterError> {
-    let _ = data;
-    Err(FilterError::Jbig2Error(
-        "JBIG2 decoding is not supported; inspect the raw stream instead".to_string(),
-    ))
-}
-
 fn decode_dct(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
     use jpeg_decoder::Decoder;
 
@@ -581,9 +574,7 @@ fn decode_dct(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterErr
 }
 
 fn decode_jpx(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
-    let codestream = jpx::decode_jpx_to_codestream_with_limit(data, max_output_bytes)
-        .map_err(|e| FilterError::ImageDecodeError(format!("JPX decode error: {}", e)))?;
-    Ok(codestream)
+    jpx::decode_jpx_image(data, max_output_bytes)
 }
 
 #[cfg(test)]

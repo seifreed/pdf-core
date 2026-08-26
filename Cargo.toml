@@ -56,8 +56,10 @@ png = "0.17"
 # CCITT fax decoding (for CCITT filter)
 tiff = "0.9"
 
-# JBIG2 (basic support - would need specialized library)
-# jbig2dec-rs = "0.1"  # Not available, would need custom implementation
+# Pure-Rust image decoders. JPX SIMD/image integrations stay disabled so the
+# parser keeps one bounded byte-oriented output contract.
+pdfluent-jbig2 = "0.2.3"
+pdfluent-jpeg2000 = { version = "0.3.5", default-features = false, features = ["std"] }
 
 # Logging
 log = "0.4"
@@ -85,7 +87,6 @@ cms = { version = "0.2", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls"], optional = true }
 
 # Extended format support
-# JBIG2 decoding is intentionally unsupported; raw streams remain inspectable.
 quick-xml = "0.41"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }

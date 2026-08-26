@@ -135,3 +135,27 @@ pub fn decode_jpx_to_codestream_with_limit(
 
     Ok(codestreams.concat())
 }
+
+/// Decode a JPX image to interleaved 8-bit pixels.
+pub fn decode_jpx_image(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
+    let image = pdfluent_jpeg2000::Image::new(data, &pdfluent_jpeg2000::DecodeSettings::default())
+        .map_err(|error| FilterError::ImageDecodeError(format!("JPX decode error: {}", error)))?;
+    let channels = usize::from(image.color_space().num_channels()) + usize::from(image.has_alpha());
+    let output_bytes = usize::try_from(image.width())
+        .ok()
+        .and_then(|width| {
+            usize::try_from(image.height())
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(channels))
+        .ok_or_else(|| FilterError::ImageDecodeError("JPX output size overflow".to_string()))?;
+    if output_bytes > max_output_bytes {
+        return Err(FilterError::DecompressionError(
+            "JPX output exceeds limit".to_string(),
+        ));
+    }
+    image
+        .decode()
+        .map_err(|error| FilterError::ImageDecodeError(format!("JPX decode error: {}", error)))
+}

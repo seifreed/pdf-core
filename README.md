@@ -33,7 +33,7 @@
 | **Rich AST** | Typed nodes for common PDF structures; schema/API are experimental |
 | **Security Analysis** | JavaScript, forms, embedded files, and suspicious actions |
 | **PDF/A Validation** | Experimental preflight checks for selected requirements |
-| **Stream Decoding** | Flate, LZW, CCITT, DCT, and JPX container inspection; some codecs are partial |
+| **Stream Decoding** | Flate, LZW, CCITT, DCT, bounded JBIG2, and bounded JPX pixel decoding |
 | **C ABI** | Versioned ABI 1.0 with opaque handles and ownership-checked smoke test |
 | **XFA + AcroForm** | XML packets, scripts, and field trees |
 | **Signature Support** | CMS/PKCS#7 parsing and optional crypto verification; experimental |
@@ -51,8 +51,8 @@
 | Object streams | Partial, bounded and validated |
 | Flate, ASCII85, LZW, RunLength | Implemented |
 | CCITT | Experimental |
-| JBIG2 | Unsupported; raw stream inspection only |
-| JPX | Container inspection, not full JPEG 2000 decoding |
+| JBIG2 | Partial; bounded embedded/standalone bitmap decoding, globals plumbing pending |
+| JPX | Partial; bounded JPEG 2000 pixel decoding with container inspection |
 | Text extraction | Experimental |
 | PDF/A and PDF/UA | Partial preflight checks, not certifiable |
 | Streaming parser | Prototype |

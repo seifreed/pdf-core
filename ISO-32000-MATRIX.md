@@ -36,7 +36,7 @@ errata for PDF 2.0, together with the ISO 32000-1 reference PDF:
 | 7.1 | Syntax, general | partial | Bounded lexer/object parser with strict and tolerant modes; recovery is observable. |
 | 7.2 | Lexical conventions | implemented | Names, numbers, strings, comments, whitespace, and delimiters are parsed by `parser/lexer.rs`. |
 | 7.3 | Objects | implemented | Null, booleans, numbers, strings, names, arrays, dictionaries, streams, and references. |
-| 7.4 | Filters | partial | Flate, ASCII, LZW, RunLength, CCITT, DCT, and bounded JPX inspection; JBIG2 decoding is unsupported. |
+| 7.4 | Filters | partial | Flate, ASCII, LZW, RunLength, CCITT, DCT, and bounded pure-Rust JBIG2/JPX decoding; globals and codec edge coverage remain incomplete. |
 | 7.5 | File structure | partial | Classic xref, xref streams, trailers, object streams, incremental `/Prev`, and bounded recovery; hybrid revisions lack complete conformance coverage. |
 | 7.6 | Encryption | partial | Standard security parsing and optional crypto paths; not every PDF 2.0 security extension is supported. |
 | 7.7 | Document structure | partial | Catalog, page tree, names, outlines, forms, embedded files, and signatures are represented; inheritance and edge cases remain incomplete. |
@@ -53,7 +53,7 @@ errata for PDF 2.0, together with the ISO 32000-1 reference PDF:
 | 8.6 | Colour spaces | partial | Device, calibrated, ICCBased, indexed, separation, and DeviceN structures are inspected; inheritance and all profiles remain partial. |
 | 8.7 | Patterns | partial | Pattern nodes and dictionaries are recognized; full tiling/shading evaluation is absent. |
 | 8.8 | External objects | partial | XObject and Form XObject structures are represented; complete resource resolution is not guaranteed. |
-| 8.9 | Images | partial | Image dictionaries and DCT/JPX/CCITT paths are inspected; codec coverage is incomplete. |
+| 8.9 | Images | partial | Image dictionaries and bounded DCT/JBIG2/JPX/CCITT pixel paths are exercised; codec coverage is incomplete. |
 | 8.10 | Form XObjects | partial | Form XObject nodes and resources are represented; full graphics execution is absent. |
 | 8.11 | Optional content | partial | OCG/OCProperties/OCMD structures are parsed and annotated. |
 | 9.1 | Text, general | partial | Text operators and extraction paths exist; layout and shaping are not complete. |

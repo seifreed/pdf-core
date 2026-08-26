@@ -22,6 +22,9 @@ The next release will be cut after the full CI and signed-tag checklist passes.
   pairs.
 - Versioned the C ABI as 1.0 with documented ownership and warning-free header
   smoke coverage.
+- Added bounded pure-Rust JBIG2 and JPEG 2000 pixel decoding with regression
+  fixtures; PDF `/JBIG2Globals` plumbing and full codec conformance remain
+  pending.
 
 ## 0.2.0-alpha.1
 
