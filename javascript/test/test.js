@@ -17,6 +17,7 @@ startxref
 `);
 
 const document = pdfAst.parseDocument(minimalPdf);
+assert.equal(pdfAst.VERSION, "0.2.0-alpha.1");
 assert.equal(typeof document.getStatistics, "function");
 assert.deepEqual(document.getVersion(), { major: 1, minor: 4 });
 assert.equal(document.getStatistics().version, "1.4");

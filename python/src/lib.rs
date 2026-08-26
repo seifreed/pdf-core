@@ -389,5 +389,6 @@ fn pdf_ast(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(parse_pdf, m)?)?;
     m.add_function(wrap_pyfunction!(get_available_schemas, m)?)?;
     m.add_function(wrap_pyfunction!(validate_document, m)?)?;
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }

@@ -459,7 +459,7 @@ fn pdf_ast(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(validate_document, m)?)?;
 
     // Module constants
-    m.add("__version__", "0.1.0")?;
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("__author__", "PDF-AST Project")?;
 
     Ok(())

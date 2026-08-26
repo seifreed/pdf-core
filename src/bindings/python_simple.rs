@@ -255,7 +255,7 @@ fn parse_pdf_simple(data: &Bound<'_, PyBytes>) -> PyResult<PySimplePdfDocument> 
 /// Get library version
 #[pyfunction]
 fn get_version() -> String {
-    "0.1.0".to_string()
+    env!("CARGO_PKG_VERSION").to_string()
 }
 
 /// Simple Python module
@@ -269,7 +269,7 @@ fn pdf_ast_simple(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(get_version, m)?)?;
 
     // Module constants
-    m.add("__version__", "0.1.0")?;
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add(
         "__doc__",
         "Simplified PDF-AST Python bindings for basic PDF analysis",

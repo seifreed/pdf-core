@@ -752,7 +752,7 @@ fn main(mut cx: ModuleContext) -> NeonResult<()> {
     cx.export_function("getNodeTypes", js_get_node_types)?;
 
     // Constants
-    let version_value = cx.string("0.1.0");
+    let version_value = cx.string(env!("CARGO_PKG_VERSION"));
     cx.export_value("VERSION", version_value)?;
     let author_value = cx.string("PDF-AST Project");
     cx.export_value("AUTHOR", author_value)?;

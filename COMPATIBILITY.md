@@ -14,10 +14,12 @@ the crate is a breaking change and requires a major-version migration plan.
 
 ## Rust API
 
-The `0.1.x-alpha` API is experimental. SemVer-compatible releases may add
-items, but may still revise experimental modules before beta. Stable modules
-will not remove or change public items without a deprecation period and a
-documented migration note.
+The `0.2.x-alpha` API is experimental. The `0.2.0-alpha.1` line deliberately
+contains the lossless AST and parser-state fields added after the published
+`0.1.0` baseline. The API audit compares this line against `0.1.0`; future
+breaking changes require another minor-line bump while the crate remains
+below `1.0.0`. Stable modules will not remove or change public items without
+a deprecation period and a documented migration note.
 
 ## AST Serialization
 

@@ -5,6 +5,7 @@ import pdf_ast
 
 def test_basic_functionality():
     """Test basic functionality of PDF-AST Python bindings"""
+    assert pdf_ast.__version__ == "0.2.0-alpha.1"
     # Test with a minimal PDF
     minimal_pdf = b"""%PDF-1.4
 1 0 obj

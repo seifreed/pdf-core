@@ -11,7 +11,7 @@ env:
 
 jobs:
   semver:
-    name: Compare public API with pdf-ast 0.1.0
+    name: Compare public API with pdf-ast 0.1.0 baseline
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -26,4 +26,4 @@ jobs:
       - name: Install cargo-semver-checks
         run: cargo install cargo-semver-checks --version 0.50.0 --locked
       - name: Check release compatibility
-        run: cargo semver-checks check-release --package pdf-ast
+        run: cargo semver-checks check-release --package pdf-ast --baseline-version 0.1.0

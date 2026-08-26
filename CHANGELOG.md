@@ -14,6 +14,13 @@ The next release will be cut after the full CI and signed-tag checklist passes.
   reference resolution and added serialized PDF/UA structure and language
   rule coverage.
 
+## 0.2.0-alpha.1
+
+- Bumped the workspace API line after adding lossless parser state and
+  diagnostics to public AST and serialization structures.
+- Made Python and Node binding version constants follow the Rust package
+  version and made the semver audit compare explicitly with `0.1.0`.
+
 ## 0.1.1-alpha
 
 - Consolidate the repository under `pdf-core` while keeping the `pdf-ast`
