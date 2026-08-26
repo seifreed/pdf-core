@@ -9,7 +9,6 @@ use openssl::rsa::Rsa;
 #[cfg(feature = "crypto")]
 use openssl::x509::{X509Builder, X509NameBuilder};
 
-#[cfg(feature = "crypto")]
 use pdf_ast::crypto::certificates::parse_der_certificate;
 
 #[cfg(feature = "crypto")]
