@@ -232,12 +232,12 @@ impl<'a> OutputIntentsParser<'a> {
                             issues.push("PDF/X OutputIntent missing RegistryName".to_string());
                         }
                     }
-                    "GTS_PDFA1" | "GTS_PDFA2" | "GTS_PDFA3" => {
-                        if !props.contains_key("output_condition_identifier") {
-                            issues.push(
-                                "PDF/A OutputIntent missing OutputConditionIdentifier".to_string(),
-                            );
-                        }
+                    "GTS_PDFA1" | "GTS_PDFA2" | "GTS_PDFA3"
+                        if !props.contains_key("output_condition_identifier") =>
+                    {
+                        issues.push(
+                            "PDF/A OutputIntent missing OutputConditionIdentifier".to_string(),
+                        );
                     }
                     _ => {}
                 }

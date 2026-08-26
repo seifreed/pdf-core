@@ -203,11 +203,7 @@ impl SchemaConstraint for CatalogVersionConstraint {
                                     is_2_0 = true;
                                 }
                             }
-                            PdfValue::String(s) => {
-                                if s.to_string_lossy() == "2.0" {
-                                    is_2_0 = true;
-                                }
-                            }
+                            PdfValue::String(s) if s.to_string_lossy() == "2.0" => is_2_0 = true,
                             _ => {}
                         }
                     }
@@ -987,7 +983,7 @@ impl SchemaConstraint for FontCMapEncodingConstraint {
         let font_nodes = document.ast.find_nodes_by_type(NodeType::Font);
         let cid_nodes = document.ast.find_nodes_by_type(NodeType::CIDFont);
 
-        for font_id in font_nodes.into_iter().chain(cid_nodes.into_iter()) {
+        for font_id in font_nodes.into_iter().chain(cid_nodes) {
             let mut has_encoding = false;
             let mut has_tounicode = false;
 

@@ -466,7 +466,7 @@ impl DocumentDiagnostics {
         // Sort recommendations by priority
         report
             .recommendations
-            .sort_by(|a, b| b.priority.cmp(&a.priority));
+            .sort_by_key(|a| std::cmp::Reverse(a.priority));
     }
 
     // Helper methods

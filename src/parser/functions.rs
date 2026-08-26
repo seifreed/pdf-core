@@ -218,11 +218,7 @@ impl<'a> FunctionParser<'a> {
         }
 
         // Parse N (exponent)
-        if let Some(n) = dict.get("N").and_then(|v| self.get_number(v)) {
-            func.n = n;
-        } else {
-            return None;
-        }
+        func.n = dict.get("N").and_then(|v| self.get_number(v))?;
 
         Some(PdfFunction::Type2(func))
     }

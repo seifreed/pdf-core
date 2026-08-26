@@ -299,7 +299,7 @@ impl RecoveryStrategy for StreamRecovery {
         for stream in streams {
             if let Some(fixed_stream) = self.fix_stream(&data, &stream) {
                 // Replace broken stream
-                data.splice(stream.start..stream.end, fixed_stream.into_iter());
+                data.splice(stream.start..stream.end, fixed_stream);
                 modified = true;
             }
         }

@@ -140,7 +140,7 @@ jobs:
         run: cargo install cargo-llvm-cov --locked
 
       - name: Run tests with coverage
-        run: cargo llvm-cov --all-features --workspace --locked --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --locked --lcov --output-path lcov.info
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5

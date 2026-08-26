@@ -100,16 +100,10 @@ impl<'a> StructTreeParser<'a> {
         let parent_tree_dict = match dict.get("ParentTree") {
             Some(PdfValue::Dictionary(d)) => d.clone(),
             Some(PdfValue::Reference(obj_id)) => {
-                if let Some(node_id) = self.resolver.get_node_id(&obj_id.id()) {
-                    if let Some(node) = self.ast.get_node(node_id) {
-                        if let PdfValue::Dictionary(d) = &node.value {
-                            d.clone()
-                        } else {
-                            return None;
-                        }
-                    } else {
-                        return None;
-                    }
+                let node_id = self.resolver.get_node_id(&obj_id.id())?;
+                let node = self.ast.get_node(node_id)?;
+                if let PdfValue::Dictionary(d) = &node.value {
+                    d.clone()
                 } else {
                     return None;
                 }
@@ -436,10 +430,10 @@ impl<'a> StructTreeParser<'a> {
                         mcid_content.clear();
                     }
                 }
-                crate::parser::content_stream::ContentOperator::ShowText(text) => {
-                    if current_mcid.is_some() {
-                        mcid_content.push(String::from_utf8_lossy(text).to_string());
-                    }
+                crate::parser::content_stream::ContentOperator::ShowText(text)
+                    if current_mcid.is_some() =>
+                {
+                    mcid_content.push(String::from_utf8_lossy(text).to_string());
                 }
                 _ => {}
             }

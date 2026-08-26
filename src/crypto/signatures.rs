@@ -112,7 +112,7 @@ impl PdfSignatureHandler {
         }
 
         let mut result = Vec::with_capacity(hex_str.len() / 2);
-        for chunk in hex_str.as_bytes().chunks_exact(2) {
+        for chunk in hex_str.as_bytes().as_chunks::<2>().0 {
             let hex_byte = std::str::from_utf8(chunk).map_err(|_| {
                 CryptoError::InvalidSignatureFormat("Invalid hex character".to_string())
             })?;

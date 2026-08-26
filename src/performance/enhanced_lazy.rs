@@ -559,7 +559,7 @@ impl EnhancedLazyLoader {
         // Clear decoded images if memory pressure is high
         {
             let image_cache = self.image_cache.write().unwrap();
-            for (_, image) in image_cache.data.iter() {
+            for image in image_cache.data.values() {
                 let mut decoded = image.decoded_data.write().unwrap();
                 *decoded = None; // Clear decoded data, keep raw data
             }

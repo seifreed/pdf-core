@@ -72,7 +72,7 @@ fn peak_rss_kib() -> Option<u64> {
             return None;
         }
         let bytes = unsafe { usage.assume_init().ru_maxrss };
-        return u64::try_from(bytes).ok().map(|bytes| bytes / 1024);
+        u64::try_from(bytes).ok().map(|bytes| bytes / 1024)
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "ios")))]
