@@ -1,6 +1,6 @@
 # Veredicto
 
-## Estado de seguimiento (2026-08-26)
+## Estado de seguimiento (2026-08-27)
 
 Este documento conserva la auditoria original. Desde entonces se han cerrado
 varios puntos: el workspace incluye todos los crates, `main` esta protegida,
@@ -22,15 +22,33 @@ log y las metricas de memoria como artefacto, y ejecuta el corpus externo
 completo. Los workflows de CI y ClusterFuzzLite sobre `44dd805` siguen en
 curso; hasta que terminen no se debe contar esta evidencia como verde.
 
-Siguen pendientes para cerrar este roadmap: evidencia verde y repetida en CI
-para corpus/differential/fuzzing y bindings; semantica estricta completa y
-presupuesto de recursos aplicado a todas las operaciones; matriz normativa
-clausula por clausula y validacion PDF/A/PDF/UA no experimental; cobertura
-completa de CMap, fuentes, herencia, revisiones hibridas y codecs; API/visitors
-estables y reorganizacion final de crates; y publicacion firmada en crates.io,
-PyPI y npm con consumidores externos. El chequeo local de `cargo-semver-checks`
-pasa para `pdf-ast` contra `0.1.0`; el workspace completo no es auditable
-porque `pdf-ast-dynamic-plugin-example` no esta publicado en crates.io.
+Pendientes actuales, en orden practico:
+
+* **Evidencia remota:** faltan ejecuciones verdes y repetidas del CI completo,
+  corpus/differential, ClusterFuzzLite y los seis smoke tests de bindings. Las
+  ejecuciones actuales son CI `33023949387` sobre `926ed37`, bindings
+  `33023738374` sobre `1d508a7` y fuzzing `33023545057` sobre `2d2974d`.
+* **Parser endurecido:** falta hacer completamente estrictos los modos de
+  error/recuperacion y demostrar que el `ResourceBudget` cubre toda operacion
+  publica de parseo, resolucion, recorrido, decodificacion y serializacion.
+* **Conformidad:** ya existe el inventario publico por clausula en
+  `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
+  convertirlo en cobertura normativa completa, fusionar las validaciones y
+  dejar PDF/A/PDF/UA fuera de estado experimental.
+* **Caracteristicas parciales:** CMap, `ToUnicode`, fuentes, herencia de
+  recursos, revisiones hibridas e incrementalmente complejas y codecs aún
+  necesitan cobertura; JBIG2 sigue sin soporte completo y JPX es solo
+  inspeccion de contenedor.
+* **API y distribucion:** el esquema 1.1.0, visitors, C ABI y chequeo local de
+  SemVer existen, pero la API/crates no estan estabilizados ni reorganizados
+  para beta. No hay publicación firmada en crates.io, PyPI o npm, ni
+  consumidores externos.
+
+El chequeo local de `cargo-semver-checks` pasa para `pdf-ast` contra `0.1.0`;
+el workspace completo no es auditable porque
+`pdf-ast-dynamic-plugin-example` no esta publicado en crates.io. La
+publicacion sigue bloqueada hasta disponer de credenciales de registro,
+firma/provenance y artefactos verdes; no se debe crear un release ficticio.
 
 **`pdf-core` es actualmente una alpha técnica avanzada, no una beta y todavía no una librería preparada para procesar PDFs no confiables en producción.**
 
