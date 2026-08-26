@@ -883,7 +883,9 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                         if let Ok((_, (_, PdfValue::Integer(length)))) =
                             object_parser::parse_indirect_object(&buffer[..bytes_read])
                         {
-                            updates.push((node.id, length as usize));
+                            let length = usize::try_from(length)
+                                .map_err(|_| "Indirect stream Length must be non-negative")?;
+                            updates.push((node.id, length));
                             info!(
                                 "Resolved indirect Length {} for stream in node {:?}",
                                 length, node.id
@@ -1314,5 +1316,28 @@ mod tests {
         }
 
         assert_eq!(resolver.pending_references.len(), 1);
+    }
+
+    #[test]
+    fn rejects_negative_indirect_stream_length() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(b"2 0 obj\n-1\nendobj\n".to_vec()),
+            &document,
+            true,
+            crate::performance::PerformanceLimits::default(),
+        );
+        resolver.xref_table.insert(ObjectId::new(2, 0), 0);
+
+        let mut dict = PdfDictionary::new();
+        dict.insert("Length", PdfValue::Reference(PdfReference::new(2, 0)));
+        let mut ast = PdfAstGraph::new();
+        ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream(crate::types::PdfStream::new(dict, Vec::new())),
+        );
+
+        let error = resolver.resolve_stream_lengths(&mut ast).unwrap_err();
+        assert!(error.contains("non-negative"));
     }
 }
