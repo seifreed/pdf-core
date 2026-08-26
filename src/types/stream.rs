@@ -197,17 +197,13 @@ impl PdfStream {
         match &self.data {
             StreamData::Raw(data) | StreamData::Decoded(data) => {
                 let filters = self.get_filters_with_params();
-                if filters.is_empty() {
-                    Ok(data.clone())
-                } else {
-                    crate::filters::decode_stream_with_limits(
-                        data,
-                        &filters,
-                        max_output_bytes,
-                        max_ratio,
-                    )
-                    .map_err(|e| e.to_string())
-                }
+                crate::filters::decode_stream_with_limits(
+                    data,
+                    &filters,
+                    max_output_bytes,
+                    max_ratio,
+                )
+                .map_err(|e| e.to_string())
             }
             StreamData::Lazy(_) => Err("Lazy stream decoding not implemented".to_string()),
         }

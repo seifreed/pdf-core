@@ -79,6 +79,13 @@ pub fn decode_stream_with_limits(
     max_output_bytes: usize,
     max_ratio: usize,
 ) -> Result<Vec<u8>, FilterError> {
+    if data.len() > max_output_bytes && filters.is_empty() {
+        return Err(FilterError::DecompressionError(format!(
+            "Decoded stream exceeds limit: {} bytes > {} bytes",
+            data.len(),
+            max_output_bytes
+        )));
+    }
     let mut result = data.to_vec();
     let input_len = data.len().max(1);
 
@@ -515,7 +522,9 @@ fn decode_jpx(data: &[u8]) -> Result<Vec<u8>, FilterError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_predictor, decode_ccitt_fax, decode_stream_with_budget};
+    use super::{
+        apply_predictor, decode_ccitt_fax, decode_stream_with_budget, decode_stream_with_limits,
+    };
     use crate::performance::ResourceBudget;
     use crate::types::CCITTFaxDecodeParams;
 
@@ -543,5 +552,12 @@ mod tests {
             .expect_err("decoded data must respect the shared budget");
         assert!(error.to_string().contains("DecodedBytes"));
         assert_eq!(budget.remaining_decoded_bytes(), 4);
+    }
+
+    #[test]
+    fn limited_decode_rejects_unfiltered_data() {
+        let error = decode_stream_with_limits(b"12345", &[], 4, 10)
+            .expect_err("unfiltered data must respect the output limit");
+        assert!(error.to_string().contains("Decoded stream exceeds limit"));
     }
 }
