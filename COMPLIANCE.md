@@ -56,6 +56,12 @@ by `tests/validation_tests.rs`; they prove both branches of each local rule.
 | `LANG_MISSING` | PDF/UA-1, ISO 14289-1:2014 7.2 | `fixture_pdfua_language_rule_has_positive_and_negative_cases` with `en-US` | Same test without `Lang` | Aggregate of `ISO_14289_1:7.2:2,21-34`; depends on content object |
 | `LANG_EMPTY` | PDF/UA-1, ISO 14289-1:2014 7.2 | Same test with `en-US` | Same test with an empty `Lang` string | Aggregate of `ISO_14289_1:7.2:*`; no 1:1 veraPDF rule |
 
+The corpus also contains serialized Isartor negatives for the three PDF/A
+clauses above. `tests/verapdf_rule_mapping_tests.rs` rechecks the exact
+veraPDF IDs when `VERAPDF_BIN` and `PDF_COMPLIANCE_CORPUS` are configured:
+`6.3.4:1`, `6.5.2:1`, and `6.6.1:1`. These are reference observations, not
+proof that the synthetic local fixtures serialize identically.
+
 ## Required Before Conformance Claims
 
 - The local positive/negative fixture branch is covered by the matrix above;
