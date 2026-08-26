@@ -120,7 +120,7 @@ jobs:
         uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-        slug: seifreed/pdf-core
+          slug: seifreed/pdf-core
 
   corpus:
     name: Regression Corpus
