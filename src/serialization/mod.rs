@@ -1,5 +1,9 @@
-use crate::ast::{AstNode, EdgeType, NodeId, NodeType, PdfAstGraph, PdfDocument};
-use crate::types::PdfValue;
+use crate::ast::{
+    AstNode, CrossReferenceTable, DocumentMetadata, DocumentRevision, EdgeType, ForensicSnapshot,
+    LinearizationInfo, NodeId, NodeType, PdfAstGraph, PdfDocument, PdfVersion, XRefEntry,
+    XRefStream,
+};
+use crate::types::{ObjectId, PdfValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -15,6 +19,12 @@ pub struct SerializableDocument {
     pub trailer: SerializableValue,
     pub xref_entries: HashMap<String, SerializableXRefEntry>,
     #[serde(default)]
+    pub xref_prev_offset: Option<u64>,
+    #[serde(default)]
+    pub xref_hybrid_mode: bool,
+    #[serde(default)]
+    pub xref_streams: Vec<SerializableXRefStream>,
+    #[serde(default)]
     pub original_bytes: Option<Vec<u8>>,
     #[serde(default)]
     pub revisions: Vec<SerializableRevision>,
@@ -22,6 +32,8 @@ pub struct SerializableDocument {
     pub diagnostics: Vec<crate::ast::ParseDiagnostic>,
     #[serde(default)]
     pub forensic: Option<SerializableForensicSnapshot>,
+    #[serde(default)]
+    pub linearization: Option<SerializableLinearizationInfo>,
     pub metadata: SerializableDocumentMetadata,
 }
 
@@ -30,6 +42,31 @@ pub struct SerializableXRefEntry {
     pub offset: Option<u64>,
     pub generation: u16,
     pub entry_type: String,
+    #[serde(default)]
+    pub next_free_object: Option<u32>,
+    #[serde(default)]
+    pub stream_object: Option<u32>,
+    #[serde(default)]
+    pub index: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableXRefStream {
+    pub object_id: (u32, u16),
+    pub dict: SerializableValue,
+    pub entries: Vec<XRefEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableLinearizationInfo {
+    pub version: f64,
+    pub file_length: u64,
+    pub hint_stream_offset: u64,
+    pub hint_stream_length: Option<u64>,
+    pub object_count: u32,
+    pub first_page_object_number: u32,
+    pub first_page_end_offset: u64,
+    pub main_xref_table_entries: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,6 +86,93 @@ pub struct SerializableForensicSnapshot {
     pub duplicate_objects: Vec<(u32, u16)>,
     pub overwritten_objects: Vec<(u32, u16)>,
     pub residual_ranges: Vec<(u64, u64)>,
+}
+
+fn serialize_xref_entry(entry: XRefEntry) -> SerializableXRefEntry {
+    match entry {
+        XRefEntry::InUse { offset, generation } => SerializableXRefEntry {
+            offset: Some(offset),
+            generation,
+            entry_type: "InUse".to_string(),
+            next_free_object: None,
+            stream_object: None,
+            index: None,
+        },
+        XRefEntry::Free {
+            next_free_object,
+            generation,
+        } => SerializableXRefEntry {
+            offset: None,
+            generation,
+            entry_type: "Free".to_string(),
+            next_free_object: Some(next_free_object),
+            stream_object: None,
+            index: None,
+        },
+        XRefEntry::Compressed {
+            stream_object,
+            index,
+        } => SerializableXRefEntry {
+            offset: None,
+            generation: 0,
+            entry_type: "Compressed".to_string(),
+            next_free_object: None,
+            stream_object: Some(stream_object),
+            index: Some(index),
+        },
+    }
+}
+
+fn deserialize_xref_entry(entry: &SerializableXRefEntry) -> Result<XRefEntry, String> {
+    match entry.entry_type.as_str() {
+        "InUse" => Ok(XRefEntry::InUse {
+            offset: entry
+                .offset
+                .ok_or_else(|| "InUse xref entry is missing offset".to_string())?,
+            generation: entry.generation,
+        }),
+        "Free" => Ok(XRefEntry::Free {
+            next_free_object: entry
+                .next_free_object
+                .ok_or_else(|| "Free xref entry is missing next_free_object".to_string())?,
+            generation: entry.generation,
+        }),
+        "Compressed" => {
+            if entry.generation != 0 {
+                return Err("Compressed xref entry has non-zero generation".to_string());
+            }
+            Ok(XRefEntry::Compressed {
+                stream_object: entry
+                    .stream_object
+                    .ok_or_else(|| "Compressed xref entry is missing stream_object".to_string())?,
+                index: entry
+                    .index
+                    .ok_or_else(|| "Compressed xref entry is missing index".to_string())?,
+            })
+        }
+        entry_type => Err(format!("Unknown xref entry type: {entry_type}")),
+    }
+}
+
+fn parse_object_id(value: &str) -> Result<ObjectId, String> {
+    let (number, generation) = value
+        .split_once('_')
+        .ok_or_else(|| format!("Invalid object ID: {value}"))?;
+    let number = number
+        .parse::<u32>()
+        .map_err(|_| format!("Invalid object number: {number}"))?;
+    let generation = generation
+        .parse::<u16>()
+        .map_err(|_| format!("Invalid object generation: {generation}"))?;
+    Ok(ObjectId::new(number, generation))
+}
+
+fn serial_object_id(id: ObjectId) -> (u32, u16) {
+    (id.number, id.generation)
+}
+
+fn object_id_from_tuple((number, generation): (u32, u16)) -> ObjectId {
+    ObjectId::new(number, generation)
 }
 
 impl From<&crate::ast::ForensicSnapshot> for SerializableForensicSnapshot {
@@ -80,6 +204,34 @@ impl From<&crate::ast::ForensicSnapshot> for SerializableForensicSnapshot {
             residual_ranges: snapshot.residual_ranges.clone(),
         }
     }
+}
+
+fn deserialize_forensic(
+    snapshot: &SerializableForensicSnapshot,
+) -> Result<ForensicSnapshot, String> {
+    let deserialize_xref = |entries: &HashMap<String, XRefEntry>| {
+        entries
+            .iter()
+            .map(|(key, entry)| Ok((parse_object_id(key)?, *entry)))
+            .collect::<Result<HashMap<_, _>, String>>()
+    };
+    Ok(ForensicSnapshot {
+        declared_xref: deserialize_xref(&snapshot.declared_xref)?,
+        recovered_xref: deserialize_xref(&snapshot.recovered_xref)?,
+        duplicate_objects: snapshot
+            .duplicate_objects
+            .iter()
+            .copied()
+            .map(object_id_from_tuple)
+            .collect(),
+        overwritten_objects: snapshot
+            .overwritten_objects
+            .iter()
+            .copied()
+            .map(object_id_from_tuple)
+            .collect(),
+        residual_ranges: snapshot.residual_ranges.clone(),
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,6 +272,14 @@ pub struct SerializableDocumentMetadata {
     pub creator: Option<String>,
     pub creation_date: Option<String>,
     pub modification_date: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub subject: Option<String>,
+    #[serde(default)]
+    pub compliance: Vec<crate::ast::ComplianceProfile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -733,6 +893,175 @@ impl SerializableDocument {
         GraphDeserializer::deserialize(self.ast.clone())
     }
 
+    pub fn deserialize_document(&self) -> Result<PdfDocument, String> {
+        let ast = self.deserialize_ast()?;
+        let version = PdfVersion::from_string(&self.version)
+            .ok_or_else(|| format!("Invalid PDF version: {}", self.version))?;
+        let node_id = |serial_id: Option<usize>| {
+            serial_id.and_then(|id| {
+                self.ast
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == id)
+                    .map(|node| NodeId(node.original_id.unwrap_or(node.id)))
+            })
+        };
+        let trailer = match GraphDeserializer::deserialize_value(&self.trailer)? {
+            PdfValue::Dictionary(dict) => dict,
+            value => {
+                return Err(format!(
+                    "Document trailer must be a dictionary, got {}",
+                    value.type_name()
+                ))
+            }
+        };
+
+        let mut xref = CrossReferenceTable {
+            entries: HashMap::new(),
+            streams: Vec::new(),
+            prev_offset: self.xref_prev_offset,
+            hybrid_mode: self.xref_hybrid_mode,
+        };
+        for (key, entry) in &self.xref_entries {
+            xref.entries
+                .insert(parse_object_id(key)?, deserialize_xref_entry(entry)?);
+        }
+        for stream in &self.xref_streams {
+            let dict = match GraphDeserializer::deserialize_value(&stream.dict)? {
+                PdfValue::Dictionary(dict) => dict,
+                value => {
+                    return Err(format!(
+                        "XRef stream dictionary must be a dictionary, got {}",
+                        value.type_name()
+                    ))
+                }
+            };
+            xref.streams.push(XRefStream {
+                object_id: object_id_from_tuple(stream.object_id),
+                dict,
+                entries: stream.entries.clone(),
+            });
+        }
+
+        let revisions = self
+            .revisions
+            .iter()
+            .map(|revision| {
+                let trailer = match GraphDeserializer::deserialize_value(&revision.trailer)? {
+                    PdfValue::Dictionary(dict) => dict,
+                    value => {
+                        return Err(format!(
+                            "Revision trailer must be a dictionary, got {}",
+                            value.type_name()
+                        ))
+                    }
+                };
+                Ok(DocumentRevision {
+                    revision_number: revision.revision_number,
+                    xref_offset: revision.xref_offset,
+                    trailer,
+                    modified_objects: revision
+                        .modified_objects
+                        .iter()
+                        .copied()
+                        .map(object_id_from_tuple)
+                        .collect(),
+                    added_objects: revision
+                        .added_objects
+                        .iter()
+                        .copied()
+                        .map(object_id_from_tuple)
+                        .collect(),
+                    deleted_objects: revision
+                        .deleted_objects
+                        .iter()
+                        .copied()
+                        .map(object_id_from_tuple)
+                        .collect(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+
+        let forensic = self
+            .forensic
+            .as_ref()
+            .map(deserialize_forensic)
+            .transpose()?;
+        let linearization = self.linearization.as_ref().map(|value| LinearizationInfo {
+            version: value.version,
+            file_length: value.file_length,
+            hint_stream_offset: value.hint_stream_offset,
+            hint_stream_length: value.hint_stream_length,
+            object_count: value.object_count,
+            first_page_object_number: value.first_page_object_number,
+            first_page_end_offset: value.first_page_end_offset,
+            main_xref_table_entries: value.main_xref_table_entries,
+        });
+
+        let metadata = DocumentMetadata {
+            file_size: self.metadata.file_size,
+            linearized: self.metadata.linearized,
+            encrypted: self.metadata.encrypted,
+            has_forms: self.metadata.has_forms,
+            has_xfa: self.metadata.has_xfa,
+            xfa_packets: self.metadata.xfa_packets,
+            has_xfa_scripts: self.metadata.has_xfa_scripts,
+            xfa_script_nodes: self.metadata.xfa_script_nodes,
+            has_hybrid_forms: self.metadata.has_hybrid_forms,
+            form_field_count: self.metadata.form_field_count,
+            has_javascript: self.metadata.has_javascript,
+            has_embedded_files: self.metadata.has_embedded_files,
+            has_signatures: self.metadata.has_signatures,
+            has_richmedia: self.metadata.has_richmedia,
+            richmedia_annotations: self.metadata.richmedia_annotations,
+            richmedia_assets: self.metadata.richmedia_assets,
+            richmedia_scripts: self.metadata.richmedia_scripts,
+            has_3d: self.metadata.has_3d,
+            threed_annotations: self.metadata.threed_annotations,
+            threed_u3d: self.metadata.threed_u3d,
+            threed_prc: self.metadata.threed_prc,
+            has_audio: self.metadata.has_audio,
+            audio_annotations: self.metadata.audio_annotations,
+            has_video: self.metadata.has_video,
+            video_annotations: self.metadata.video_annotations,
+            has_dss: self.metadata.has_dss,
+            dss_vri_count: self.metadata.dss_vri_count,
+            dss_certs: self.metadata.dss_certs,
+            dss_ocsp: self.metadata.dss_ocsp,
+            dss_crl: self.metadata.dss_crl,
+            dss_timestamps: self.metadata.dss_timestamps,
+            page_count: self.metadata.page_count,
+            compliance: self.metadata.compliance.clone(),
+            producer: self.metadata.producer.clone(),
+            creator: self.metadata.creator.clone(),
+            creation_date: self.metadata.creation_date.clone(),
+            modification_date: self.metadata.modification_date.clone(),
+            title: self.metadata.title.clone(),
+            author: self.metadata.author.clone(),
+            subject: self.metadata.subject.clone(),
+        };
+
+        let mut document = PdfDocument::new(version);
+        document.original_bytes = self.original_bytes.clone();
+        document.ast = ast;
+        document.catalog = node_id(self.catalog);
+        document.info = node_id(self.info);
+        if self.catalog.is_some() && document.catalog.is_none() {
+            return Err("Document catalog references an unknown AST node".to_string());
+        }
+        if self.info.is_some() && document.info.is_none() {
+            return Err("Document info references an unknown AST node".to_string());
+        }
+        document.trailer = trailer;
+        document.xref = xref;
+        document.metadata = metadata;
+        document.linearization = linearization;
+        document.revisions = revisions;
+        document.diagnostics = self.diagnostics.clone();
+        document.forensic = forensic;
+        Ok(document)
+    }
+
     pub fn from_document(document: &PdfDocument) -> Self {
         let ast_serializable = SerializableGraph::from_ast(&document.ast);
 
@@ -740,25 +1069,7 @@ impl SerializableDocument {
         let mut xref_entries = HashMap::new();
         for (obj_id, entry) in &document.xref.entries {
             let key = format!("{}_{}", obj_id.number, obj_id.generation);
-            let serializable_entry = match entry {
-                crate::ast::document::XRefEntry::InUse { offset, generation } => {
-                    SerializableXRefEntry {
-                        offset: Some(*offset),
-                        generation: *generation,
-                        entry_type: "InUse".to_string(),
-                    }
-                }
-                crate::ast::document::XRefEntry::Free { generation, .. } => SerializableXRefEntry {
-                    offset: None,
-                    generation: *generation,
-                    entry_type: "Free".to_string(),
-                },
-                crate::ast::document::XRefEntry::Compressed { .. } => SerializableXRefEntry {
-                    offset: None,
-                    generation: 0,
-                    entry_type: "Compressed".to_string(),
-                },
-            };
+            let serializable_entry = serialize_xref_entry(*entry);
             xref_entries.insert(key, serializable_entry);
         }
 
@@ -785,6 +1096,20 @@ impl SerializableDocument {
                 document.trailer.clone(),
             )),
             xref_entries,
+            xref_prev_offset: document.xref.prev_offset,
+            xref_hybrid_mode: document.xref.hybrid_mode,
+            xref_streams: document
+                .xref
+                .streams
+                .iter()
+                .map(|stream| SerializableXRefStream {
+                    object_id: serial_object_id(stream.object_id),
+                    dict: GraphSerializer::serialize_value(&PdfValue::Dictionary(
+                        stream.dict.clone(),
+                    )),
+                    entries: stream.entries.clone(),
+                })
+                .collect(),
             original_bytes: document.original_bytes.clone(),
             revisions: document
                 .revisions
@@ -817,6 +1142,18 @@ impl SerializableDocument {
                 .forensic
                 .as_ref()
                 .map(SerializableForensicSnapshot::from),
+            linearization: document.linearization.as_ref().map(|value| {
+                SerializableLinearizationInfo {
+                    version: value.version,
+                    file_length: value.file_length,
+                    hint_stream_offset: value.hint_stream_offset,
+                    hint_stream_length: value.hint_stream_length,
+                    object_count: value.object_count,
+                    first_page_object_number: value.first_page_object_number,
+                    first_page_end_offset: value.first_page_end_offset,
+                    main_xref_table_entries: value.main_xref_table_entries,
+                }
+            }),
             metadata: SerializableDocumentMetadata {
                 file_size: document.metadata.file_size,
                 linearized: document.metadata.linearized,
@@ -854,6 +1191,10 @@ impl SerializableDocument {
                 creator: document.metadata.creator.clone(),
                 creation_date: document.metadata.creation_date.clone(),
                 modification_date: document.metadata.modification_date.clone(),
+                title: document.metadata.title.clone(),
+                author: document.metadata.author.clone(),
+                subject: document.metadata.subject.clone(),
+                compliance: document.metadata.compliance.clone(),
             },
         }
     }
@@ -1173,6 +1514,93 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn preserves_full_document_state_across_round_trip() {
+        let mut document = PdfDocument::new(PdfVersion::new(2, 0));
+        let catalog_id = NodeId::new(41);
+        let info_id = NodeId::new(9001);
+        document.ast.add_node(AstNode::new(
+            catalog_id,
+            NodeType::Catalog,
+            PdfValue::Dictionary(PdfDictionary::new()),
+        ));
+        document.ast.add_node(AstNode::new(
+            info_id,
+            NodeType::Metadata,
+            PdfValue::Dictionary(PdfDictionary::new()),
+        ));
+        document.set_catalog(catalog_id);
+        document.set_info(info_id);
+        document.trailer.insert("Size", PdfValue::Integer(12));
+        document.add_xref_entry(
+            ObjectId::new(1, 0),
+            XRefEntry::InUse {
+                offset: 100,
+                generation: 0,
+            },
+        );
+        document.add_xref_entry(
+            ObjectId::new(2, 1),
+            XRefEntry::Free {
+                next_free_object: 0,
+                generation: 1,
+            },
+        );
+        document.add_xref_entry(
+            ObjectId::new(3, 0),
+            XRefEntry::Compressed {
+                stream_object: 7,
+                index: 2,
+            },
+        );
+        document.xref.prev_offset = Some(88);
+        document.xref.hybrid_mode = true;
+        let mut xref_stream_dict = PdfDictionary::new();
+        xref_stream_dict.insert("Type", PdfValue::Name(crate::types::PdfName::new("XRef")));
+        document.add_xref_stream(crate::ast::XRefStream {
+            object_id: ObjectId::new(7, 0),
+            dict: xref_stream_dict,
+            entries: vec![XRefEntry::Compressed {
+                stream_object: 7,
+                index: 2,
+            }],
+        });
+        document.linearization = Some(LinearizationInfo {
+            version: 1.0,
+            file_length: 1000,
+            hint_stream_offset: 200,
+            hint_stream_length: Some(20),
+            object_count: 12,
+            first_page_object_number: 4,
+            first_page_end_offset: 500,
+            main_xref_table_entries: 8,
+        });
+        document.metadata.title = Some("Round trip".to_string());
+        document.metadata.author = Some("pdf-core".to_string());
+        document.metadata.compliance = vec![crate::ast::ComplianceProfile::PdfA1b];
+
+        let restored = SerializableDocument::from_document(&document)
+            .deserialize_document()
+            .unwrap();
+
+        assert_eq!(restored.version, PdfVersion::new(2, 0));
+        assert_eq!(restored.catalog, Some(catalog_id));
+        assert_eq!(restored.info, Some(info_id));
+        assert_eq!(restored.trailer.get("Size"), Some(&PdfValue::Integer(12)));
+        assert_eq!(restored.xref.entries, document.xref.entries);
+        assert_eq!(restored.xref.prev_offset, Some(88));
+        assert!(restored.xref.hybrid_mode);
+        assert_eq!(restored.xref.streams.len(), 1);
+        assert_eq!(
+            restored.xref.streams[0].entries,
+            document.xref.streams[0].entries
+        );
+        assert_eq!(restored.linearization.as_ref().unwrap().file_length, 1000);
+        assert_eq!(restored.metadata.title.as_deref(), Some("Round trip"));
+        assert_eq!(restored.metadata.author.as_deref(), Some("pdf-core"));
+        assert_eq!(restored.metadata.compliance, document.metadata.compliance);
     }
 
     #[test]
