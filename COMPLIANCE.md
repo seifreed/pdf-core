@@ -4,6 +4,11 @@ The validators in this repository are experimental preflight checks. They are
 not conformance claims. A report with no findings means only that the
 implemented checks did not find a violation.
 
+The `pdf-compliance` workspace crate is an adapter over the root
+`pdf_ast::validation::SchemaRegistry`; it does not maintain a second rule
+implementation. `validate_profile` exposes the registered experimental
+profiles while preserving their rule identifiers and scope limitations.
+
 ## Feature Matrix
 
 | Standard area | Rule or feature | Status | Evidence |
