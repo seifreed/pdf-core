@@ -3,6 +3,7 @@
 /// These tests verify individual parsing functions and components
 use pdf_ast::parser::*;
 use pdf_ast::types::*;
+use std::io::Cursor;
 
 #[cfg(test)]
 mod parser_tests {
@@ -471,6 +472,16 @@ mod parser_tests {
             .unwrap()
             .residual_ranges
             .is_empty());
+    }
+
+    #[test]
+    fn reader_parsing_preserves_original_bytes() {
+        let input = b"%PDF-1.7\n1 0 obj\n42\nendobj\n".to_vec();
+        let document = PdfParser::new()
+            .parse(Cursor::new(input.clone()))
+            .expect("reader parse should succeed");
+
+        assert_eq!(document.original_bytes, Some(input));
     }
 
     #[test]
