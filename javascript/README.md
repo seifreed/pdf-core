@@ -1,7 +1,7 @@
 # PDF-AST Node.js Bindings
 
 This package provides experimental Node.js bindings for `pdf-core` and its
-published `pdf-ast` crate. It exposes structural parsing and selected
+Rust crate. It exposes structural parsing and selected
 preflight checks; it is not a complete PDF 2.0 or compliance implementation.
 
 ## Features
@@ -16,7 +16,9 @@ preflight checks; it is not a complete PDF 2.0 or compliance implementation.
 ## Installation
 
 ```bash
-npm install pdf-ast
+cd javascript
+npm install
+npm run build-release
 ```
 
 ## Quick Start

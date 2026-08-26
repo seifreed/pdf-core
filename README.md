@@ -23,7 +23,7 @@
 
 ## Overview
 
-**pdf-core** is an experimental Rust library for parsing PDF documents into a rich Abstract Syntax Tree (AST). It targets structural, forensic, and security analysis. The published crate remains `pdf-ast` for compatibility.
+**pdf-core** is an experimental Rust library for parsing PDF documents into a rich Abstract Syntax Tree (AST). It targets structural, forensic, and security analysis. The crate name remains `pdf-ast` for compatibility.
 
 ### Key Features
 
@@ -74,24 +74,17 @@ isolation and an application-level resource policy.
 
 ## Installation
 
-Add to your `Cargo.toml`:
+Use the repository as a Git dependency (registry publication is not enabled yet):
 
 ```toml
 [dependencies]
-pdf-ast = "0.1"
+pdf-ast = { git = "https://github.com/seifreed/pdf-core" }
 ```
 
 Or with Cargo:
 
 ```bash
-cargo add pdf-ast
-```
-
-For a Git dependency:
-
-```toml
-[dependencies]
-pdf-ast = { git = "https://github.com/seifreed/pdf-core" }
+cargo add --git https://github.com/seifreed/pdf-core pdf-ast
 ```
 
 ### Feature Flags

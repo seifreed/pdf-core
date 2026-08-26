@@ -1,7 +1,7 @@
 # PDF-AST Python Bindings
 
 This package provides experimental Python bindings for `pdf-core` and its
-published `pdf-ast` crate. It exposes structural parsing and selected
+Rust crate. It exposes structural parsing and selected
 preflight checks; it is not a complete PDF 2.0 or compliance implementation.
 
 ## Features
@@ -15,7 +15,7 @@ preflight checks; it is not a complete PDF 2.0 or compliance implementation.
 ## Installation
 
 ```bash
-pip install pdf-ast
+python -m pip install ./python
 ```
 
 ## Quick Start
