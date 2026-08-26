@@ -6,6 +6,11 @@ All notable changes to `pdf-core` are documented here.
 
 The next release will be cut after the full CI and signed-tag checklist passes.
 
+- Expanded the pinned corpus to 2,806 upstream PDF/A, PDF/UA, and Isartor
+  fixtures, with SHA-256 manifest coverage and exact veraPDF rule mappings.
+- Added the ISO 32000 clause inventory, serialized veraPDF mapping test, C ABI
+  header/link smoke test, and 60 parser-fuzz seeds from a 1,000-run campaign.
+
 ## 0.1.1-alpha
 
 - Consolidate the repository under `pdf-core` while keeping the `pdf-ast`
