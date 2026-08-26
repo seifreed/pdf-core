@@ -62,15 +62,11 @@ impl StreamData {
             StreamData::Lazy(_) => None,
         }
     }
-}
 
-impl std::ops::Index<usize> for StreamData {
-    type Output = u8;
-
-    fn index(&self, index: usize) -> &Self::Output {
+    pub fn get(&self, index: usize) -> Option<&u8> {
         match self {
-            StreamData::Raw(data) | StreamData::Decoded(data) => &data[index],
-            StreamData::Lazy(_) => panic!("Cannot index into lazy stream data"),
+            StreamData::Raw(data) | StreamData::Decoded(data) => data.get(index),
+            StreamData::Lazy(_) => None,
         }
     }
 }
@@ -420,5 +416,22 @@ impl fmt::Display for PdfStream {
             StreamData::Lazy(reference) => write!(f, "{} bytes lazy", reference.length)?,
         }
         write!(f, "]endstream")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lazy_stream_access_is_optional() {
+        let stream = StreamData::Lazy(StreamReference {
+            offset: 10,
+            length: 1,
+            filters: Vec::new(),
+        });
+        assert!(stream.get(0).is_none());
+        assert_eq!(StreamData::Raw(vec![7]).get(0), Some(&7));
+        assert!(StreamData::Raw(vec![7]).get(1).is_none());
     }
 }
