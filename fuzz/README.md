@@ -20,3 +20,7 @@ flags.
 Crash inputs belong in `fuzz/artifacts/` and should become regression tests.
 ClusterFuzzLite uses the checked-in `.clusterfuzzlite/` integration on pull
 requests.
+
+The latest local 16-target smoke result is recorded in
+[`LOCAL-SMOKE-RESULTS.md`](LOCAL-SMOKE-RESULTS.md). It does not replace the
+GitHub Actions and ClusterFuzzLite gates.
