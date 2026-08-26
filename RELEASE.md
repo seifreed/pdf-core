@@ -14,7 +14,10 @@ Release checklist:
 - publish checksums and provenance for every released artifact.
 
 The repository does not currently publish crates.io, PyPI, or npm artifacts.
-The tag workflow currently produces a signed-tag-gated Linux Rust/C artifact
-with SHA-256 checksums, a CycloneDX SBOM, and GitHub provenance attestations.
-Bindings remain experimental until installation smoke tests and reproducible
-multi-platform builds are available.
+The tag workflow currently produces a signed-tag-gated Linux Rust/C artifact,
+Python wheels for the supported release runners, and native Node package
+archives for Linux x86_64, macOS arm64, and Windows x86_64. It also publishes
+SHA-256 checksums, a CycloneDX SBOM, and GitHub provenance attestations for the
+Linux release archive. Binding publication remains disabled until the
+multi-platform release jobs have been verified in CI and registry credentials
+are configured.
