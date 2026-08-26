@@ -35,7 +35,7 @@ jobs:
           PDF_EXTERNAL_MAX_FILES: "3000"
         run: |
           set -o pipefail
-          /usr/bin/time -v cargo test --test differential_tests --locked -- --test-threads=1 \
+          /usr/bin/time -v cargo test --test differential_tests --locked -- --test-threads=1 --nocapture \
             2>&1 | tee "$RUNNER_TEMP/differential.log"
 
       - name: Upload differential evidence
