@@ -24,7 +24,6 @@ const LINEARIZATION_BUFFER_SIZE: usize = 1024;
 const HEADER_BUFFER_SIZE: usize = 32;
 const HEADER_SEARCH_BUFFER_SIZE: usize = 1024;
 const XREF_TAIL_BUFFER_SIZE: i64 = 1024;
-const XREF_BUFFER_SIZE: usize = 65536;
 
 // PDF structure constants
 const MIN_PDF_SIZE: usize = 8;
@@ -275,11 +274,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             .xref_offset
             .ok_or_else(|| AstError::ParseError("No xref offset".to_string()))?;
 
-        self.reader.seek(SeekFrom::Start(xref_offset))?;
-
-        let mut buffer = vec![0u8; XREF_BUFFER_SIZE];
-        let n = self.reader.read(&mut buffer)?;
-        buffer.truncate(n);
+        let buffer = self.read_xref_buffer(xref_offset)?;
 
         if Self::starts_with_xref_keyword(&buffer) {
             self.parse_xref_table(&buffer)?;
