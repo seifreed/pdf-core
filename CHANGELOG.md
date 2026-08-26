@@ -33,3 +33,7 @@ The next release will be cut after the full CI and signed-tag checklist passes.
   page-tree fuzz target to the CI campaign.
 - Added cross-platform binding artifacts to the signed release workflow and
   documented that registry publication remains disabled.
+- Reject malformed and overflowing DER lengths in the fallback certificate
+  parser, with a truncation regression test.
+- Removed the stale Python lockfile so workspace dependency resolution uses the
+  audited root lockfile consistently.
