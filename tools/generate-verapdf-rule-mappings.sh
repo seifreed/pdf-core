@@ -33,7 +33,8 @@ jq --arg fixture_root "$fixture_root" \
       source_commit: $source_commit,
       fixture_count: ($jobs | length),
       mappings: ($jobs | map({
-        fixture: (.itemDetails.name | sub(($fixture_root + "/"); "")),
+        fixture: ("fixtures/isartor/" +
+          (.itemDetails.name | sub(($fixture_root + "/"); ""))),
         iso_clause: (if (.itemDetails.name | contains("/PDFA-1b/"))
           then (.itemDetails.name
             | capture("/(?<clause>[0-9]+(?:\\.[0-9]+)+) [^/]+/").clause)
