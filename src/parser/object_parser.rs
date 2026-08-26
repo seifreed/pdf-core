@@ -109,10 +109,20 @@ fn parse_reference(input: &[u8]) -> IResult<&[u8], PdfValue> {
             preceded(skip_whitespace, integer),
             preceded(skip_whitespace, char('R')),
         )),
-        |(obj_num, gen_num, _)| {
-            PdfValue::Reference(PdfReference::new(obj_num as u32, gen_num as u16))
-        },
+        |(obj_num, gen_num, _)| (obj_num, gen_num),
     )(input)
+    .and_then(|(remaining, (obj_num, gen_num))| {
+        if obj_num < 0 || gen_num < 0 || obj_num > u32::MAX as i64 || gen_num > u16::MAX as i64 {
+            return Err(nom::Err::Failure(nom::error::Error::new(
+                remaining,
+                nom::error::ErrorKind::Verify,
+            )));
+        }
+        Ok((
+            remaining,
+            PdfValue::Reference(PdfReference::new(obj_num as u32, gen_num as u16)),
+        ))
+    })
 }
 
 pub fn parse_indirect_object(input: &[u8]) -> IResult<&[u8], (ObjectId, PdfValue)> {
@@ -121,6 +131,12 @@ pub fn parse_indirect_object(input: &[u8]) -> IResult<&[u8], (ObjectId, PdfValue
     let (input, gen_num) = integer(input)?;
     let (input, _) = skip_whitespace(input)?;
     let (input, _) = tag(b"obj")(input)?;
+    if obj_num < 0 || gen_num < 0 || obj_num > u32::MAX as i64 || gen_num > u16::MAX as i64 {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Verify,
+        )));
+    }
     let (input, _) = skip_whitespace_and_comments(input)?;
     let (input, value) = parse_value(input)?;
     let (input, _) = skip_whitespace_and_comments(input)?;
@@ -277,4 +293,28 @@ fn next_decimal(data: &[u8], cursor: &mut usize) -> Result<usize, String> {
         return Err("Incomplete object stream header".to_string());
     }
     Ok(value)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_indirect_object, parse_value};
+    use crate::types::PdfValue;
+
+    #[test]
+    fn rejects_negative_references() {
+        assert!(parse_value(b"-1 0 R").is_err());
+        assert!(parse_value(b"1 -1 R").is_err());
+    }
+
+    #[test]
+    fn rejects_negative_indirect_object_ids() {
+        assert!(parse_indirect_object(b"-1 0 obj null endobj").is_err());
+        assert!(parse_indirect_object(b"1 -1 obj null endobj").is_err());
+    }
+
+    #[test]
+    fn keeps_valid_references() {
+        let (_, value) = parse_value(b"12 3 R").expect("valid reference");
+        assert!(matches!(value, PdfValue::Reference(_)));
+    }
 }
