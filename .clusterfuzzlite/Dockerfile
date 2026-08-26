@@ -4,4 +4,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends pkg-config libs
     && rm -rf /var/lib/apt/lists/*
 
 COPY . $SRC/pdf-core
+COPY .clusterfuzzlite/build.sh $SRC/
 WORKDIR $SRC/pdf-core
