@@ -26,5 +26,8 @@ including it in the report.
 - Coordinate a fix, regression test, and disclosure timeline with the reporter.
 
 Supported releases and published artifacts will be listed once signed GitHub
-releases exist. Until then, the `main` branch and registry-unpublished
-bindings are development artifacts.
+releases exist. Registry publication is gated by the `PUBLISH_REGISTRIES`
+repository variable and registry credentials; until a release passes that
+gate, the `main` branch and bindings are development artifacts. A release also
+requires the `RELEASE_SIGNING_KEY` secret and matching
+`RELEASE_SIGNING_FINGERPRINT` repository variable.
