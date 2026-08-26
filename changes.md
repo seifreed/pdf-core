@@ -11,6 +11,15 @@ reproducible de 2.806 fixtures upstream mas tres regresiones, metricas
 diferenciales, una campana fuzz local de 16.000 ejecuciones sin crashes y un
 chequeo completo de 205 mapeos contra veraPDF 1.30.2.
 
+Actualizacion 2026-08-27: la campana de ClusterFuzzLite encontro y ya tiene
+corregidos dos crashes reproducibles en entradas malformadas, uno en hex
+invalido de CMap y otro en cabeceras JBIG2 truncadas. Las correcciones estan
+en `9b640bb` y `44dd805`, con regresiones locales y fuzz dirigido en verde.
+La matriz de CI tambien instala qpdf/MuPDF para el diferencial, conserva el
+log y las metricas de memoria como artefacto, y ejecuta el corpus externo
+completo. Los workflows de CI y ClusterFuzzLite sobre `44dd805` siguen en
+curso; hasta que terminen no se debe contar esta evidencia como verde.
+
 Siguen pendientes para cerrar este roadmap: evidencia verde y repetida en CI
 para corpus/differential/fuzzing y bindings; semantica estricta completa y
 presupuesto de recursos aplicado a todas las operaciones; matriz normativa
