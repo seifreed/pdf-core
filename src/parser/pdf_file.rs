@@ -736,7 +736,9 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     AstError::ParseError("Xref entry offset overflow".to_string())
                 })?;
                 if end > data.len() {
-                    break;
+                    return Err(AstError::ParseError(
+                        "Xref stream data is truncated".to_string(),
+                    ));
                 }
                 let object_number = start.checked_add(i).ok_or_else(|| {
                     AstError::ParseError("Xref object number overflow".to_string())

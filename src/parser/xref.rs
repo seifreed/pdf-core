@@ -199,7 +199,7 @@ pub fn parse_xref_stream_with_limits(
                 .checked_add(entry_size)
                 .ok_or_else(|| "XRef data offset overflow".to_string())?;
             if end > decoded_data.len() {
-                break; // Not enough data for another entry
+                return Err("XRef stream data is truncated".to_string());
             }
 
             let entry_data = decoded_data
@@ -476,7 +476,7 @@ impl XRefEntry {
 mod tests {
     use super::{parse_xref_stream, parse_xref_stream_entry, parse_xref_table};
     use crate::performance::PerformanceLimits;
-    use crate::types::{PdfArray, PdfDictionary, PdfStream, PdfValue};
+    use crate::types::{PdfArray, PdfDictionary, PdfStream, PdfValue, StreamData};
 
     fn xref_stream(w: Vec<PdfValue>, index: Option<Vec<PdfValue>>) -> PdfStream {
         let mut dict = PdfDictionary::new();
@@ -568,6 +568,23 @@ mod tests {
         let error = super::parse_xref_stream_with_limits(&stream, &limits)
             .expect_err("xref data over the shared budget must be rejected");
         assert!(error.contains("DecodedBytes"));
+    }
+
+    #[test]
+    fn rejects_truncated_xref_stream_data() {
+        let mut stream = xref_stream(
+            vec![
+                PdfValue::Integer(1),
+                PdfValue::Integer(1),
+                PdfValue::Integer(1),
+            ],
+            None,
+        );
+        stream.dict.insert("Size", PdfValue::Integer(2));
+        stream.data = StreamData::Raw(vec![1, 0, 0]);
+
+        let error = parse_xref_stream(&stream).expect_err("truncated xref data must be rejected");
+        assert!(error.contains("truncated"));
     }
 
     #[test]
