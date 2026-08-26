@@ -19,7 +19,7 @@ profile fixtures; the other profiles are available for parser and preflight
 campaigns.
 
 The complete serialized Isartor-to-veraPDF mapping is maintained in
-[`RULE-MAPPINGS.json`](https://github.com/seifreed/pdf-core-corpus/blob/bb9d353181797cf61e81294c071737a09f155d6d/RULE-MAPPINGS.json)
+[`RULE-MAPPINGS.json`](https://github.com/seifreed/pdf-core-corpus/blob/9979a2a8618dcdf23ad3f20c760c1f06e5b36fe6/RULE-MAPPINGS.json)
 and covers 205 negative fixtures with 95 distinct veraPDF rule IDs. The
 clause-level ISO 32000 inventory is maintained in
 [ISO-32000-MATRIX.md](ISO-32000-MATRIX.md). It records implementation scope
@@ -71,7 +71,7 @@ IDs when `VERAPDF_BIN` and `PDF_COMPLIANCE_CORPUS` are configured:
 then run against those serialized bytes.
 
 The latest local parser gate (2026-08-26 UTC, corpus commit
-`bb9d353181797cf61e81294c071737a09f155d6d`) processed 2,809 files and
+`9979a2a8618dcdf23ad3f20c760c1f06e5b36fe6`) processed 2,809 files and
 161,227,640 bytes without a panic. It recorded 577 controlled parse errors,
 `peak_rss_kib=202240`, and p50/p95/p99 latencies of 3/53/129 ms. Reproduce it
 with `PDF_EXTERNAL_CORPUS=/path/to/pdf-core-corpus/fixtures PDF_EXTERNAL_MAX_FILES=3000 cargo test --test external_corpus_tests --locked -- --test-threads=1 --nocapture`.
