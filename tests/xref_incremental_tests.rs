@@ -168,3 +168,25 @@ fn test_hybrid_xref_table_and_stream() {
         .any(|stream| stream.object_id == ObjectId::new(4, 0)));
     assert!(data.len() > xref_stream_offset as usize);
 }
+
+#[test]
+fn invalid_xref_stream_offset_is_an_error_in_strict_mode_and_a_diagnostic_in_tolerant_mode() {
+    let (data, xref_stream_offset, _) = build_hybrid_pdf();
+    let marker = format!("/XRefStm {}", xref_stream_offset);
+    let replacement = b"/XRefStm (invalid)";
+    let mut data = data;
+    let start = data
+        .windows(marker.len())
+        .position(|window| window == marker.as_bytes())
+        .expect("hybrid trailer should contain XRefStm");
+    data.splice(start..start + marker.len(), replacement.iter().copied());
+
+    assert!(PdfParser::strict().parse_bytes(&data).is_err());
+    let document = PdfParser::new()
+        .parse_bytes(&data)
+        .expect("tolerant parser should retain the classic xref table");
+    assert!(document
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.error_code == "invalid_xref_stm_type"));
+}

@@ -500,7 +500,24 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             None => return Ok(None),
         };
 
-        if let Some(xref_stm) = trailer.get("XRefStm").and_then(|v| v.as_integer()) {
+        if let Some(value) = trailer.get("XRefStm") {
+            let Some(xref_stm) = value.as_integer() else {
+                let message = "Invalid /XRefStm offset type".to_string();
+                if self.tolerant {
+                    self.record_anomaly("invalid_xref_stm_type", &message, None)?;
+                } else {
+                    return Err(AstError::ParseError(message));
+                }
+                return Ok(Some((entries, trailer)));
+            };
+            if xref_stm <= 0 {
+                let message = format!("Invalid /XRefStm offset: {xref_stm}");
+                if self.tolerant {
+                    self.record_anomaly("invalid_xref_stm", &message, None)?;
+                    return Ok(Some((entries, trailer)));
+                }
+                return Err(AstError::ParseError(message));
+            }
             self.document.xref.hybrid_mode = true;
             let xref_stm = u64::try_from(xref_stm)
                 .map_err(|_| AstError::ParseError("Negative /XRefStm offset".to_string()))?;
