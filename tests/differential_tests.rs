@@ -3,6 +3,7 @@ use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
 use std::process::Command;
+use std::time::Instant;
 
 #[derive(serde::Deserialize)]
 struct CorpusManifest {
@@ -36,10 +37,13 @@ fn corpus_acceptance_matches_reference_parsers() {
     )
     .expect("corpus manifest is valid");
     let mut checked = 0;
+    let started = Instant::now();
+    let mut total_bytes = 0u64;
 
     for entry in manifest.files {
         let path = root.join("pdfs").join(&entry.file);
         let bytes = fs::read(&path).expect("corpus PDF is readable");
+        total_bytes += bytes.len() as u64;
         let digest = format!("{:x}", Sha256::digest(&bytes));
         assert_eq!(digest, entry.sha256, "corpus file changed: {}", entry.file);
         assert!(
@@ -69,4 +73,10 @@ fn corpus_acceptance_matches_reference_parsers() {
     }
 
     assert!(checked > 0, "differential test checked no corpus files");
+    eprintln!(
+        "differential metrics: files={}, bytes={}, wall_ms={}",
+        checked,
+        total_bytes,
+        started.elapsed().as_millis()
+    );
 }

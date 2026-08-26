@@ -5,6 +5,7 @@ use std::fs;
 use std::io::BufReader;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 #[derive(serde::Deserialize)]
 struct CorpusFile {
@@ -44,6 +45,10 @@ fn corpus_manifest_matches_files() {
     };
 
     assert_eq!(manifest.corpus_version, "1.0");
+    assert!(
+        !manifest.files.is_empty(),
+        "Corpus manifest must contain files"
+    );
 
     for entry in manifest.files {
         let file_path = corpus_dir.join(&entry.file);
@@ -79,6 +84,9 @@ fn corpus_parses_with_tolerant_parser() {
     };
 
     let parser = PdfParser::new();
+    let started = Instant::now();
+    let mut total_bytes = 0u64;
+    let mut parsed = 0usize;
 
     for entry in manifest.files {
         let file_path = corpus_dir.join(&entry.file);
@@ -87,7 +95,16 @@ fn corpus_parses_with_tolerant_parser() {
         let reader = BufReader::new(file);
         let result = parser.parse(reader);
         assert!(result.is_ok(), "Failed to parse {}", entry.file);
+        total_bytes += entry.size;
+        parsed += 1;
     }
+
+    eprintln!(
+        "corpus metrics: files={}, bytes={}, tolerant_parse_ms={}",
+        parsed,
+        total_bytes,
+        started.elapsed().as_millis()
+    );
 }
 
 #[test]
