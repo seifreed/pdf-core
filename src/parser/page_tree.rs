@@ -419,7 +419,7 @@ impl<'a> PageTreeParser<'a> {
 
                     // Process ICC profile stream if ICCBased
                     if is_icc_based && cs_array.len() > 1 {
-                        if let PdfValue::Reference(icc_ref) = &cs_array[1] {
+                        if let Some(PdfValue::Reference(icc_ref)) = cs_array.get(1) {
                             if let Some(icc_id) = self.resolver.get_node_id(&icc_ref.id()) {
                                 self.ast.add_edge(
                                     cs_node_id,
@@ -434,7 +434,7 @@ impl<'a> PageTreeParser<'a> {
                                     self.attach_icc_profile_node(cs_node_id, &stream);
                                 }
                             }
-                        } else if let PdfValue::Stream(stream) = &cs_array[1] {
+                        } else if let Some(PdfValue::Stream(stream)) = cs_array.get(1) {
                             self.attach_icc_profile_node(cs_node_id, stream);
                         }
                     }

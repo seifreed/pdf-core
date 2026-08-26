@@ -99,7 +99,7 @@ impl<'a> ColorSpaceParser<'a> {
         let icc_id = self.add_node(icc_node)?;
 
         // Link to ICC profile stream
-        match &arr[1] {
+        match arr.get(1)? {
             PdfValue::Reference(obj_id) => {
                 if let Some(stream_id) = self.resolver.get_node_id(&obj_id.object_id()) {
                     self.add_edge(icc_id, stream_id, crate::ast::EdgeType::Reference);
@@ -218,7 +218,7 @@ impl<'a> ColorSpaceParser<'a> {
         let node_id = self.add_node(node)?;
 
         // Extract CalGray parameters
-        if let PdfValue::Dictionary(params) = &arr[1] {
+        if let Some(PdfValue::Dictionary(params)) = arr.get(1) {
             // Extract all string values first to avoid borrowing conflicts
             let wp_str = params.get("WhitePoint").and_then(|v| {
                 if let PdfValue::Array(wp) = v {
@@ -274,7 +274,7 @@ impl<'a> ColorSpaceParser<'a> {
         let node_id = self.add_node(node)?;
 
         // Extract CalRGB parameters
-        if let PdfValue::Dictionary(params) = &arr[1] {
+        if let Some(PdfValue::Dictionary(params)) = arr.get(1) {
             // Extract all string values first to avoid borrowing conflicts
             let wp_str = params.get("WhitePoint").and_then(|v| {
                 if let PdfValue::Array(wp) = v {
@@ -347,7 +347,7 @@ impl<'a> ColorSpaceParser<'a> {
         let node_id = self.add_node(node)?;
 
         // Extract Lab parameters
-        if let PdfValue::Dictionary(params) = &arr[1] {
+        if let Some(PdfValue::Dictionary(params)) = arr.get(1) {
             // Extract values first
             let wp_str = if let Some(PdfValue::Array(wp)) = params.get("WhitePoint") {
                 Some(self.array_to_string(wp))
@@ -403,7 +403,7 @@ impl<'a> ColorSpaceParser<'a> {
         );
 
         // Extract colorant name
-        if let PdfValue::Name(name) = &arr[1] {
+        if let Some(PdfValue::Name(name)) = arr.get(1) {
             node.metadata
                 .set_property("colorant".to_string(), name.without_slash().to_string());
         }
@@ -411,12 +411,12 @@ impl<'a> ColorSpaceParser<'a> {
         let sep_id = self.add_node(node)?;
 
         // Link to alternate color space
-        if let Some(alt_id) = self.parse_colorspace(&arr[2]) {
+        if let Some(alt_id) = arr.get(2).and_then(|value| self.parse_colorspace(value)) {
             self.add_edge(sep_id, alt_id, crate::ast::EdgeType::Reference);
         }
 
         // Link to tint transform function
-        match &arr[3] {
+        match arr.get(3)? {
             PdfValue::Reference(obj_id) => {
                 if let Some(func_id) = self.resolver.get_node_id(&obj_id.object_id()) {
                     self.add_edge(sep_id, func_id, crate::ast::EdgeType::Reference);
@@ -453,7 +453,7 @@ impl<'a> ColorSpaceParser<'a> {
         );
 
         // Extract colorant names
-        if let PdfValue::Array(names) = &arr[1] {
+        if let Some(PdfValue::Array(names)) = arr.get(1) {
             let names_str = names
                 .iter()
                 .filter_map(|v| match v {
@@ -469,12 +469,12 @@ impl<'a> ColorSpaceParser<'a> {
         let devn_id = self.add_node(node)?;
 
         // Link to alternate color space
-        if let Some(alt_id) = self.parse_colorspace(&arr[2]) {
+        if let Some(alt_id) = arr.get(2).and_then(|value| self.parse_colorspace(value)) {
             self.add_edge(devn_id, alt_id, crate::ast::EdgeType::Reference);
         }
 
         // Link to tint transform function
-        match &arr[3] {
+        match arr.get(3)? {
             PdfValue::Reference(obj_id) => {
                 if let Some(func_id) = self.resolver.get_node_id(&obj_id.object_id()) {
                     self.add_edge(devn_id, func_id, crate::ast::EdgeType::Reference);
@@ -498,7 +498,7 @@ impl<'a> ColorSpaceParser<'a> {
 
         // Process attributes (spot colors, process colors, etc.)
         if arr.len() > 4 {
-            if let PdfValue::Dictionary(attrs) = &arr[4] {
+            if let Some(PdfValue::Dictionary(attrs)) = arr.get(4) {
                 self.process_device_n_attributes(devn_id, attrs);
             }
         }
@@ -545,7 +545,7 @@ impl<'a> ColorSpaceParser<'a> {
         );
 
         // Extract max index
-        if let PdfValue::Integer(max) = &arr[2] {
+        if let Some(PdfValue::Integer(max)) = arr.get(2) {
             node.metadata
                 .set_property("max_index".to_string(), max.to_string());
         }
@@ -553,12 +553,12 @@ impl<'a> ColorSpaceParser<'a> {
         let indexed_id = self.add_node(node)?;
 
         // Link to base color space
-        if let Some(base_id) = self.parse_colorspace(&arr[1]) {
+        if let Some(base_id) = arr.get(1).and_then(|value| self.parse_colorspace(value)) {
             self.add_edge(indexed_id, base_id, crate::ast::EdgeType::Reference);
         }
 
         // Process lookup table
-        match &arr[3] {
+        match arr.get(3)? {
             PdfValue::String(s) => {
                 if let Some(node) = self.ast.get_node_mut(indexed_id) {
                     node.metadata
@@ -599,7 +599,7 @@ impl<'a> ColorSpaceParser<'a> {
 
         // Link to underlying color space if present
         if arr.len() > 1 {
-            if let Some(underlying_id) = self.parse_colorspace(&arr[1]) {
+            if let Some(underlying_id) = arr.get(1).and_then(|value| self.parse_colorspace(value)) {
                 self.add_edge(pattern_id, underlying_id, crate::ast::EdgeType::Reference);
             }
         }
@@ -631,6 +631,37 @@ impl<'a> ColorSpaceParser<'a> {
             PdfValue::String(s) => s.to_string_lossy(),
             PdfValue::Array(a) => format!("[{}]", self.array_to_string(a)),
             _ => "?".to_string(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn malformed_color_space_arrays_are_rejected_without_panicking() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let limits = PerformanceLimits::default();
+        let malformed = [
+            PdfValue::Array(PdfArray::from(vec![PdfValue::Name(PdfName::new(
+                "ICCBased",
+            ))])),
+            PdfValue::Array(PdfArray::from(vec![PdfValue::Name(PdfName::new(
+                "Separation",
+            ))])),
+            PdfValue::Array(PdfArray::from(vec![PdfValue::Name(PdfName::new(
+                "DeviceN",
+            ))])),
+            PdfValue::Array(PdfArray::from(vec![PdfValue::Name(PdfName::new(
+                "Indexed",
+            ))])),
+        ];
+
+        let mut parser = ColorSpaceParser::new(&mut ast, &resolver, &limits);
+        for value in malformed {
+            assert!(parser.parse_colorspace(&value).is_none());
         }
     }
 }
