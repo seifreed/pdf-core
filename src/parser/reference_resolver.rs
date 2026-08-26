@@ -7,7 +7,7 @@ use crate::types::{ObjectId, PdfDictionary, PdfReference, PdfValue, StreamData};
 use log::{debug, info, warn};
 use nom::IResult;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{BufRead, Seek, SeekFrom};
+use std::io::{BufRead, Read, Seek, SeekFrom};
 
 /// Simple mapping from ObjectId to NodeId for use in parsers
 pub struct ObjectNodeMap {
@@ -146,7 +146,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         }
 
         // Fallback: scan entire file
-        Self::scan_for_objects(reader)
+        Self::scan_for_objects(reader, limits)
     }
 
     /// Parse xref table at given offset
@@ -159,10 +159,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .seek(SeekFrom::Start(offset))
             .map_err(|e| format!("Seek error: {}", e))?;
 
-        let mut buffer = Vec::new();
-        reader
-            .read_to_end(&mut buffer)
-            .map_err(|e| format!("Read error: {}", e))?;
+        let buffer = Self::read_limited(reader, limits.budget.max_input_bytes)?;
 
         // Try to parse as xref stream first (PDF 1.5+)
         if buffer.starts_with(b"<<") || buffer.iter().take(20).any(|&b| b.is_ascii_digit()) {
@@ -228,15 +225,15 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
     }
 
     /// Scan entire file for object definitions
-    fn scan_for_objects(reader: &mut R) -> Result<HashMap<ObjectId, u64>, String> {
+    fn scan_for_objects(
+        reader: &mut R,
+        limits: &PerformanceLimits,
+    ) -> Result<HashMap<ObjectId, u64>, String> {
         reader
             .seek(SeekFrom::Start(0))
             .map_err(|e| format!("Seek error: {}", e))?;
 
-        let mut content = Vec::new();
-        reader
-            .read_to_end(&mut content)
-            .map_err(|e| format!("Read error: {}", e))?;
+        let content = Self::read_limited(reader, limits.budget.max_input_bytes)?;
 
         let mut xref_table = HashMap::new();
         let mut pos = 0;
@@ -259,6 +256,22 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
         info!("Found {} objects by scanning", xref_table.len());
         Ok(xref_table)
+    }
+
+    fn read_limited(reader: &mut R, max_bytes: u64) -> Result<Vec<u8>, String> {
+        let mut content = Vec::new();
+        reader
+            .by_ref()
+            .take(max_bytes.saturating_add(1))
+            .read_to_end(&mut content)
+            .map_err(|e| format!("Read error: {}", e))?;
+        if content.len() as u64 > max_bytes {
+            return Err(format!(
+                "Input exceeds resource limit of {} bytes",
+                max_bytes
+            ));
+        }
+        Ok(content)
     }
 
     fn find_next_object(data: &[u8]) -> Option<usize> {
@@ -1316,6 +1329,18 @@ mod tests {
         }
 
         assert_eq!(resolver.pending_references.len(), 1);
+    }
+
+    #[test]
+    fn xref_scan_respects_input_budget() {
+        let mut limits = crate::performance::PerformanceLimits::default();
+        limits.budget.max_input_bytes = 1024;
+        let result = ReferenceResolver::new(Cursor::new(vec![0u8; 2048]), true, limits);
+
+        assert!(matches!(
+            result,
+            Err(error) if error.contains("Input exceeds resource limit")
+        ));
     }
 
     #[test]
