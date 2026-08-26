@@ -22,6 +22,15 @@ fn collect_pdfs(path: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
+fn percentile_ms(samples: &mut [u128], percentile: usize) -> u128 {
+    if samples.is_empty() {
+        return 0;
+    }
+    samples.sort_unstable();
+    let index = (samples.len() - 1) * percentile / 100;
+    samples[index]
+}
+
 #[test]
 fn external_corpus_has_no_parser_panics() {
     let Some(root) = std::env::var_os("PDF_EXTERNAL_CORPUS") else {
@@ -44,8 +53,10 @@ fn external_corpus_has_no_parser_panics() {
     let started = Instant::now();
     let mut total_bytes = 0u64;
     let mut parse_errors = 0usize;
+    let mut durations_ms = Vec::with_capacity(files.len());
 
     for path in &files {
+        let file_started = Instant::now();
         let bytes = fs::read(path).unwrap_or_else(|err| panic!("read {}: {err}", path.display()));
         total_bytes += bytes.len() as u64;
         let result = catch_unwind(AssertUnwindSafe(|| parser.parse_bytes(&bytes)));
@@ -53,13 +64,20 @@ fn external_corpus_has_no_parser_panics() {
         if result.is_ok_and(|result| result.is_err()) {
             parse_errors += 1;
         }
+        durations_ms.push(file_started.elapsed().as_millis());
     }
 
+    let p50_ms = percentile_ms(&mut durations_ms, 50);
+    let p95_ms = percentile_ms(&mut durations_ms, 95);
+    let p99_ms = percentile_ms(&mut durations_ms, 99);
     eprintln!(
-        "external corpus metrics: files={}, bytes={}, parse_errors={}, wall_ms={}",
+        "external corpus metrics: files={}, bytes={}, parse_errors={}, wall_ms={}, p50_ms={}, p95_ms={}, p99_ms={}",
         files.len(),
         total_bytes,
         parse_errors,
-        started.elapsed().as_millis()
+        started.elapsed().as_millis(),
+        p50_ms,
+        p95_ms,
+        p99_ms
     );
 }

@@ -42,6 +42,15 @@ fn tool_available(tool: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn percentile_ms(samples: &mut [u128], percentile: usize) -> u128 {
+    if samples.is_empty() {
+        return 0;
+    }
+    samples.sort_unstable();
+    let index = (samples.len() - 1) * percentile / 100;
+    samples[index]
+}
+
 #[test]
 fn corpus_acceptance_matches_reference_parsers() {
     if !tool_available("qpdf") || !tool_available("mutool") {
@@ -85,9 +94,11 @@ fn corpus_acceptance_matches_reference_parsers() {
     let mut core_accepted = 0;
     let mut qpdf_accepted = 0;
     let mut mutool_accepted = 0;
+    let mut durations_ms = Vec::with_capacity(files.len());
 
     let mut divergences = 0;
     for (path, expected_sha256) in files {
+        let file_started = Instant::now();
         let bytes = fs::read(&path).expect("corpus PDF is readable");
         total_bytes += bytes.len() as u64;
         if let Some(expected_sha256) = expected_sha256 {
@@ -126,6 +137,7 @@ fn corpus_acceptance_matches_reference_parsers() {
             );
         }
         checked += 1;
+        durations_ms.push(file_started.elapsed().as_millis());
     }
 
     assert!(checked > 0, "differential test checked no corpus files");
@@ -133,14 +145,20 @@ fn corpus_acceptance_matches_reference_parsers() {
         divergences, 0,
         "differential testing found {divergences} parser divergences"
     );
+    let p50_ms = percentile_ms(&mut durations_ms, 50);
+    let p95_ms = percentile_ms(&mut durations_ms, 95);
+    let p99_ms = percentile_ms(&mut durations_ms, 99);
     eprintln!(
-        "differential metrics: files={}, bytes={}, pdf_core_accepts={}, qpdf_accepts={}, mutool_accepts={}, divergences={}, wall_ms={}",
+        "differential metrics: files={}, bytes={}, pdf_core_accepts={}, qpdf_accepts={}, mutool_accepts={}, divergences={}, wall_ms={}, p50_ms={}, p95_ms={}, p99_ms={}",
         checked,
         total_bytes,
         core_accepted,
         qpdf_accepted,
         mutool_accepted,
         divergences,
-        started.elapsed().as_millis()
+        started.elapsed().as_millis(),
+        p50_ms,
+        p95_ms,
+        p99_ms
     );
 }
