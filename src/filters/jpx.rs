@@ -1,12 +1,24 @@
 use crate::filters::FilterError;
 
 pub fn decode_jpx_to_codestream(data: &[u8]) -> Result<Vec<u8>, FilterError> {
+    decode_jpx_to_codestream_with_limit(data, usize::MAX)
+}
+
+pub fn decode_jpx_to_codestream_with_limit(
+    data: &[u8],
+    max_output_bytes: usize,
+) -> Result<Vec<u8>, FilterError> {
     if data.len() < 2 {
         return Err(FilterError::InvalidData("JPX data too short".to_string()));
     }
 
     // Raw codestream (SOC marker 0xFF4F)
     if data.len() >= 2 && data[0] == 0xFF && data[1] == 0x4F {
+        if data.len() > max_output_bytes {
+            return Err(FilterError::DecompressionError(
+                "JPX output exceeds limit".to_string(),
+            ));
+        }
         return Ok(data.to_vec());
     }
 
@@ -19,6 +31,7 @@ pub fn decode_jpx_to_codestream(data: &[u8]) -> Result<Vec<u8>, FilterError> {
 
     let mut pos = 0;
     let mut codestreams = Vec::new();
+    let mut codestream_length = 0usize;
     let mut saw_signature = false;
 
     while pos <= data.len().saturating_sub(8) {
@@ -89,6 +102,17 @@ pub fn decode_jpx_to_codestream(data: &[u8]) -> Result<Vec<u8>, FilterError> {
                 saw_signature = true;
             }
             b"jp2c" => {
+                codestream_length =
+                    codestream_length
+                        .checked_add(payload.len())
+                        .ok_or_else(|| {
+                            FilterError::InvalidData("JPX output size overflow".to_string())
+                        })?;
+                if codestream_length > max_output_bytes {
+                    return Err(FilterError::DecompressionError(
+                        "JPX output exceeds limit".to_string(),
+                    ));
+                }
                 codestreams.push(payload.to_vec());
             }
             _ => {}

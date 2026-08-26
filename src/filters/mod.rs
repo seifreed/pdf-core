@@ -577,13 +577,8 @@ fn decode_dct(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterErr
 }
 
 fn decode_jpx(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
-    let codestream = jpx::decode_jpx_to_codestream(data)
+    let codestream = jpx::decode_jpx_to_codestream_with_limit(data, max_output_bytes)
         .map_err(|e| FilterError::ImageDecodeError(format!("JPX decode error: {}", e)))?;
-    if codestream.len() > max_output_bytes {
-        return Err(FilterError::DecompressionError(
-            "JPX output exceeds limit".to_string(),
-        ));
-    }
     Ok(codestream)
 }
 

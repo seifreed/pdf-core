@@ -1,4 +1,4 @@
-use pdf_ast::filters::jpx::decode_jpx_to_codestream;
+use pdf_ast::filters::jpx::{decode_jpx_to_codestream, decode_jpx_to_codestream_with_limit};
 
 #[test]
 fn decode_jpx_raw_codestream() {
@@ -27,4 +27,10 @@ fn decode_jp2_container_extracts_codestream() {
 
     let out = decode_jpx_to_codestream(&data).expect("decode");
     assert_eq!(out, payload);
+}
+
+#[test]
+fn limited_jpx_decode_rejects_oversized_codestream() {
+    let data = vec![0xFF, 0x4F, 0x00, 0x01, 0x02];
+    assert!(decode_jpx_to_codestream_with_limit(&data, 4).is_err());
 }
