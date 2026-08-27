@@ -398,6 +398,13 @@ impl SerializableGraph {
     pub fn from_cbor(data: &[u8]) -> serde_cbor::Result<Self> {
         serde_cbor::from_slice(data)
     }
+
+    /// Deserializes an AST after charging its nodes, edges, and byte payloads
+    /// to the supplied resource budget.
+    pub fn deserialize_with_budget(&self, budget: &ResourceBudget) -> Result<PdfAstGraph, String> {
+        check_serializable_graph_budget(self, budget).map_err(|error| error.to_string())?;
+        GraphDeserializer::deserialize(self.clone())
+    }
 }
 
 fn check_value_budget(
@@ -432,6 +439,83 @@ fn check_value_budget(
         | PdfValue::Integer(_)
         | PdfValue::Real(_)
         | PdfValue::Reference(_) => {}
+    }
+    Ok(())
+}
+
+fn check_serializable_value_budget(
+    value: &SerializableValue,
+    budget: &ResourceBudget,
+) -> Result<(), ResourceBudgetError> {
+    match value {
+        SerializableValue::String(value) | SerializableValue::Name(value) => {
+            budget.consume_input(value.len() as u64)?
+        }
+        SerializableValue::Array(values) => {
+            for value in values {
+                check_serializable_value_budget(value, budget)?;
+            }
+        }
+        SerializableValue::Dictionary(dictionary) => {
+            for (key, value) in dictionary {
+                budget.consume_input(key.len() as u64)?;
+                check_serializable_value_budget(value, budget)?;
+            }
+        }
+        SerializableValue::Stream {
+            dictionary,
+            data,
+            original_bytes,
+            ..
+        } => {
+            budget.consume_input(data.len() as u64)?;
+            if let Some(original_bytes) = original_bytes {
+                budget.consume_input(original_bytes.len() as u64)?;
+            }
+            for (key, value) in dictionary {
+                budget.consume_input(key.len() as u64)?;
+                check_serializable_value_budget(value, budget)?;
+            }
+        }
+        SerializableValue::Null
+        | SerializableValue::Boolean(_)
+        | SerializableValue::Integer(_)
+        | SerializableValue::Real(_)
+        | SerializableValue::Reference { .. } => {}
+    }
+    Ok(())
+}
+
+fn check_serializable_graph_budget(
+    graph: &SerializableGraph,
+    budget: &ResourceBudget,
+) -> Result<(), ResourceBudgetError> {
+    for node in &graph.nodes {
+        budget.consume_node()?;
+        check_serializable_value_budget(&node.value, budget)?;
+    }
+    for _ in &graph.edges {
+        budget.consume_edge()?;
+    }
+    Ok(())
+}
+
+fn check_serializable_document_budget(
+    document: &SerializableDocument,
+    budget: &ResourceBudget,
+) -> Result<(), ResourceBudgetError> {
+    check_serializable_graph_budget(&document.ast, budget)?;
+    if let Some(bytes) = &document.original_bytes {
+        budget.consume_input(bytes.len() as u64)?;
+    }
+    check_serializable_value_budget(&document.trailer, budget)?;
+    for stream in &document.xref_streams {
+        budget.consume_object()?;
+        check_serializable_value_budget(&stream.dict, budget)?;
+    }
+    for revision in &document.revisions {
+        budget.consume_object()?;
+        check_serializable_value_budget(&revision.trailer, budget)?;
     }
     Ok(())
 }
@@ -988,6 +1072,16 @@ impl SerializableDocument {
 
     pub fn deserialize_ast(&self) -> Result<PdfAstGraph, String> {
         GraphDeserializer::deserialize(self.ast.clone())
+    }
+
+    /// Deserializes a document after charging retained bytes, nodes, edges,
+    /// xref streams, and revisions to the supplied resource budget.
+    pub fn deserialize_document_with_budget(
+        &self,
+        budget: &ResourceBudget,
+    ) -> Result<PdfDocument, String> {
+        check_serializable_document_budget(self, budget).map_err(|error| error.to_string())?;
+        self.deserialize_document()
     }
 
     pub fn deserialize_document(&self) -> Result<PdfDocument, String> {
@@ -1757,5 +1851,25 @@ mod tests {
         let error = SerializableGraph::from_ast_with_budget(&ast, &budget)
             .expect_err("stream payload must apply to serialization budget");
         assert_eq!(error, ResourceBudgetError::InputBytes);
+    }
+
+    #[test]
+    fn budgeted_graph_deserialization_charges_stream_bytes() {
+        let mut ast = PdfAstGraph::new();
+        let stream_id = ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream(crate::types::PdfStream::new(
+                PdfDictionary::new(),
+                b"abc".to_vec(),
+            )),
+        );
+        ast.set_root(stream_id);
+        let serialized = SerializableGraph::from_ast(&ast);
+        let budget = ResourceBudget::new(2, 1024, 1024, 100, 10, 10, 10, 10);
+
+        let error = serialized
+            .deserialize_with_budget(&budget)
+            .expect_err("stream payload must apply to deserialization budget");
+        assert!(error.contains("InputBytes"));
     }
 }
