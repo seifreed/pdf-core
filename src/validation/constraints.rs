@@ -1,6 +1,6 @@
 use super::*;
 use crate::ast::{AstNode, NodeType, PdfDocument};
-use crate::types::{PdfDictionary, PdfStream, PdfValue};
+use crate::types::{PdfDictionary, PdfStream, PdfString, PdfValue};
 
 fn resolve_node_from_value<'a>(document: &'a PdfDocument, value: &PdfValue) -> Option<&'a AstNode> {
     match value {
@@ -27,6 +27,19 @@ fn resolve_stream_from_value(document: &PdfDocument, value: &PdfValue) -> Option
         PdfValue::Stream(stream) => Some(stream.clone()),
         PdfValue::Reference(_) => {
             resolve_node_from_value(document, value).and_then(|node| node.as_stream().cloned())
+        }
+        _ => None,
+    }
+}
+
+fn resolve_string_from_value<'a>(
+    document: &'a PdfDocument,
+    value: &'a PdfValue,
+) -> Option<&'a PdfString> {
+    match value {
+        PdfValue::String(string) => Some(string),
+        PdfValue::Reference(_) => {
+            resolve_node_from_value(document, value).and_then(|node| node.value.as_string())
         }
         _ => None,
     }
@@ -1489,7 +1502,9 @@ impl SchemaConstraint for LanguageSpecificationConstraint {
             }
         };
 
-        let lang_value = catalog.get("Lang").and_then(PdfValue::as_string);
+        let lang_value = catalog
+            .get("Lang")
+            .and_then(|value| resolve_string_from_value(document, value));
         if let Some(lang) = lang_value {
             if lang.as_bytes().is_empty() {
                 report.add_issue(ValidationIssue {

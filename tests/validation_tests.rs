@@ -587,6 +587,30 @@ mod validation_tests {
         assert!(!has_issue(&valid_report, "PDF_A_OUTPUT_INTENT"));
     }
 
+    #[test]
+    fn pdfua_resolves_indirect_catalog_language() {
+        let mut document = create_test_document();
+        let language_id = ObjectId::new(50, 0);
+        document.ast.create_node(
+            NodeType::Object(language_id),
+            PdfValue::String(PdfString::new_literal(b"en-US")),
+        );
+        let catalog_id = document.catalog.expect("catalog should exist");
+        let catalog = document
+            .ast
+            .get_node_mut(catalog_id)
+            .expect("catalog node should exist");
+        if let PdfValue::Dictionary(dict) = &mut catalog.value {
+            dict.insert("Lang", PdfValue::Reference(PdfReference::new(50, 0)));
+        }
+
+        let report = SchemaRegistry::new()
+            .validate(&document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(!has_issue(&report, "LANG_MISSING"));
+        assert!(!has_issue(&report, "LANG_EMPTY"));
+    }
+
     // Helper functions for creating test scenarios
 
     fn has_issue(report: &pdf_ast::validation::ValidationReport, code: &str) -> bool {
