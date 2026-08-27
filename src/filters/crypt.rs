@@ -115,7 +115,13 @@ impl CryptFilter {
                 .min(budget.remaining_decoded_bytes()),
         )
         .unwrap_or(usize::MAX);
-        if data.len() > limit {
+        let worst_case = match params {
+            CryptFilterParams::AESV2 { .. } | CryptFilterParams::AESV3 { .. } => {
+                data.len().saturating_add(32)
+            }
+            _ => data.len(),
+        };
+        if worst_case > limit {
             return Err(FilterError::CryptError(
                 "encrypted output exceeds resource budget".to_string(),
             ));
@@ -418,6 +424,24 @@ mod tests {
             .expect_err("crypt input must respect the budget");
 
         assert!(error.to_string().contains("InputBytes"));
+    }
+
+    #[test]
+    fn budgeted_aes_encryption_rejects_worst_case_output_before_provider_call() {
+        let filter = CryptFilter::new();
+        let budget = ResourceBudget::new(1024, 1024, 16, 100, 10, 10, 10, 10);
+        let error = filter
+            .encrypt_with_budget(
+                b"data",
+                &CryptFilterParams::AESV2 {
+                    name: "StdCF".to_string(),
+                },
+                b"key",
+                &budget,
+            )
+            .expect_err("AES output must respect the budget before encryption");
+
+        assert!(error.to_string().contains("exceeds resource budget"));
     }
 
     #[test]
