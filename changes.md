@@ -75,6 +75,8 @@ sin `/Kids` o `/Count`; `7790b10` aplica la misma regla a `/Parent` de las
 hojas `/Page`; `b6a14f0` expone consultas de paginas con `ResourceBudget`; y
 `50bff65` resuelve referencias indirectas del catalogo durante las reglas
 PDF/A de JavaScript, XFA y metadata. Todos tienen regresiones y pasan Clippy.
+`e0339df` conserva tambien esos `ObjectId` al crear los nodos indirectos reales
+de `OpenAction`, `Names`, `AcroForm` y `Metadata` durante el parseo.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
