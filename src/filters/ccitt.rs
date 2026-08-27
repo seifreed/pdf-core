@@ -20,6 +20,7 @@ const S_MAKEUP: u8 = 11;
 const S_EOL: u8 = 12;
 
 /// CCITT Fax decoder with full Group 3 and Group 4 support
+#[derive(Clone)]
 pub struct CcittDecoder {
     columns: usize,
     rows: usize,
@@ -120,6 +121,37 @@ impl CcittDecoder {
         decoder.damaged_rows_before_error = self.damaged_rows_before_error;
         decoder.max_output_bytes = self.max_output_bytes;
         decoder.decode(data)
+    }
+
+    /// Decode while charging input and output to a shared resource budget.
+    pub fn decode_with_budget(
+        &self,
+        data: &[u8],
+        budget: &ResourceBudget,
+    ) -> Result<Vec<u8>, String> {
+        budget.check().map_err(|error| error.to_string())?;
+        budget
+            .consume_input(data.len() as u64)
+            .map_err(|error| error.to_string())?;
+        let configured_limit = self.max_output_bytes.unwrap_or(usize::MAX);
+        let budget_limit = usize::try_from(
+            budget
+                .max_decoded_bytes_per_stream
+                .min(budget.remaining_decoded_bytes()),
+        )
+        .unwrap_or(usize::MAX);
+        let decoder = self
+            .clone()
+            .with_max_output_bytes(configured_limit.min(budget_limit));
+        let output = match decoder.k.cmp(&0) {
+            std::cmp::Ordering::Less => decoder.decode_group4(data),
+            std::cmp::Ordering::Equal => decoder.decode_group3_1d(data),
+            std::cmp::Ordering::Greater => decoder.decode_group3_2d(data),
+        }?;
+        budget
+            .consume_decoded(output.len() as u64)
+            .map_err(|error| error.to_string())?;
+        Ok(output)
     }
 }
 
@@ -804,5 +836,15 @@ mod tests {
     fn rejects_rows_too_wide_for_the_output_budget() {
         let decoder = CcittDecoder::new(usize::MAX, 1);
         assert!(decoder.decode_group4(&[]).is_err());
+    }
+
+    #[test]
+    fn budgeted_decoder_rejects_input_before_decoding() {
+        let budget = ResourceBudget::new(0, 1024, 1024, 100, 10, 10, 10, 10);
+        let decoder = CcittDecoder::new(8, 1);
+        assert!(decoder
+            .decode_with_budget(&[0], &budget)
+            .expect_err("CCITT input must respect the budget")
+            .contains("InputBytes"));
     }
 }

@@ -128,6 +128,8 @@ errores de formato se propagan al límite de decodificación.
 Las APIs directas de JPX y JBIG2 exponen ahora variantes `*_with_budget` que
 cobran sus buffers de entrada, `JBIG2Globals` y la salida decodificada antes de
 devolverla; las APIs legacy conservan límites por defecto.
+`CcittDecoder::decode_with_budget` aplica el presupuesto compartido junto con
+el límite configurado del decoder y cobra la entrada y la imagen resultante.
 El parser documental de xref streams rechaza ahora en `Strict` tipos de
 entrada desconocidos en lugar de convertirlos silenciosamente en entradas
 libres; `Tolerant` conserva la recuperación anterior.
