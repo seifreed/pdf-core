@@ -218,7 +218,7 @@ impl<'a> CMapParser<'a> {
     }
 
     fn parse_cmap_data(&self, data: &[u8]) -> Option<CMap> {
-        let content = String::from_utf8_lossy(data);
+        let content = std::str::from_utf8(data).ok()?;
         let mut cmap = CMap {
             name: String::new(),
             cid_system_info: CIDSystemInfo {
@@ -756,6 +756,17 @@ mod tests {
         let cmap = parser.parse_cmap_data(data).expect("CMap should parse");
 
         assert!(parser.map_code_to_unicode(&cmap, &[0, 0, 0, 1]).is_none());
+    }
+
+    #[test]
+    fn rejects_invalid_cmap_utf8() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let parser = CMapParser::new(&mut ast, &resolver);
+
+        assert!(parser
+            .parse_cmap_data(b"begincmap\n\xff\nendcmap")
+            .is_none());
     }
 
     #[test]
