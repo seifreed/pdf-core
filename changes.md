@@ -134,6 +134,8 @@ entradas de clase; la regresion conjunta de estructura pasa `5/5` y Clippy
 estricto.
 `ba531ed` resuelve tambien nombres indirectos como valores de `RoleMap`; la
 regresion conjunta de estructura pasa `5/5` y Clippy estricto.
+`eef5f0d` recorre `K` cuando apunta indirectamente a arrays de hijos, incluidos
+arrays anidados; la suite de estructura pasa `6/6` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
