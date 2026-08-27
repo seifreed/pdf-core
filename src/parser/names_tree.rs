@@ -84,6 +84,9 @@ impl<'a> NameTreeParser<'a> {
         // Parse kids array (intermediate node)
         if let Some(PdfValue::Array(kids)) = node_dict.get("Kids") {
             for kid_ref in kids.iter() {
+                if self.budget.consume_object().is_err() {
+                    break;
+                }
                 if let PdfValue::Reference(obj_id) = kid_ref {
                     if let Some(kid_node_id) = self.resolver.get_node_id(&obj_id.id()) {
                         tree_node.kids.push(kid_node_id);
@@ -106,8 +109,11 @@ impl<'a> NameTreeParser<'a> {
 
         while i + 1 < names.len() {
             if let Some(name) = self.extract_string(&names[i]) {
-                let value_node_id = self.process_name_value(&names[i + 1], &name);
-                result.push((name, value_node_id));
+                if let Some(value_node_id) = self.process_name_value(&names[i + 1], &name) {
+                    result.push((name, value_node_id));
+                } else {
+                    break;
+                }
             }
             i += 2;
         }
@@ -115,7 +121,7 @@ impl<'a> NameTreeParser<'a> {
         result
     }
 
-    fn process_name_value(&mut self, value: &PdfValue, name: &str) -> NodeId {
+    fn process_name_value(&mut self, value: &PdfValue, name: &str) -> Option<NodeId> {
         match value {
             PdfValue::Reference(obj_id) => {
                 if let Some(node_id) = self.resolver.get_node_id(&obj_id.id()) {
@@ -132,7 +138,7 @@ impl<'a> NameTreeParser<'a> {
                             node.node_type = NodeType::EmbeddedFile;
                         }
                     }
-                    node_id
+                    Some(node_id)
                 } else {
                     // Create placeholder node for unresolved reference
                     self.create_placeholder_node(value.clone(), name)
@@ -140,16 +146,18 @@ impl<'a> NameTreeParser<'a> {
             }
             PdfValue::Dictionary(dict) => {
                 // Create inline dictionary node
+                self.budget.consume_node().ok()?;
                 let node_type = self.determine_node_type_from_dict(dict, name);
                 let node_id = self.ast.next_node_id();
                 let node = AstNode::new(node_id, node_type, PdfValue::Dictionary(dict.clone()));
-                self.ast.add_node(node)
+                Some(self.ast.add_node(node))
             }
             PdfValue::Array(arr) => {
                 // Create destination array node
+                self.budget.consume_node().ok()?;
                 let node_id = self.ast.next_node_id();
                 let node = AstNode::new(node_id, NodeType::Unknown, PdfValue::Array(arr.clone()));
-                self.ast.add_node(node)
+                Some(self.ast.add_node(node))
             }
             _ => {
                 // Create node for other value types
@@ -204,12 +212,13 @@ impl<'a> NameTreeParser<'a> {
         }
     }
 
-    fn create_placeholder_node(&mut self, value: PdfValue, name: &str) -> NodeId {
+    fn create_placeholder_node(&mut self, value: PdfValue, name: &str) -> Option<NodeId> {
+        self.budget.consume_node().ok()?;
         let node_id = self.ast.next_node_id();
         let mut node = AstNode::new(node_id, NodeType::Unknown, value);
         node.metadata
             .set_property("named_reference".to_string(), name.to_string());
-        self.ast.add_node(node)
+        Some(self.ast.add_node(node))
     }
 
     fn extract_string(&self, value: &PdfValue) -> Option<String> {
@@ -462,6 +471,39 @@ mod tests {
         let mut parser = NameTreeParser::new_with_budget(&mut ast, &resolver, &budget);
 
         assert!(parser.parse_javascript_names(&tree).is_empty());
+    }
+
+    #[test]
+    fn name_tree_parser_respects_node_budget() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 1, 10, 8);
+        let mut parser = NameTreeParser::new_with_budget(&mut ast, &resolver, &budget);
+
+        let mut names_dict = PdfDictionary::new();
+        names_dict.insert(
+            "Dests",
+            PdfValue::Dictionary({
+                let mut tree_dict = PdfDictionary::new();
+                tree_dict.insert(
+                    "Names",
+                    PdfValue::Array(
+                        vec![
+                            PdfValue::String("first".into()),
+                            PdfValue::String("value".into()),
+                            PdfValue::String("second".into()),
+                            PdfValue::String("value".into()),
+                        ]
+                        .into(),
+                    ),
+                );
+                tree_dict
+            }),
+        );
+
+        let tree = parser.parse_names_dictionary(&names_dict);
+        assert_eq!(tree.dests.expect("destination tree").names.len(), 1);
+        assert_eq!(ast.node_count(), 1);
     }
 
     #[test]
