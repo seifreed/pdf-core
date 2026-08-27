@@ -5,6 +5,7 @@
 /// large files and real-time processing.
 use crate::ast::{AstError, AstNode, AstResult, NodeId, NodeType, PdfDocument};
 use crate::parser::PdfParser;
+use crate::performance::ResourceBudget;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Seek};
 
@@ -23,6 +24,7 @@ pub struct StreamingParser<R: Read + Seek + BufRead> {
     buffer_size: usize,
     current_position: u64,
     document: PdfDocument,
+    budget: ResourceBudget,
     node_cache: HashMap<NodeId, AstNode>,
     lazy_nodes: HashMap<NodeId, LazyNode>,
 }
@@ -68,12 +70,19 @@ impl Default for StreamingConfig {
 impl<R: Read + Seek + BufRead> StreamingParser<R> {
     /// Create a new streaming parser
     pub fn new(reader: R, config: StreamingConfig) -> Self {
+        Self::new_with_budget(reader, config, ResourceBudget::default())
+    }
+
+    pub fn new_with_budget(reader: R, config: StreamingConfig, budget: ResourceBudget) -> Self {
+        let mut document = PdfDocument::new(crate::ast::PdfVersion { major: 1, minor: 4 });
+        document.budget = budget.clone();
         Self {
             reader,
             chunk_size: config.chunk_size,
             buffer_size: config.buffer_size,
             current_position: 0,
-            document: PdfDocument::new(crate::ast::PdfVersion { major: 1, minor: 4 }),
+            document,
+            budget,
             node_cache: HashMap::new(),
             lazy_nodes: HashMap::new(),
         }
@@ -81,10 +90,16 @@ impl<R: Read + Seek + BufRead> StreamingParser<R> {
 
     /// Parse the document incrementally
     pub fn parse_incremental(&mut self) -> AstResult<IncrementalResult> {
+        self.budget
+            .check()
+            .map_err(|error| AstError::ParseError(error.to_string()))?;
         let mut result = IncrementalResult::new();
 
         // Read header
         let header = self.read_header()?;
+        self.budget
+            .consume_input(header.len() as u64)
+            .map_err(|error| AstError::ParseError(error.to_string()))?;
         result.add_chunk(ProcessedChunk {
             offset: 0,
             size: header.len(),
@@ -143,10 +158,13 @@ impl<R: Read + Seek + BufRead> StreamingParser<R> {
             self.reader.read_exact(&mut buffer)?;
 
             // Parse node
-            let parser = PdfParser::new();
+            let parser = PdfParser::new().with_resource_budget(self.budget.clone());
             let pdf_value = parser.parse_object(&buffer)?;
 
             // Convert PdfValue to AstNode
+            self.budget
+                .consume_node()
+                .map_err(|error| AstError::ParseError(error.to_string()))?;
             let ast_node = AstNode::new(node_id, NodeType::Unknown, pdf_value);
 
             // Cache the node
@@ -236,19 +254,23 @@ impl<R: Read + Seek + BufRead> StreamingParser<R> {
     }
 
     fn parse_chunk(&self, chunk: &[u8]) -> AstResult<Vec<AstNode>> {
-        let parser = PdfParser::new();
+        let parser = PdfParser::new().with_resource_budget(self.budget.clone());
         // This is a simplified implementation
         // In practice, would need more sophisticated chunk parsing
         match parser.parse_objects(chunk) {
             Ok(pdf_values) => {
                 let mut nodes = Vec::new();
                 for (i, pdf_value) in pdf_values.into_iter().enumerate() {
+                    self.budget
+                        .consume_node()
+                        .map_err(|error| AstError::ParseError(error.to_string()))?;
                     let node_id = NodeId::new(i);
                     let ast_node = AstNode::new(node_id, NodeType::Unknown, pdf_value);
                     nodes.push(ast_node);
                 }
                 Ok(nodes)
             }
+            Err(error) if is_resource_budget_error(&error) => Err(error),
             Err(_) => Ok(Vec::new()), // Skip malformed chunks in streaming mode
         }
     }
@@ -296,6 +318,10 @@ impl<R: Read + Seek + BufRead> StreamingParser<R> {
         }
         Ok(())
     }
+}
+
+fn is_resource_budget_error(error: &AstError) -> bool {
+    matches!(error, AstError::ParseError(message) if message.starts_with("resource budget exceeded:"))
 }
 
 /// Context information during streaming processing
@@ -428,4 +454,27 @@ pub fn parse_large_pdf(file_path: &str) -> AstResult<(PdfDocument, IncrementalRe
     let mut parser = create_streaming_parser(file_path, config)?;
     let result = parser.parse_incremental()?;
     Ok((parser.document, result))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{StreamingConfig, StreamingParser};
+    use crate::performance::ResourceBudget;
+    use std::io::{BufReader, Cursor};
+
+    #[test]
+    fn streaming_parser_propagates_shared_input_budget() {
+        let data = b"%PDF-1.7\n1 0 obj\nnull\nendobj\n";
+        let budget = ResourceBudget::new(8, 1024, 1024, 10, 10, 10, 10, 8);
+        let mut parser = StreamingParser::new_with_budget(
+            BufReader::new(Cursor::new(data)),
+            StreamingConfig::default(),
+            budget,
+        );
+
+        let error = parser
+            .parse_incremental()
+            .expect_err("input budget must stop streaming parse");
+        assert!(error.to_string().contains("InputBytes"));
+    }
 }

@@ -22,7 +22,7 @@ pub mod text_extraction;
 pub mod xref;
 
 use crate::ast::{AstError, AstResult, ParseDiagnostic, PdfDocument};
-use crate::performance::PerformanceLimits;
+use crate::performance::{PerformanceLimits, ResourceBudget};
 use crate::types::PdfValue;
 use std::io::{BufRead, Read, Seek};
 
@@ -149,6 +149,13 @@ impl PdfParser {
         let mut limits = limits;
         limits.refresh_budget();
         self.limits = limits;
+        self
+    }
+
+    /// Uses an explicit shared resource budget for every parser phase.
+    pub fn with_resource_budget(mut self, budget: ResourceBudget) -> Self {
+        self.limits.max_depth = budget.max_depth;
+        self.limits.budget = budget;
         self
     }
 

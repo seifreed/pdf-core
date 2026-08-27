@@ -111,6 +111,11 @@ perfiles ICC. `DecodeParms` con tipos inválidos también se rechaza en lugar de
 convertirse silenciosamente en parámetros por defecto.
 `DCTDecode` ya no devuelve datos JPEG inválidos como si fueran bytes raw; los
 errores de formato se propagan al límite de decodificación.
+El parser incremental de `streaming` acepta ahora un `ResourceBudget` compartido:
+cobra cabecera, chunks y nodos, reutiliza el presupuesto al parsear objetos y
+propaga los excesos en lugar de tratarlos como chunks malformados recuperables.
+La API `PdfParser::with_resource_budget` permite reutilizar ese presupuesto en
+otras entradas de parseo.
 
 Pendientes actuales, en orden practico:
 
