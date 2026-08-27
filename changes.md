@@ -104,6 +104,9 @@ validacion, `54/54` en las suites combinadas y Clippy estricto.
 `915fa1c` deja de convertir en cero los contadores invalidos de bloques CMap y
 propaga el error de parseo; su regresion pasa `11/11` en las pruebas de CMap y
 Clippy estricto.
+`1e2fedb` hace que la extraccion de texto resuelva tambien el array indirecto
+`DescendantFonts`, manteniendo la resolucion de sus fuentes CID; la regresion
+pasa `5/5` en text extraction y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
