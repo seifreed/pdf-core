@@ -489,7 +489,10 @@ impl<'a> PageTreeParser<'a> {
             None => return,
         };
 
-        let filters = stream.get_filters();
+        let filters = match stream.get_filters_with_params_checked() {
+            Ok(filters) => filters,
+            Err(_) => return,
+        };
         let decoded = match decode_stream_with_budget(raw, &filters, &self.budget) {
             Ok(decoded) => decoded,
             Err(_) => return,

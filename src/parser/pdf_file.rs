@@ -660,7 +660,26 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             None => return Ok(entries),
         };
 
-        let filters = stream.get_filters();
+        let filters = match stream.get_filters_with_params_checked() {
+            Ok(filters) => filters,
+            Err(err) if self.tolerant => {
+                self.record_diagnostic(
+                    None,
+                    None,
+                    "xref_stream_filter",
+                    "continued with empty xref entries",
+                    0.9,
+                    raw_data.len() as u64,
+                    &err,
+                )?;
+                return Ok(entries);
+            }
+            Err(err) => {
+                return Err(AstError::ParseError(format!(
+                    "Invalid xref stream filters: {err}"
+                )))
+            }
+        };
         let decoded = match crate::filters::decode_stream_with_budget(
             raw_data,
             &filters,
@@ -1141,9 +1160,28 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             Ok((_, (obj_id, value))) => {
                 if let PdfValue::Stream(stream) = value {
                     // Decode stream data
-                    let filters = stream.get_filters();
+                    let filters = match stream.get_filters_with_params_checked() {
+                        Ok(filters) => Some(filters),
+                        Err(err) if self.tolerant => {
+                            self.record_diagnostic(
+                                Some(obj_id),
+                                self.xref_offset,
+                                "xref_stream_filter",
+                                "continued with empty xref entries",
+                                0.9,
+                                stream.raw_data().map_or(0, |data| data.len() as u64),
+                                &err,
+                            )?;
+                            None
+                        }
+                        Err(err) => {
+                            return Err(AstError::ParseError(format!(
+                                "Invalid xref stream filters: {err}"
+                            )))
+                        }
+                    };
 
-                    if let Some(raw_data) = stream.raw_data() {
+                    if let (Some(filters), Some(raw_data)) = (filters, stream.raw_data()) {
                         match crate::filters::decode_stream_with_budget(
                             raw_data,
                             &filters,
@@ -2325,7 +2363,26 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         if let PdfValue::Stream(stream) = stream_value {
             // Decode stream
-            let filters = stream.get_filters();
+            let filters = match stream.get_filters_with_params_checked() {
+                Ok(filters) => filters,
+                Err(err) if self.tolerant => {
+                    self.record_diagnostic(
+                        Some(ObjectId::new(stream_obj, 0)),
+                        None,
+                        "object_stream_filter",
+                        "returned Null",
+                        1.0,
+                        stream.raw_data().map_or(0, |data| data.len() as u64),
+                        &err,
+                    )?;
+                    return Ok(PdfValue::Null);
+                }
+                Err(err) => {
+                    return Err(AstError::ParseError(format!(
+                        "Invalid object stream filters: {err}"
+                    )))
+                }
+            };
             if let Some(raw_data) = stream.raw_data() {
                 match crate::filters::decode_stream_with_budget(
                     raw_data,

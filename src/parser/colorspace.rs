@@ -170,7 +170,10 @@ impl<'a> ColorSpaceParser<'a> {
             None => return,
         };
 
-        let filters = stream.get_filters();
+        let filters = match stream.get_filters_with_params_checked() {
+            Ok(filters) => filters,
+            Err(_) => return,
+        };
         let decoded = decode_stream_with_budget(raw, &filters, &self.limits.budget)
             .ok()
             .unwrap_or_default();

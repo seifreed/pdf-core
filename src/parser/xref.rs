@@ -193,7 +193,7 @@ pub fn parse_xref_stream_with_limits(
     }
 
     // Decode the stream data
-    let filters = stream.get_filters();
+    let filters = stream.get_filters_with_params_checked()?;
     let raw_data = match &stream.data {
         crate::types::StreamData::Raw(data) => data,
         crate::types::StreamData::Decoded(data) => data,
