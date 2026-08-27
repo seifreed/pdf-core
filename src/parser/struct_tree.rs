@@ -75,8 +75,8 @@ impl<'a> StructTreeParser<'a> {
             .and_then(|value| self.resolve_dict(value))
         {
             for (key, value) in rm.iter() {
-                if let PdfValue::Name(mapped) = value {
-                    role_map.insert(key.to_string(), mapped.without_slash().to_string());
+                if let Some(mapped) = self.resolve_name(value) {
+                    role_map.insert(key.to_string(), mapped);
                 }
             }
         }
@@ -119,6 +119,19 @@ impl<'a> StructTreeParser<'a> {
                 .and_then(|node_id| self.ast.get_node(node_id))
                 .and_then(|node| node.value.as_dict())
                 .cloned(),
+            _ => None,
+        }
+    }
+
+    fn resolve_name(&self, value: &PdfValue) -> Option<String> {
+        match value {
+            PdfValue::Name(name) => Some(name.without_slash().to_string()),
+            PdfValue::Reference(reference) => self
+                .resolver
+                .get_node_id(&reference.id())
+                .and_then(|node_id| self.ast.get_node(node_id))
+                .and_then(|node| node.value.as_name())
+                .map(|name| name.without_slash().to_string()),
             _ => None,
         }
     }
@@ -779,9 +792,13 @@ mod tests {
             NodeType::Object(ObjectId::new(5, 0)),
             PdfValue::Dictionary({
                 let mut dict = PdfDictionary::new();
-                dict.insert("Figure", PdfValue::Name(PdfName::new("Figure")));
+                dict.insert("Figure", PdfValue::Reference(PdfReference::new(8, 0)));
                 dict
             }),
+        );
+        let role_name_id = ast.create_node(
+            NodeType::Object(ObjectId::new(8, 0)),
+            PdfValue::Name(PdfName::new("Figure")),
         );
         let class_id = ast.create_node(
             NodeType::Object(ObjectId::new(7, 0)),
@@ -801,6 +818,7 @@ mod tests {
         resolver.insert(ObjectId::new(3, 0), alt_id);
         resolver.insert(ObjectId::new(4, 0), actual_id);
         resolver.insert(ObjectId::new(5, 0), role_map_id);
+        resolver.insert(ObjectId::new(8, 0), role_name_id);
         resolver.insert(ObjectId::new(6, 0), class_map_id);
         resolver.insert(ObjectId::new(7, 0), class_id);
 
