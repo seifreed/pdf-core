@@ -115,6 +115,7 @@ impl<'a> FunctionParser<'a> {
         };
 
         // Create AST node
+        self.budget.consume_node().ok()?;
         let mut node = AstNode::new(
             self.ast.next_node_id(),
             NodeType::Function,
@@ -620,6 +621,8 @@ mod tests {
     };
     use crate::ast::PdfAstGraph;
     use crate::parser::reference_resolver::ObjectNodeMap;
+    use crate::performance::ResourceBudget;
+    use crate::types::{PdfArray, PdfDictionary, PdfValue};
 
     #[test]
     fn type0_evaluation_handles_mismatched_domain_and_encode_arrays() {
@@ -660,5 +663,34 @@ mod tests {
         });
 
         assert!(parser.evaluate(&function, &[0.5]).is_empty());
+    }
+
+    #[test]
+    fn function_parser_respects_node_budget() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 8);
+        let mut parser = FunctionParser::new_with_budget(&mut ast, &resolver, &budget);
+        let mut dict = PdfDictionary::new();
+        dict.insert("FunctionType", PdfValue::Integer(2));
+        dict.insert(
+            "Domain",
+            PdfValue::Array(PdfArray::from(vec![
+                PdfValue::Integer(0),
+                PdfValue::Integer(1),
+            ])),
+        );
+        dict.insert(
+            "C0",
+            PdfValue::Array(PdfArray::from(vec![PdfValue::Integer(0)])),
+        );
+        dict.insert(
+            "C1",
+            PdfValue::Array(PdfArray::from(vec![PdfValue::Integer(1)])),
+        );
+        dict.insert("N", PdfValue::Integer(1));
+
+        assert!(parser.parse_function(&PdfValue::Dictionary(dict)).is_none());
+        assert_eq!(ast.node_count(), 0);
     }
 }
