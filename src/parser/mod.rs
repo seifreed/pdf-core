@@ -207,7 +207,7 @@ impl PdfParser {
 
     fn parse_value_unbudgeted(&self, input: &[u8]) -> AstResult<PdfValue> {
         let (remaining, value) =
-            object_parser::parse_value_with_max_depth(input, self.limits.max_depth)
+            object_parser::parse_value_with_max_depth_unbudgeted(input, self.limits.max_depth)
                 .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
         self.ensure_strictly_consumed(remaining)?;
         Ok(value)

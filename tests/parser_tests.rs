@@ -446,6 +446,17 @@ mod parser_tests {
             PdfParser::new().parse_objects(b"1 2 nope").unwrap().len(),
             2
         );
+
+        let mut limits = PerformanceLimits {
+            max_nodes: 1,
+            ..PerformanceLimits::default()
+        };
+        limits.refresh_budget();
+        let bounded = PdfParser::new().with_limits(limits);
+        assert!(bounded
+            .parse_objects(b"1 0 obj null endobj 2 0 obj null endobj")
+            .is_err());
+
         let (objects, diagnostics) = PdfParser::new()
             .parse_objects_with_diagnostics(b"1 2 nope")
             .unwrap();
