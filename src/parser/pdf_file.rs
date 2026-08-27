@@ -1565,20 +1565,21 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn parse_names_dictionary(&mut self, catalog_dict: &PdfDictionary) -> AstResult<()> {
-        let names_ref = match catalog_dict.get("Names").and_then(|v| v.as_reference()) {
-            Some(r) => r,
-            None => return Ok(()),
+        let (names_object_id, names_value) = match catalog_dict.get("Names") {
+            Some(PdfValue::Reference(reference)) => {
+                (Some(reference.id()), self.load_object(&reference.id())?)
+            }
+            Some(PdfValue::Dictionary(dict)) => (None, PdfValue::Dictionary(dict.clone())),
+            _ => return Ok(()),
         };
-
-        let names_value = self.load_object(&names_ref.id())?;
         let names_dict = match &names_value {
             PdfValue::Dictionary(d) => d,
             _ => return Ok(()),
         };
         let names_id = self.add_to_ast(names_value.clone(), NodeType::NameTree)?;
-        self.document
-            .ast
-            .register_object_node(names_ref.id(), names_id);
+        if let Some(object_id) = names_object_id {
+            self.document.ast.register_object_node(object_id, names_id);
+        }
 
         if let Some(embedded_ref) = names_dict
             .get("EmbeddedFiles")
