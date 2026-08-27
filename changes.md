@@ -80,8 +80,11 @@ de `OpenAction`, `Names`, `AcroForm` y `Metadata` durante el parseo.
 `1e378c9` rechaza ademas que el objeto apuntado por `/Catalog /Pages` sea una
 hoja `/Page` en vez del nodo raiz `/Pages`; `84ebab3` mantiene el fixture de
 ciclos con la estructura minima necesaria. Las nuevas regresiones dejan
-`25/25` integraciones y `21/21` validaciones locales en verde; el smoke aislado
+`27/27` integraciones y `21/21` validaciones locales en verde; el smoke aislado
 de veraPDF pasa `1/1` con el corpus local.
+`d5f5ce3` acepta tambien `/Kids` como referencia indirecta a un array, y
+`d62d062` procesa diccionarios `/Names` inline ademas de los indirectos; ambos
+casos tienen regresiones serializadas y mantienen Clippy estricto en verde.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
