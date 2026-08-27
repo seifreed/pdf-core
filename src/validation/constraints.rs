@@ -1448,7 +1448,16 @@ impl SchemaConstraint for AltTextConstraint {
                                 || name.without_slash() == "Table"
                         })
                         .unwrap_or(false);
-                    if is_figure && !dict.contains_key("Alt") {
+                    let has_alt_text = dict
+                        .get("Alt")
+                        .and_then(|value| resolve_string_from_value(document, value))
+                        .is_some_and(|string| {
+                            string
+                                .as_bytes()
+                                .iter()
+                                .any(|byte| !byte.is_ascii_whitespace())
+                        });
+                    if is_figure && !has_alt_text {
                         missing_alt = true;
                         report.add_issue(ValidationIssue {
                             severity: ValidationSeverity::Error,

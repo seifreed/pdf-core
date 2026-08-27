@@ -438,6 +438,43 @@ mod validation_tests {
     }
 
     #[test]
+    fn pdfua_rejects_empty_alt_text_and_resolves_indirect_alt_text() {
+        let registry = SchemaRegistry::new();
+
+        let mut empty = create_test_document();
+        add_marked_struct_tree(&mut empty);
+        add_struct_elem_figure(&mut empty, true);
+        let elem_id = empty.ast.find_nodes_by_type(NodeType::StructElem)[0];
+        if let Some(node) = empty.ast.get_node_mut(elem_id) {
+            if let PdfValue::Dictionary(dict) = &mut node.value {
+                dict.insert("Alt", PdfValue::String(PdfString::new_literal(b"   ")));
+            }
+        }
+        let empty = registry
+            .validate(&empty, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(has_issue(&empty, "ALT_TEXT_MISSING"));
+
+        let mut indirect = create_test_document();
+        add_marked_struct_tree(&mut indirect);
+        add_struct_elem_figure(&mut indirect, false);
+        indirect.ast.create_node(
+            NodeType::Object(ObjectId::new(900, 0)),
+            PdfValue::String(PdfString::new_literal(b"indirect figure description")),
+        );
+        let elem_id = indirect.ast.find_nodes_by_type(NodeType::StructElem)[0];
+        if let Some(node) = indirect.ast.get_node_mut(elem_id) {
+            if let PdfValue::Dictionary(dict) = &mut node.value {
+                dict.insert("Alt", PdfValue::Reference(PdfReference::new(900, 0)));
+            }
+        }
+        let indirect = registry
+            .validate(&indirect, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(!has_issue(&indirect, "ALT_TEXT_MISSING"));
+    }
+
+    #[test]
     fn fixture_pdfua_language_rule_has_positive_and_negative_cases() {
         let registry = SchemaRegistry::new();
 
