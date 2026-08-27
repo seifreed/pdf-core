@@ -78,6 +78,8 @@ La seleccion de esquemas en `validate_all` ya no aplica PDF/A-1 a documentos
 1.7/2.0 ni el esquema PDF 2.0 a documentos 1.x.
 Los perfiles PDF/X tambien exigen ahora la version PDF base que corresponde a
 cada familia, evitando aceptar versiones posteriores incompatibles.
+PDF/UA-1 y PDF/UA-2 siguen la misma regla de version base y ya no se aplican
+entre si por una simple comparacion de version minima.
 Los trailers asociados a tablas xref tambien se decodifican con el presupuesto
 compartido, con regresion de limite de entrada.
 

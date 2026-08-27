@@ -358,11 +358,10 @@ impl PdfSchema for PdfUASchema {
     }
 
     fn supports_pdf_version(&self, version: &PdfVersion) -> bool {
-        let required_version = self.version().parse::<f32>().unwrap_or(1.7);
-        let doc_version = format!("{}.{}", version.major, version.minor)
-            .parse::<f32>()
-            .unwrap_or(0.0);
-        doc_version >= required_version
+        match self.level {
+            PdfUALevel::PdfUA1 => version.major == 1 && version.minor == 7,
+            PdfUALevel::PdfUA2 => version.major == 2 && version.minor == 0,
+        }
     }
 
     fn validate(&self, document: &PdfDocument) -> ValidationReport {
@@ -423,5 +422,16 @@ mod tests {
         assert!(!pdfx1a.supports_pdf_version(&PdfVersion::new(1, 4)));
         assert!(pdfx4.supports_pdf_version(&PdfVersion::new(1, 6)));
         assert!(!pdfx4.supports_pdf_version(&PdfVersion::new(2, 0)));
+    }
+
+    #[test]
+    fn pdfua_version_gates_match_the_profile_base() {
+        let pdfua1 = PdfUASchema::new(PdfUALevel::PdfUA1);
+        let pdfua2 = PdfUASchema::new(PdfUALevel::PdfUA2);
+
+        assert!(pdfua1.supports_pdf_version(&PdfVersion::new(1, 7)));
+        assert!(!pdfua1.supports_pdf_version(&PdfVersion::new(2, 0)));
+        assert!(pdfua2.supports_pdf_version(&PdfVersion::new(2, 0)));
+        assert!(!pdfua2.supports_pdf_version(&PdfVersion::new(1, 7)));
     }
 }
