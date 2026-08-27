@@ -21,6 +21,9 @@ campaigns.
 The complete serialized Isartor-to-veraPDF mapping is maintained in
 [`RULE-MAPPINGS.json`](https://github.com/seifreed/pdf-core-corpus/blob/9979a2a8618dcdf23ad3f20c760c1f06e5b36fe6/RULE-MAPPINGS.json)
 and covers 205 negative fixtures with 95 distinct veraPDF rule IDs. The
+published mapping currently has no exact positive fixture for those 95 rule
+IDs; the upstream corpus contains passing files, but they are not yet isolated
+and mapped one rule at a time.
 clause-level ISO 32000 inventory is maintained in
 [ISO-32000-MATRIX.md](ISO-32000-MATRIX.md). It records implementation scope
 and known boundaries for both PDF 1.7 and PDF 2.0; it is not a conformance
@@ -81,18 +84,18 @@ Isartor mappings were present and every expected failed rule ID was observed.
 The `pdf-compliance` adapter exposes both PDF/UA-1 and PDF/UA-2; both remain
 experimental preflight profiles.
 
-The latest local parser gate (2026-08-26 UTC, corpus commit
+The latest local parser gate (2026-08-27 UTC, corpus commit
 `9979a2a8618dcdf23ad3f20c760c1f06e5b36fe6`) processed 2,809 files and
-161,227,640 bytes without a panic. It recorded 691 controlled parse errors,
-`peak_rss_kib=213520`, and p50/p95/p99 latencies of 3/47/120 ms. Reproduce it
+161,227,640 bytes without a panic. It recorded 1,898 controlled parse errors,
+`peak_rss_kib=310176`, and p50/p95/p99 latencies of 0/9/55 ms. Reproduce it
 with `PDF_EXTERNAL_CORPUS=/path/to/pdf-core-corpus/fixtures PDF_EXTERNAL_MAX_FILES=3000 cargo test --test external_corpus_tests --locked -- --test-threads=1 --nocapture`.
 
 The same corpus was run through the tolerant parser and the installed qpdf and
 MuPDF reference tools. It processed all 2,809 files and recorded 2,809,
 2,419, and 2,801 accepted files respectively, with 397 observed differences;
 396 were disagreements between the reference tools and one was a consensus
-difference against both. The latest local run took 660,112 ms with
-`peak_rss_kib=393904` and p50/p95/p99 latencies of 44/274/796 ms. These
+difference against both. The latest local run took 209,665 ms with
+`peak_rss_kib=460112` and p50/p95/p99 latencies of 28/79/182 ms. These
 differences are diagnostic evidence, not a conformance claim: the corpus
 intentionally includes malformed files and the tools use different recovery
 policies. Reproduce it with
@@ -107,8 +110,8 @@ divergences. Reproduce it with
 ## Required Before Conformance Claims
 
 - The local positive/negative fixture branch is covered by the matrix above;
-  serialized upstream positives and negatives cover the current PDF/A and
-  PDF/UA preflight rules.
+  exact serialized upstream positive mappings remain outstanding for 95
+  veraPDF rule IDs, despite the available passing corpus files.
 - Run serialized versions of the same fixtures through a pinned veraPDF
   release and record pass/fail/divergence results per veraPDF rule ID.
 - Use `VERAPDF_BIN=/path/to/verapdf cargo test --test verapdf_tests` to run the

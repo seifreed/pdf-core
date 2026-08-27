@@ -9,7 +9,8 @@ validacion de limites en las rutas de xref/object streams, y la serializacion
 restaura el estado documental lossless disponible. Tambien existe un corpus
 reproducible de 2.806 fixtures upstream mas tres regresiones, metricas
 diferenciales, una campana fuzz local de 16.000 ejecuciones sin crashes y un
-chequeo completo de 205 mapeos contra veraPDF 1.30.2.
+chequeo completo de 205 mapeos negativos contra veraPDF 1.30.2; la
+cobertura positiva exacta por regla sigue en 0/95.
 La extraccion de texto resuelve ahora fuentes indirectas, descendientes CID,
 `ToUnicode`, encodings y metricas basicas de glifo dentro de su alcance
 experimental.
