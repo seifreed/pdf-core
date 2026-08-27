@@ -174,6 +174,17 @@ impl<'a> TextExtractor<'a> {
         }
     }
 
+    fn resolve_integer(&self, value: &PdfValue) -> Option<i64> {
+        match value {
+            PdfValue::Integer(integer) => Some(*integer),
+            PdfValue::Reference(reference) => self
+                .ast
+                .get_node_by_object(reference.id())
+                .and_then(|node| node.value.as_integer()),
+            _ => None,
+        }
+    }
+
     fn effective_value<'b>(
         primary: &'b PdfDictionary,
         fallback: &'b PdfDictionary,
@@ -284,7 +295,10 @@ impl<'a> TextExtractor<'a> {
     }
 
     fn parse_simple_widths(&self, dict: &PdfDictionary, width_map: &mut HashMap<u32, f64>) {
-        let Some(first_char) = dict.get("FirstChar").and_then(PdfValue::as_integer) else {
+        let Some(first_char) = dict
+            .get("FirstChar")
+            .and_then(|value| self.resolve_integer(value))
+        else {
             return;
         };
         let Some(widths) = dict
@@ -1017,7 +1031,10 @@ mod tests {
         let mut font = PdfDictionary::new();
         font.insert("Subtype", PdfValue::Name(PdfName::new("Type1")));
         font.insert("Encoding", PdfValue::Name(PdfName::new("WinAnsiEncoding")));
-        font.insert("FirstChar", PdfValue::Integer(128));
+        font.insert(
+            "FirstChar",
+            PdfValue::Reference(crate::types::PdfReference::new(2, 0)),
+        );
         font.insert(
             "Widths",
             PdfValue::Reference(crate::types::PdfReference::new(1, 0)),
@@ -1026,6 +1043,11 @@ mod tests {
             NodeId::new(1),
             NodeType::Object(ObjectId::new(1, 0)),
             PdfValue::Array(PdfArray::from(vec![PdfValue::Integer(700)])),
+        ));
+        ast.add_node(AstNode::new(
+            NodeId::new(2),
+            NodeType::Object(ObjectId::new(2, 0)),
+            PdfValue::Integer(128),
         ));
         let mut fonts = PdfDictionary::new();
         fonts.insert("F1", PdfValue::Dictionary(font));
