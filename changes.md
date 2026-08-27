@@ -214,9 +214,9 @@ Pendientes actuales, en orden practico:
 
 * **Evidencia remota:** faltan ejecuciones verdes y repetidas del CI completo,
   corpus/differential, ClusterFuzzLite y los seis smoke tests de bindings. Los
-  runs generados por el ultimo push siguen pendientes/en cola en Actions al
-  actualizar este documento; los IDs y estados se consultan con `gh run list`
-  para evitar referencias obsoletas tras cada push.
+  workflows ya no cancelan runs anteriores del mismo ref, porque esa politica
+  impedía obtener evidencia completa tras cada push; los IDs y estados se
+  consultan con `gh run list` para evitar referencias obsoletas.
 * **Parser endurecido:** strict y varios recorridos ya tienen guardas, y los
   streams conservan ahora estado lossless explícito, pero falta hacer
   completamente estrictos los modos de error/recuperacion y demostrar que
