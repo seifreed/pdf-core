@@ -228,6 +228,8 @@ impl PdfParser {
             object_parser::parse_value_with_max_depth_unbudgeted(input, self.limits.max_depth)
                 .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
         self.ensure_strictly_consumed(remaining)?;
+        object_parser::charge_value_memory(&value, &self.limits.budget, input)
+            .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
         Ok(value)
     }
 
@@ -257,6 +259,8 @@ impl PdfParser {
                 )
                 .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
             self.ensure_strictly_consumed(remaining)?;
+            object_parser::charge_value_memory(&value, &self.limits.budget, object_input)
+                .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
             return Ok(value);
         }
         if let Ok((_, (_, value))) = object_parser::parse_indirect_object_with_max_depth_unbudgeted(
@@ -346,6 +350,8 @@ impl PdfParser {
 
             match parsed {
                 Ok((rest, value)) => {
+                    object_parser::charge_value_memory(&value, &self.limits.budget, object_input)
+                        .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
                     objects.push(value);
                     remaining = rest;
                 }
@@ -409,5 +415,15 @@ mod tests {
         assert!(error
             .to_string()
             .contains(&format!("{:?}", ResourceBudgetError::Objects)));
+    }
+
+    #[test]
+    fn public_value_parsing_charges_retained_memory() {
+        let budget = ResourceBudget::new(1024, 2, 1024, 100, 10, 10, 10, 10);
+        let error = PdfParser::new()
+            .with_resource_budget(budget)
+            .parse_value(b"(three)")
+            .expect_err("retained strings must consume the memory budget");
+        assert!(error.to_string().contains("TooLarge"));
     }
 }

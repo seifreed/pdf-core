@@ -382,7 +382,7 @@ pub fn parse_indirect_object_with_stream_length_and_max_depth_and_budget<'a>(
     Ok((input, (obj_id, value)))
 }
 
-fn charge_value_memory<'a>(
+pub(crate) fn charge_value_memory<'a>(
     value: &PdfValue,
     budget: &ResourceBudget,
     input: &'a [u8],
