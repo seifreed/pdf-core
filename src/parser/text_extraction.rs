@@ -609,8 +609,22 @@ impl<'a> TextExtractor<'a> {
     }
 
     fn decode_mac_roman(&self, text_bytes: &[u8]) -> String {
-        // Simplified MacRoman decoding
-        String::from_utf8_lossy(text_bytes).to_string()
+        const MAC_ROMAN_HIGH: &str =
+            "ÄÅÇÉÑÖÜáàâäãåçéèêëíìîïñóòôöõúùûü†°¢£§•¶ß®©™´¨≠ÆØ∞±≤≥¥µ∂∑∏π∫ªºΩæø¿¡¬√ƒ≈∆«»…\u{00a0}ÀÃÕŒœ–—“”‘’÷◊ÿŸ⁄€‹›ﬁﬂ‡·‚„‰ÂÊÁËÈÍÎÏÌÓÔ\u{f8ff}ÒÚÛÙıˆ˜¯˘˙˚¸˝˛ˇ";
+
+        text_bytes
+            .iter()
+            .map(|byte| {
+                if *byte < 0x80 {
+                    *byte as char
+                } else {
+                    MAC_ROMAN_HIGH
+                        .chars()
+                        .nth(usize::from(*byte - 0x80))
+                        .unwrap_or('\u{fffd}')
+                }
+            })
+            .collect()
     }
 
     fn get_char_width(&self, ch: char, font: &FontInfo) -> f64 {
@@ -831,5 +845,14 @@ mod tests {
             .extract_text_with_budget(&operators, &budget)
             .expect_err("operator traversal must respect node budget");
         assert_eq!(error, ResourceBudgetError::Nodes);
+    }
+
+    #[test]
+    fn decodes_mac_roman_bytes() {
+        let ast = PdfAstGraph::new();
+        let resources = PdfDictionary::new();
+        let extractor = TextExtractor::new(&ast, &resources);
+
+        assert_eq!(extractor.decode_mac_roman(&[0x8e, 0xdb, 0xff]), "é€ˇ");
     }
 }
