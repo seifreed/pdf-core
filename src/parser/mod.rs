@@ -154,6 +154,13 @@ impl PdfParser {
 
     /// Uses an explicit shared resource budget for every parser phase.
     pub fn with_resource_budget(mut self, budget: ResourceBudget) -> Self {
+        self.limits.max_file_size_mb = budget_megabytes(budget.max_input_bytes);
+        self.limits.max_memory_mb = budget_megabytes(budget.max_decoded_bytes_total);
+        self.limits.max_object_size_mb = budget_megabytes(budget.max_decoded_bytes_per_stream);
+        self.limits.max_stream_decode_ratio =
+            usize::try_from(budget.max_decode_ratio).unwrap_or(usize::MAX);
+        self.limits.max_nodes = budget.max_nodes;
+        self.limits.max_edges = budget.max_edges;
         self.limits.max_depth = budget.max_depth;
         self.limits.budget = budget;
         self
@@ -374,6 +381,10 @@ impl PdfParser {
 
         Ok((objects, diagnostics))
     }
+}
+
+fn budget_megabytes(bytes: u64) -> usize {
+    usize::try_from(bytes.div_ceil(1024 * 1024)).unwrap_or(usize::MAX)
 }
 
 impl Default for PdfParser {
