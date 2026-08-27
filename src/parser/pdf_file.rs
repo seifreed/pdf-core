@@ -1564,12 +1564,38 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn resolve_xfa_value(&mut self, value: &PdfValue) -> AstResult<PdfValue> {
+        self.resolve_xfa_value_at(value, 0)
+    }
+
+    fn resolve_xfa_value_at(&mut self, value: &PdfValue, depth: usize) -> AstResult<PdfValue> {
+        self.limits
+            .budget
+            .check()
+            .map_err(|err| AstError::ParseError(err.to_string()))?;
+        if depth > self.limits.max_depth {
+            if self.tolerant {
+                self.record_diagnostic(
+                    None,
+                    None,
+                    "xfa_value_depth",
+                    "returned_null",
+                    1.0,
+                    0,
+                    "Maximum XFA value depth exceeded",
+                )?;
+                return Ok(PdfValue::Null);
+            }
+            return Err(AstError::ParseError(format!(
+                "Exceeded max XFA value depth: {}",
+                self.limits.max_depth
+            )));
+        }
         match value {
             PdfValue::Reference(reference) => self.load_object(&reference.id()),
             PdfValue::Array(items) => {
                 let mut resolved = PdfArray::new();
                 for item in items.iter() {
-                    resolved.push(self.resolve_xfa_value(item)?);
+                    resolved.push(self.resolve_xfa_value_at(item, depth + 1)?);
                 }
                 Ok(PdfValue::Array(resolved))
             }
@@ -3127,6 +3153,31 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.error_code == "xfa_parse"));
+    }
+
+    #[test]
+    fn strict_xfa_value_resolution_rejects_excessive_depth() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut limits = PerformanceLimits {
+            max_depth: 1,
+            ..PerformanceLimits::default()
+        };
+        limits.refresh_budget();
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            limits,
+        )
+        .expect("valid header should construct parser");
+        let nested = PdfValue::Array(PdfArray::from(vec![PdfValue::Array(PdfArray::from(vec![
+            PdfValue::Integer(1),
+        ]))]));
+
+        let error = parser
+            .resolve_xfa_value(&nested)
+            .expect_err("strict mode must bound XFA value recursion");
+        assert!(error.to_string().contains("XFA value depth"));
     }
 
     #[test]

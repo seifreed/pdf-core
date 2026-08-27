@@ -125,6 +125,9 @@ antes de convertirlo a texto, evitando una materialización fuera del límite.
 XFA ya no interpreta como XML raw un stream cuya decodificación de filtros
 falló; el error se propaga al modo estricto y se registra mediante la ruta
 tolerante de diagnóstico.
+La resolución de arrays XFA comparte ahora comprobaciones de cancelación y
+profundidad con el parser; `Strict` rechaza anidamiento excesivo y `Tolerant`
+lo corta con diagnóstico.
 El parser incremental de `streaming` acepta ahora un `ResourceBudget` compartido:
 cobra cabecera, chunks y nodos, reutiliza el presupuesto al parsear objetos y
 propaga los excesos en lugar de tratarlos como chunks malformados recuperables.
