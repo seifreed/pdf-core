@@ -38,7 +38,7 @@ impl<'a> PageTreeParser<'a> {
         pages_dict: &PdfDictionary,
         parent_id: NodeId,
     ) -> Vec<NodeId> {
-        self.parse_page_tree_at_depth(pages_dict, parent_id, 0)
+        self.parse_page_tree_at_depth(pages_dict, parent_id, 0, &PdfDictionary::new())
     }
 
     fn parse_page_tree_at_depth(
@@ -46,6 +46,7 @@ impl<'a> PageTreeParser<'a> {
         pages_dict: &PdfDictionary,
         parent_id: NodeId,
         depth: usize,
+        inherited_resources: &PdfDictionary,
     ) -> Vec<NodeId> {
         let mut page_nodes = Vec::new();
         if depth >= self.budget.max_depth {
@@ -53,7 +54,8 @@ impl<'a> PageTreeParser<'a> {
         }
 
         // Get parent resources for inheritance
-        let parent_resources = self.extract_resources(pages_dict);
+        let parent_resources =
+            self.merge_resources(inherited_resources, &self.extract_resources(pages_dict));
 
         // Process Kids array
         if let Some(PdfValue::Array(kids)) = pages_dict.get("Kids") {
@@ -85,6 +87,7 @@ impl<'a> PageTreeParser<'a> {
                                             &kid_dict,
                                             kid_node_id,
                                             depth + 1,
+                                            &parent_resources,
                                         );
                                         page_nodes.extend(child_pages);
 
@@ -585,7 +588,7 @@ impl<'a> PageTreeParser<'a> {
 mod tests {
     use super::*;
     use crate::ast::AstNode;
-    use crate::types::{ObjectId, PdfReference};
+    use crate::types::{ObjectId, PdfName, PdfReference};
 
     #[test]
     fn page_tree_parser_terminates_on_cycles() {
@@ -655,5 +658,65 @@ mod tests {
         parser.parse_page_tree(&pages_dict, root_id);
         assert_eq!(ast.node_count(), 2);
         assert_eq!(ast.edge_count(), 0);
+    }
+
+    #[test]
+    fn page_tree_parser_propagates_resources_through_nested_pages() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.add_node(AstNode::new(NodeId(0), NodeType::Catalog, PdfValue::Null));
+        let nested_pages_id = ast.add_node(AstNode::new(
+            NodeId(1),
+            NodeType::Pages,
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Type", PdfValue::Name(PdfName::new("Pages")));
+                dict.insert(
+                    "Kids",
+                    PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(2, 0))].into()),
+                );
+                dict
+            }),
+        ));
+        let page_id = ast.add_node(AstNode::new(
+            NodeId(2),
+            NodeType::Page,
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Type", PdfValue::Name(PdfName::new("Page")));
+                dict
+            }),
+        ));
+
+        let mut resources = PdfDictionary::new();
+        resources.insert(
+            "ColorSpace",
+            PdfValue::Dictionary({
+                let mut colorspaces = PdfDictionary::new();
+                colorspaces.insert("CS1", PdfValue::Name(PdfName::new("DeviceRGB")));
+                colorspaces
+            }),
+        );
+        let mut root_pages = PdfDictionary::new();
+        root_pages.insert("Type", PdfValue::Name(PdfName::new("Pages")));
+        root_pages.insert(
+            "Kids",
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(1, 0))].into()),
+        );
+        root_pages.insert("Resources", PdfValue::Dictionary(resources));
+
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), nested_pages_id);
+        resolver.insert(ObjectId::new(2, 0), page_id);
+        let mut parser = PageTreeParser::new(&mut ast, &resolver);
+
+        assert_eq!(parser.parse_page_tree(&root_pages, root_id), vec![page_id]);
+        assert_eq!(
+            ast.get_node(page_id)
+                .and_then(|node| node.metadata.properties.get("has_inherited_resources"))
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(ast.find_nodes_by_type(NodeType::ColorSpace).len(), 1);
+        assert_eq!(ast.edge_count(), 3);
     }
 }
