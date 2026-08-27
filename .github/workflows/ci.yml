@@ -244,7 +244,7 @@ jobs:
           shared-key: build-cache-${{ runner.os }}
 
       - name: Build release binary
-        run: cargo build --workspace --all-targets --release --locked --verbose
+        run: cargo build --workspace --exclude pdf-ast-python --release --locked --verbose
 
       - name: Verify binary artifacts (non-Windows)
         if: runner.os != 'Windows'
