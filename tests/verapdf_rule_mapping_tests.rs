@@ -133,6 +133,24 @@ fn corpus_root() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+fn manifest_fixture_root(root: &PathBuf) -> PathBuf {
+    root.parent()
+        .filter(|parent| parent.join("fixtures").is_dir())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.clone())
+}
+
+fn manifest_fixture_path(root: &PathBuf, relative: &str) -> PathBuf {
+    let path = manifest_fixture_root(root).join(relative);
+    if path.is_file() {
+        return path;
+    }
+    relative
+        .strip_prefix("fixtures/")
+        .map(|relative| root.join(relative))
+        .unwrap_or(path)
+}
+
 #[test]
 fn isartor_rules_match_verapdf_ids() {
     let Some(verapdf) = verapdf_binary() else {
@@ -221,9 +239,7 @@ fn complete_isartor_manifest_matches_verapdf_ids() {
     let files: Vec<PathBuf> = mappings
         .iter()
         .map(|mapping| {
-            root.parent()
-                .expect("corpus fixtures should have a parent directory")
-                .join(mapping["fixture"].as_str().expect("fixture path"))
+            manifest_fixture_path(&root, mapping["fixture"].as_str().expect("fixture path"))
         })
         .collect();
     for path in &files {
@@ -412,22 +428,18 @@ fn published_rule_coverage_has_positive_and_negative_verapdf_evidence() {
     assert_eq!(mappings.len(), 8);
 
     for mapping in mappings {
-        let positive = root
-            .parent()
-            .expect("corpus fixtures should have a parent directory")
-            .join(
-                mapping["positive_fixture"]
-                    .as_str()
-                    .expect("positive fixture"),
-            );
-        let negative = root
-            .parent()
-            .expect("corpus fixtures should have a parent directory")
-            .join(
-                mapping["negative_fixture"]
-                    .as_str()
-                    .expect("negative fixture"),
-            );
+        let positive = manifest_fixture_path(
+            &root,
+            mapping["positive_fixture"]
+                .as_str()
+                .expect("positive fixture"),
+        );
+        let negative = manifest_fixture_path(
+            &root,
+            mapping["negative_fixture"]
+                .as_str()
+                .expect("negative fixture"),
+        );
         assert!(
             positive.is_file(),
             "missing positive fixture: {}",
