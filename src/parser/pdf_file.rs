@@ -3793,7 +3793,7 @@ mod tests {
     #[test]
     fn strict_mode_rejects_page_tree_cycles() {
         type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
-        let data = b"%PDF-1.7\n1 0 obj\n<< /Type /Pages /Kids [1 0 R] >>\nendobj\n";
+        let data = b"%PDF-1.7\n1 0 obj\n<< /Type /Pages /Kids [1 0 R] /Count 1 >>\nendobj\n";
         let mut parser = Parser::new_with_limits(
             BufReader::new(Cursor::new(data.to_vec())),
             ParseMode::Strict,
