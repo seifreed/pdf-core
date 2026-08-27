@@ -125,6 +125,8 @@ Clippy estricto.
 `W` de anchos CID; la regresion de fuentes pasa `5/5` y Clippy estricto.
 `b6406da` aplica la misma resolucion a `/Widths` de fuentes Type1; la
 regresion de anchura PDF pasa `5/5` y Clippy estricto.
+`6b54f55` resuelve tambien `/FirstChar` indirecto al calcular anchuras Type1;
+la regresion de anchura PDF pasa `5/5` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
