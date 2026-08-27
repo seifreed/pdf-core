@@ -1,3 +1,4 @@
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_until, take_while, take_while1},
@@ -7,6 +8,19 @@ use nom::{
     sequence::{delimited, pair, preceded, tuple},
     IResult,
 };
+
+fn with_budget<'a, O, E, F>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+    parser: F,
+) -> Result<IResult<&'a [u8], O, E>, ResourceBudgetError>
+where
+    F: Fn(&'a [u8]) -> IResult<&'a [u8], O, E>,
+{
+    // Charge before parsing so token decoders cannot allocate past the limit.
+    budget.consume_input(input.len() as u64)?;
+    Ok(parser(input))
+}
 
 fn parse_u8(input: &[u8]) -> Result<u8, &'static str> {
     std::str::from_utf8(input)
@@ -38,8 +52,22 @@ pub fn skip_whitespace(input: &[u8]) -> IResult<&[u8], ()> {
     value((), multispace0)(input)
 }
 
+pub fn skip_whitespace_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> Result<IResult<&'a [u8], ()>, ResourceBudgetError> {
+    with_budget(input, budget, skip_whitespace)
+}
+
 pub fn skip_whitespace_and_comments(input: &[u8]) -> IResult<&[u8], ()> {
     value((), many0(alt((value((), multispace1), value((), comment)))))(input)
+}
+
+pub fn skip_whitespace_and_comments_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> Result<IResult<&'a [u8], ()>, ResourceBudgetError> {
+    with_budget(input, budget, skip_whitespace_and_comments)
 }
 
 pub fn comment(input: &[u8]) -> IResult<&[u8], &[u8]> {
@@ -47,6 +75,13 @@ pub fn comment(input: &[u8]) -> IResult<&[u8], &[u8]> {
         char('%'),
         alt((take_until("\n"), take_until("\r"), nom::combinator::rest)),
     )(input)
+}
+
+pub fn comment_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> Result<IResult<&'a [u8], &'a [u8]>, ResourceBudgetError> {
+    with_budget(input, budget, comment)
 }
 
 pub fn pdf_header(input: &[u8]) -> IResult<&[u8], (u8, u8)> {
@@ -57,8 +92,22 @@ pub fn pdf_header(input: &[u8]) -> IResult<&[u8], (u8, u8)> {
     Ok((input, (major, minor)))
 }
 
+pub fn pdf_header_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> Result<IResult<&'a [u8], (u8, u8)>, ResourceBudgetError> {
+    with_budget(input, budget, pdf_header)
+}
+
 pub fn pdf_eof(input: &[u8]) -> IResult<&[u8], &[u8]> {
     tag(b"%%EOF")(input)
+}
+
+pub fn pdf_eof_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> Result<IResult<&'a [u8], &'a [u8]>, ResourceBudgetError> {
+    with_budget(input, budget, pdf_eof)
 }
 
 pub fn is_whitespace(c: u8) -> bool {
@@ -80,6 +129,13 @@ pub fn regular_chars(input: &[u8]) -> IResult<&[u8], &[u8]> {
     take_while1(is_regular_char)(input)
 }
 
+pub fn regular_chars_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> Result<IResult<&'a [u8], &'a [u8]>, ResourceBudgetError> {
+    with_budget(input, budget, regular_chars)
+}
+
 pub fn keyword(input: &[u8]) -> IResult<&[u8], &[u8]> {
     alt((
         tag(b"true"),
@@ -98,8 +154,22 @@ pub fn keyword(input: &[u8]) -> IResult<&[u8], &[u8]> {
     ))(input)
 }
 
+pub fn keyword_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> Result<IResult<&'a [u8], &'a [u8]>, ResourceBudgetError> {
+    with_budget(input, budget, keyword)
+}
+
 pub fn integer(input: &[u8]) -> IResult<&[u8], i64> {
     map_res(recognize(pair(opt(one_of("+-")), digit1)), parse_i64)(input)
+}
+
+pub fn integer_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> Result<IResult<&'a [u8], i64>, ResourceBudgetError> {
+    with_budget(input, budget, integer)
 }
 
 pub fn real(input: &[u8]) -> IResult<&[u8], f64> {
@@ -113,6 +183,13 @@ pub fn real(input: &[u8]) -> IResult<&[u8], f64> {
         ))),
         parse_f64,
     )(input)
+}
+
+pub fn real_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> Result<IResult<&'a [u8], f64>, ResourceBudgetError> {
+    with_budget(input, budget, real)
 }
 
 pub fn hex_string(input: &[u8]) -> IResult<&[u8], Vec<u8>> {
@@ -144,6 +221,13 @@ pub fn hex_string(input: &[u8]) -> IResult<&[u8], Vec<u8>> {
     )(input)
 }
 
+pub fn hex_string_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> Result<IResult<&'a [u8], Vec<u8>>, ResourceBudgetError> {
+    with_budget(input, budget, hex_string)
+}
+
 pub fn literal_string(input: &[u8]) -> IResult<&[u8], Vec<u8>> {
     delimited(
         char('('),
@@ -158,6 +242,13 @@ pub fn literal_string(input: &[u8]) -> IResult<&[u8], Vec<u8>> {
         ),
         char(')'),
     )(input)
+}
+
+pub fn literal_string_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> Result<IResult<&'a [u8], Vec<u8>>, ResourceBudgetError> {
+    with_budget(input, budget, literal_string)
 }
 
 fn escape_sequence(input: &[u8]) -> IResult<&[u8], Vec<u8>> {
@@ -219,14 +310,35 @@ pub fn name(input: &[u8]) -> IResult<&[u8], String> {
     )(input)
 }
 
+pub fn name_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> Result<IResult<&'a [u8], String>, ResourceBudgetError> {
+    with_budget(input, budget, name)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{integer, pdf_header, real};
+    use super::{integer, integer_with_budget, pdf_header, real};
+    use crate::performance::{ResourceBudget, ResourceBudgetError};
 
     #[test]
     fn numeric_overflow_is_a_parse_error() {
         assert!(integer(b"999999999999999999999999").is_err());
         assert!(real(b"1e999999999999999999999").is_err());
         assert!(pdf_header(b"%PDF-999.0").is_err());
+    }
+
+    #[test]
+    fn budgeted_lexer_charges_input_before_parsing() {
+        let budget = ResourceBudget::new(4, 1024, 1024, 100, 10, 10, 10, 10);
+        let (remaining, value) = integer_with_budget(b"12 3", &budget).unwrap().unwrap();
+
+        assert_eq!(remaining, b" 3");
+        assert_eq!(value, 12);
+        assert_eq!(
+            integer_with_budget(b"3", &budget),
+            Err(ResourceBudgetError::InputBytes)
+        );
     }
 }

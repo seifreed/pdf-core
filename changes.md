@@ -91,6 +91,9 @@ compartido, y la ruta documental rechaza entradas residuales antes de
 `PerformanceGuard` compara ahora los limites de fichero, objeto y memoria en
 bytes exactos, rechaza `1 MiB + 1 byte` con un limite de `1 MiB` y no registra
 asignaciones de memoria rechazadas.
+Las primitives publicas de `parser::lexer` ofrecen ahora variantes
+`*_with_budget` que cobran el slice de entrada antes de ejecutar nom, para
+evitar asignaciones de tokens fuera de `ResourceBudget`.
 
 Pendientes actuales, en orden practico:
 
@@ -103,9 +106,9 @@ Pendientes actuales, en orden practico:
   streams conservan ahora estado lossless explícito, pero falta hacer
   completamente estrictos los modos de error/recuperacion y demostrar que
   `ResourceBudget` cubre toda operacion publica de parseo, resolucion,
-  recorrido, decodificacion y serializacion. Los helpers sintacticos publicos
-  de bajo nivel en `parser::lexer` siguen sin una variante presupuestada; no
-  deben presentarse como frontera de parseo estructural para entradas no
+  recorrido, decodificacion y serializacion. Las variantes acotadas de
+  `parser::lexer` cobran el slice completo antes de analizarlo, pero no
+  sustituyen aun la frontera de parseo estructural para entradas no
   confiables.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
