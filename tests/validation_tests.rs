@@ -333,6 +333,7 @@ mod validation_tests {
     #[test]
     fn test_pdfx_colorspace_constraint_detects_device_rgb() {
         let mut document = create_test_document();
+        document.version = PdfVersion::new(1, 3);
         add_page_with_resource_colorspace(&mut document, "/DeviceRGB");
 
         let registry = SchemaRegistry::new();
@@ -438,6 +439,25 @@ mod validation_tests {
             .expect("PDF/UA-1 report should be produced");
         assert!(!has_issue(&valid, "LANG_MISSING"));
         assert!(!has_issue(&valid, "LANG_EMPTY"));
+    }
+
+    #[test]
+    fn fixture_pdfua_metadata_rule_has_positive_and_negative_cases() {
+        let registry = SchemaRegistry::new();
+
+        let mut valid_document = create_test_document();
+        add_pdfua_metadata(&mut valid_document, true);
+        let valid = registry
+            .validate(&valid_document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(!has_issue(&valid, "METADATA_STREAM_INVALID"));
+
+        let mut invalid_document = create_test_document();
+        add_pdfua_metadata(&mut invalid_document, false);
+        let invalid = registry
+            .validate(&invalid_document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(has_issue(&invalid, "METADATA_STREAM_INVALID"));
     }
 
     // Helper functions for creating test scenarios
@@ -681,6 +701,28 @@ mod validation_tests {
         });
         let metadata_id = document.ast.create_node(NodeType::Metadata, metadata_value);
         document.set_info(metadata_id);
+    }
+
+    fn add_pdfua_metadata(document: &mut PdfDocument, valid_type: bool) {
+        let catalog_id = document.catalog.expect("Catalog should exist");
+        let catalog = document
+            .ast
+            .get_node_mut(catalog_id)
+            .expect("Catalog node should exist");
+        if let PdfValue::Dictionary(dict) = &mut catalog.value {
+            let mut metadata_dict = PdfDictionary::new();
+            if valid_type {
+                metadata_dict.insert("Type", PdfValue::Name(PdfName::new("Metadata")));
+            }
+            metadata_dict.insert("Subtype", PdfValue::Name(PdfName::new("XML")));
+            dict.insert(
+                "Metadata",
+                PdfValue::Stream(PdfStream::new(
+                    metadata_dict,
+                    b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"></x:xmpmeta>".to_vec(),
+                )),
+            );
+        }
     }
 
     fn add_image_object(document: &mut PdfDocument, colorspace: &str) {

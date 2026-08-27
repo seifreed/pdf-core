@@ -72,6 +72,8 @@ corpus coverage for the PDF/A and PDF/UA cases listed below.
 | `PDF_A_JAVASCRIPT` | PDF/A-1b, ISO 19005-1:2005 6.6.1 | `test_pdfa_javascript_validation` clean document | Same test with JavaScript action | `ISO_19005_1:6.6.1:1` |
 | `NO_TAGGED_STRUCTURE` | PDF/UA-1, ISO 14289-1:2014 7.1 | `fixture_pdfua_structure_rule_has_positive_and_negative_cases` marked catalog with `StructTreeRoot` | Same test with untagged catalog | `ISO_14289_1:7.1:11` |
 | `STRUCT_ELEM_MISSING` | PDF/UA-1, ISO 14289-1:2014 7.1 | Same test with a `StructElem` | Same test with `StructTreeRoot` but no `StructElem` | Aggregate of `ISO_14289_1:7.1:*`; no 1:1 veraPDF rule |
+| `ACCESSIBILITY_METADATA_MISSING` | PDF/UA-1, ISO 14289-1:2014 7.1 | `7.1-t08-pass-a.pdf` | `7.1-t08-fail-a.pdf` | `ISO 14289-1:2014:7.1:8` |
+| `METADATA_STREAM_INVALID` | PDF/UA-1, ISO 14289-1:2014 7.1 | `fixture_pdfua_metadata_rule_has_positive_and_negative_cases` with `/Type /Metadata` and `/Subtype /XML` | Same test with missing `/Type` | Same clause; local structural refinement |
 | `LANG_MISSING` | PDF/UA-1, ISO 14289-1:2014 7.2 | `fixture_pdfua_language_rule_has_positive_and_negative_cases` with `en-US` | Same test without `Lang` | Aggregate local check; isolated upstream evidence: `ISO 14289-1:2014:7.2:2` (`7.2-t02-fail-a.pdf`) |
 | `LANG_EMPTY` | PDF/UA-1, ISO 14289-1:2014 7.2 | Same test with `en-US` | Same test with an empty `Lang` string | Aggregate local check; isolated upstream evidence: `ISO 14289-1:2014:7.2:29` (`7.2-t29-fail-n.pdf`) |
 | `ALT_TEXT_MISSING` | PDF/UA-1, ISO 14289-1:2014 7.3 | `7.3-t01-pass-a.pdf` | `7.3-t01-fail-a.pdf` | `ISO 14289-1:2014:7.3:1` |
@@ -81,7 +83,7 @@ clauses above and upstream PDF/UA cases for tagged structure and document
 language, and alternative-text cases. `tests/verapdf_rule_mapping_tests.rs`
 rechecks the exact veraPDF IDs when `VERAPDF_BIN` and
 `PDF_COMPLIANCE_CORPUS` are configured: PDF/A `6.3.4:1`, `6.5.2:1`, and
-`6.6.1:1`, plus PDF/UA `7.1:11`, `7.2:2`, `7.2:29`, and `7.3:1`; the local
+`6.6.1:1`, plus PDF/UA `7.1:8`, `7.1:11`, `7.2:2`, `7.2:29`, and `7.3:1`; the local
 PDF/A and PDF/UA validators are then run against those serialized bytes.
 The complete manifest check also passed locally with veraPDF 1.30.2: all 205
 Isartor mappings were present and every expected failed rule ID was observed.

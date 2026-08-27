@@ -54,6 +54,16 @@ const PDFUA_CASES: &[(&str, &str, bool)] = &[
         true,
     ),
     (
+        "verapdf-pdfua-1/7.1 General/7.1-t08-fail-a.pdf",
+        "ACCESSIBILITY_METADATA_MISSING",
+        true,
+    ),
+    (
+        "verapdf-pdfua-1/7.1 General/7.1-t08-pass-a.pdf",
+        "ACCESSIBILITY_METADATA_MISSING",
+        false,
+    ),
+    (
         "verapdf-pdfua-1/7.2 Text/7.2-t24-pass-a.pdf",
         "STRUCT_ELEM_MISSING",
         false,
@@ -110,6 +120,10 @@ const PDFUA_VERAPDF_CASES: &[(&str, &str)] = &[
     (
         "verapdf-pdfua-1/7.3 Graphics/7.3-t01-fail-b.pdf",
         "ISO 14289-1:2014:7.3:1",
+    ),
+    (
+        "verapdf-pdfua-1/7.1 General/7.1-t08-fail-a.pdf",
+        "ISO 14289-1:2014:7.1:8",
     ),
 ];
 

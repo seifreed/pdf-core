@@ -1298,7 +1298,7 @@ impl SchemaConstraint for AccessibilityMetadataConstraint {
             .get("Type")
             .and_then(PdfValue::as_name)
             .map(|name| name.without_slash() == "Metadata")
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         if !subtype_ok || !type_ok {
             report.add_issue(ValidationIssue {

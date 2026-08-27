@@ -229,6 +229,10 @@ Pendientes actuales, en orden practico:
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa, fusionar las validaciones y
   dejar PDF/A/PDF/UA fuera de estado experimental.
+  La regla PDF/UA de metadata ahora exige estructuralmente `/Type /Metadata`
+  y `/Subtype /XML`, con par sintetico y el par real `7.1-t08` del corpus
+  verificado contra `ISO 14289-1:2014:7.1:8`; esto no cambia el estado
+  experimental del conjunto.
 * **Caracteristicas parciales:** CMap, `ToUnicode`, fuentes, herencia de
   recursos, revisiones hibridas e incrementalmente complejas y codecs aun
   necesitan cobertura de casos limite. JBIG2 tiene decodificacion acotada,
