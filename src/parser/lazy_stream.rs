@@ -1,3 +1,4 @@
+use crate::performance::ResourceBudget;
 use crate::types::{ObjectId, PdfDictionary, PdfStream};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::{Arc, Mutex};
@@ -86,22 +87,41 @@ impl LazyStream {
 
     /// Load stream data on-demand
     pub fn load(&self) -> Result<Vec<u8>, String> {
+        self.load_with_budget(&ResourceBudget::default())
+    }
+
+    pub fn load_with_budget(&self, budget: &ResourceBudget) -> Result<Vec<u8>, String> {
+        budget.check().map_err(|error| error.to_string())?;
         // Check cache first
         if let Ok(cache) = self.cache.lock() {
             if let Some(ref data) = *cache {
+                budget
+                    .consume_decoded(data.len() as u64)
+                    .map_err(|error| error.to_string())?;
                 return Ok(data.clone());
             }
         }
 
         // Load data based on loader type
         let data = match &self.loader {
-            StreamLoader::Inline(data) => data.clone(),
+            StreamLoader::Inline(data) => {
+                budget
+                    .consume_decoded(data.len() as u64)
+                    .map_err(|error| error.to_string())?;
+                data.clone()
+            }
 
             StreamLoader::File {
                 offset,
                 length,
                 file_handle,
             } => {
+                budget
+                    .consume_input(*length as u64)
+                    .map_err(|error| error.to_string())?;
+                budget
+                    .consume_decoded(*length as u64)
+                    .map_err(|error| error.to_string())?;
                 let mut handle = file_handle
                     .lock()
                     .map_err(|e| format!("Failed to lock file handle: {}", e))?;
@@ -117,30 +137,52 @@ impl LazyStream {
                 parent_loader,
             } => {
                 // Load parent stream first
-                let parent_data = self.load_parent_stream(parent_loader)?;
+                let parent_data = self.load_parent_stream_with_budget(parent_loader, budget)?;
 
                 // Parse object stream to extract specific object
-                self.extract_from_object_stream(&parent_data, *index)?
+                let data = self.extract_from_object_stream(&parent_data, *index)?;
+                budget
+                    .consume_decoded(data.len() as u64)
+                    .map_err(|error| error.to_string())?;
+                data
             }
         };
 
         // Cache the loaded data
         if let Ok(mut cache) = self.cache.lock() {
+            budget
+                .consume_decoded(data.len() as u64)
+                .map_err(|error| error.to_string())?;
             *cache = Some(data.clone());
         }
 
         Ok(data)
     }
 
-    fn load_parent_stream(&self, parent: &StreamLoader) -> Result<Vec<u8>, String> {
+    fn load_parent_stream_with_budget(
+        &self,
+        parent: &StreamLoader,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<u8>, String> {
         match parent {
-            StreamLoader::Inline(data) => Ok(data.clone()),
+            StreamLoader::Inline(data) => {
+                budget
+                    .consume_decoded(data.len() as u64)
+                    .map_err(|error| error.to_string())?;
+                Ok(data.clone())
+            }
 
             StreamLoader::File {
                 offset,
                 length,
                 file_handle,
             } => {
+                budget
+                    .consume_input(*length as u64)
+                    .map_err(|error| error.to_string())?;
+                budget
+                    .consume_decoded(*length as u64)
+                    .map_err(|error| error.to_string())?;
                 let mut handle = file_handle
                     .lock()
                     .map_err(|e| format!("Failed to lock parent file handle: {}", e))?;
@@ -276,7 +318,11 @@ impl LazyStream {
 
     /// Convert to regular PdfStream by loading data
     pub fn to_stream(&self) -> Result<PdfStream, String> {
-        let data = self.load()?;
+        self.to_stream_with_budget(&ResourceBudget::default())
+    }
+
+    pub fn to_stream_with_budget(&self, budget: &ResourceBudget) -> Result<PdfStream, String> {
+        let data = self.load_with_budget(budget)?;
         Ok(PdfStream::from_data(
             self.dict.clone(),
             crate::types::stream::StreamData::Decoded(data),
@@ -429,7 +475,18 @@ impl StreamCacheManager {
 #[cfg(test)]
 mod tests {
     use super::{LazyStream, MemoryStreamSource, StreamLoader, StreamSource};
+    use crate::performance::ResourceBudget;
     use crate::types::{ObjectId, PdfDictionary, PdfValue};
+
+    #[test]
+    fn lazy_load_rejects_inline_data_before_cloning() {
+        let stream = LazyStream::new_inline(PdfDictionary::new(), vec![1, 2]);
+        let budget = ResourceBudget::new(1024, 1, 1, 100, 10, 10, 10, 10);
+        assert!(stream
+            .load_with_budget(&budget)
+            .expect_err("lazy data must respect the decoded budget")
+            .contains("DecodedBytes"));
+    }
 
     #[test]
     fn rejects_negative_object_stream_counts() {

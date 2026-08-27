@@ -80,6 +80,9 @@ por defecto.
 `TextExtractor::extract_text_with_budget` comparte ese presupuesto con CMap y
 `ToUnicode`, cobra operadores y spans, y la API legacy conserva límites por
 defecto.
+`LazyStream::load_with_budget` y `to_stream_with_budget` cobran lecturas,
+clones, buffers padres de object streams y datos cacheados antes de
+materializarlos.
 El parseo de cabeceras de object streams limita tambien el numero de entradas
 con el mismo presupuesto en sus rutas publicas e internas.
 El parser publico de imagenes inline tambien rechaza entradas que exceden el
