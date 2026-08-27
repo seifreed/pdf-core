@@ -1,17 +1,31 @@
 use crate::ast::document::{Destination, DestinationType, OutlineItem, OutlineTree};
 use crate::ast::{NodeId, NodeType, PdfAstGraph};
 use crate::parser::reference_resolver::ObjectNodeMap;
+use crate::performance::ResourceBudget;
 use crate::types::{PdfArray, PdfDictionary, PdfValue};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct OutlineParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
+    budget: ResourceBudget,
 }
 
 impl<'a> OutlineParser<'a> {
     pub fn new(ast: &'a mut PdfAstGraph, resolver: &'a ObjectNodeMap) -> Self {
-        OutlineParser { ast, resolver }
+        Self::new_with_budget(ast, resolver, &ResourceBudget::default())
+    }
+
+    pub fn new_with_budget(
+        ast: &'a mut PdfAstGraph,
+        resolver: &'a ObjectNodeMap,
+        budget: &ResourceBudget,
+    ) -> Self {
+        OutlineParser {
+            ast,
+            resolver,
+            budget: budget.clone(),
+        }
     }
 
     pub fn resolve_page_numbers(&self, tree: &mut OutlineTree, page_list: &[NodeId]) {
@@ -333,20 +347,29 @@ impl<'a> OutlineParser<'a> {
         // Find root items (those without parent)
         for (id, item) in &tree.items {
             if item.parent.is_none() {
-                hierarchy.push(self.build_outline_node(*id, item, tree, 0));
+                hierarchy.push(self.build_outline_node(*id, item, tree));
             }
         }
 
         hierarchy
     }
 
-    #[allow(clippy::only_used_in_recursion)]
     fn build_outline_node(
         &self,
         id: NodeId,
         item: &OutlineItem,
         tree: &OutlineTree,
+    ) -> OutlineNode {
+        self.build_outline_node_at_depth(id, item, tree, 0, &mut HashSet::new())
+    }
+
+    fn build_outline_node_at_depth(
+        &self,
+        id: NodeId,
+        item: &OutlineItem,
+        tree: &OutlineTree,
         level: usize,
+        active: &mut HashSet<NodeId>,
     ) -> OutlineNode {
         let mut node = OutlineNode {
             id,
@@ -359,17 +382,31 @@ impl<'a> OutlineParser<'a> {
             children: Vec::new(),
         };
 
+        if level >= self.budget.max_depth || !active.insert(id) {
+            return node;
+        }
+
         // Add children
         let mut child_id = item.first;
+        let mut siblings = HashSet::new();
         while let Some(cid) = child_id {
+            if !siblings.insert(cid) {
+                break;
+            }
             if let Some(child_item) = tree.items.get(&cid) {
-                node.children
-                    .push(self.build_outline_node(cid, child_item, tree, level + 1));
+                node.children.push(self.build_outline_node_at_depth(
+                    cid,
+                    child_item,
+                    tree,
+                    level + 1,
+                    active,
+                ));
                 child_id = child_item.next;
             } else {
                 break;
             }
         }
+        active.remove(&id);
 
         node
     }
@@ -436,4 +473,47 @@ pub struct FlatOutlineEntry {
     pub level: usize,
     pub destination: Option<Destination>,
     pub page_number: Option<usize>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn outline_hierarchy_terminates_on_child_and_sibling_cycles() {
+        let empty_item = |title: &str| OutlineItem {
+            title: title.to_string(),
+            dest: None,
+            action: None,
+            parent: None,
+            prev: None,
+            next: None,
+            first: None,
+            last: None,
+            count: 0,
+            flags: 0,
+            color: None,
+        };
+        let mut root = empty_item("root");
+        root.first = Some(NodeId(1));
+        let mut child = empty_item("child");
+        child.parent = Some(NodeId(0));
+        child.first = Some(NodeId(0));
+        child.next = Some(NodeId(1));
+
+        let tree = OutlineTree {
+            root: NodeId(0),
+            items: HashMap::from([(NodeId(0), root), (NodeId(1), child)]),
+        };
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 10, 10, 8);
+        let parser = OutlineParser::new_with_budget(&mut ast, &resolver, &budget);
+
+        let hierarchy = parser.get_outline_hierarchy(&tree);
+        assert_eq!(hierarchy.len(), 1);
+        assert_eq!(hierarchy[0].children.len(), 1);
+        assert_eq!(hierarchy[0].children[0].children.len(), 1);
+        assert!(hierarchy[0].children[0].children[0].children.is_empty());
+    }
 }
