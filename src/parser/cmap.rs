@@ -638,12 +638,10 @@ impl<'a> CMapParser<'a> {
     fn map_range_to_unicode(&self, code: &[u8], start: &[u8], dest: &RangeDest) -> Option<String> {
         match dest {
             RangeDest::Single(base) => {
-                // Calculate offset
-                let offset = self.bytes_to_u32(code)? - self.bytes_to_u32(start)?;
-                let unicode_value = self.bytes_to_u32(base)?.checked_add(offset)?;
-
-                // Convert to Unicode character
-                char::from_u32(unicode_value).map(|c| c.to_string())
+                let offset = self
+                    .bytes_to_u32(code)?
+                    .checked_sub(self.bytes_to_u32(start)?)?;
+                self.increment_utf16_destination(base, offset)
             }
             RangeDest::Array(array) => {
                 // Calculate index
@@ -653,6 +651,19 @@ impl<'a> CMapParser<'a> {
                     .and_then(|bytes| self.bytes_to_unicode(bytes))
             }
         }
+    }
+
+    fn increment_utf16_destination(&self, base: &[u8], offset: u32) -> Option<String> {
+        if base.is_empty() || !base.len().is_multiple_of(2) {
+            return None;
+        }
+        let mut units: Vec<u16> = base
+            .chunks_exact(2)
+            .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
+            .collect();
+        let last = units.last_mut()?;
+        *last = (*last as u32).checked_add(offset)?.try_into().ok()?;
+        String::from_utf16(&units).ok()
     }
 
     fn bytes_to_unicode(&self, bytes: &[u8]) -> Option<String> {
@@ -756,6 +767,17 @@ mod tests {
         let cmap = parser.parse_cmap_data(data).expect("CMap should parse");
 
         assert!(parser.map_code_to_unicode(&cmap, &[0, 0, 0, 1]).is_none());
+    }
+
+    #[test]
+    fn decodes_bfrange_multi_code_unit_destinations() {
+        let data = b"/CMapName /Test def\n1 begincodespacerange\n<01> <02>\nendcodespacerange\n1 beginbfrange\n<01> <02> <006100620063>\nendbfrange";
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let parser = CMapParser::new(&mut ast, &resolver);
+        let cmap = parser.parse_cmap_data(data).expect("CMap should parse");
+
+        assert_eq!(parser.decode_bytes(&cmap, b"\x01\x02"), "abcabd");
     }
 
     #[test]
