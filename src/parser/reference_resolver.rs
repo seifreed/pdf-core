@@ -355,7 +355,9 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
     /// Resolve all references in the AST with proper edge creation
     pub fn resolve_references(&mut self, ast: &mut PdfAstGraph) -> Result<(), String> {
         // First pass: collect all references from existing nodes
-        let nodes = ast.get_all_nodes();
+        let nodes = ast
+            .get_all_nodes_with_budget(&self.limits.budget)
+            .map_err(|err| err.to_string())?;
         for node in &nodes {
             self.collect_references_from_node(node.id, &node.value);
         }
