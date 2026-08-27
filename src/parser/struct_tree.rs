@@ -282,7 +282,7 @@ impl<'a> StructTreeParser<'a> {
                     PdfValue::Dictionary(elem_dict.clone()),
                 );
                 let elem_id = self.ast.add_node(elem_node);
-                self.ast.add_edge(parent_id, elem_id, EdgeType::Child);
+                self.add_edge(parent_id, elem_id, EdgeType::Child);
                 self.parse_struct_elem(elem_id, parent_id, depth + 1);
             }
             _ => {}
@@ -300,7 +300,7 @@ impl<'a> StructTreeParser<'a> {
         }
 
         // Add edge from parent
-        self.ast.add_edge(parent_id, elem_id, EdgeType::Child);
+        self.add_edge(parent_id, elem_id, EdgeType::Child);
 
         // Get element dictionary
         let elem_dict = match self.ast.get_node(elem_id).and_then(|n| n.as_dict()) {
@@ -348,7 +348,7 @@ impl<'a> StructTreeParser<'a> {
         // Parse Pg (page reference)
         if let Some(PdfValue::Reference(page_ref)) = elem_dict.get("Pg") {
             if let Some(page_id) = self.resolver.get_node_id(&page_ref.id()) {
-                self.ast.add_edge(elem_id, page_id, EdgeType::Reference);
+                self.add_edge(elem_id, page_id, EdgeType::Reference);
             }
         }
 
@@ -378,7 +378,7 @@ impl<'a> StructTreeParser<'a> {
                 // Object Reference
                 if let Some(PdfValue::Reference(obj_ref)) = mcr_dict.get("Obj") {
                     if let Some(obj_id) = self.resolver.get_node_id(&obj_ref.id()) {
-                        self.ast.add_edge(parent_id, obj_id, EdgeType::Reference);
+                        self.add_edge(parent_id, obj_id, EdgeType::Reference);
                     }
                 }
             }
@@ -415,7 +415,7 @@ impl<'a> StructTreeParser<'a> {
             .set_property("mcid".to_string(), mcid.to_string());
 
         let mcr_id = self.ast.add_node(mcr_node);
-        self.ast.add_edge(parent_id, mcr_id, EdgeType::Child);
+        self.add_edge(parent_id, mcr_id, EdgeType::Child);
     }
 
     #[allow(dead_code)]
@@ -554,11 +554,16 @@ impl<'a> StructTreeParser<'a> {
         let content_id = self.ast.add_node(content_node);
 
         // Link content to structure element
-        self.ast
-            .add_edge(struct_elem_id, content_id, EdgeType::Content);
+        self.add_edge(struct_elem_id, content_id, EdgeType::Content);
 
         // Link content to page
-        self.ast.add_edge(page_id, content_id, EdgeType::Content);
+        self.add_edge(page_id, content_id, EdgeType::Content);
+    }
+
+    fn add_edge(&mut self, from: NodeId, to: NodeId, edge_type: EdgeType) {
+        if self.budget.consume_edge().is_ok() {
+            self.ast.add_edge(from, to, edge_type);
+        }
     }
 
     fn store_mcid_content(&mut self, page_id: NodeId, mcid: i32, content: &[String]) {
@@ -627,5 +632,28 @@ mod tests {
         assert_eq!(tree.root, NodeId(1));
         drop(parser);
         assert_eq!(ast.node_count(), 2);
+    }
+
+    #[test]
+    fn struct_tree_parser_respects_edge_budget() {
+        let mut ast = PdfAstGraph::new();
+        let mut root_dict = PdfDictionary::new();
+        root_dict.insert("ParentTree", PdfValue::Dictionary(PdfDictionary::new()));
+        root_dict.insert(
+            "K",
+            PdfValue::Array(PdfArray::from(vec![
+                PdfValue::Integer(1),
+                PdfValue::Integer(2),
+                PdfValue::Integer(3),
+            ])),
+        );
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 10, 1, 8);
+        let mut parser = StructTreeParser::new_with_budget(&mut ast, &resolver, &budget);
+
+        parser
+            .parse_struct_tree_root(&root_dict)
+            .expect("structure tree should parse");
+        assert_eq!(ast.edge_count(), 1);
     }
 }
