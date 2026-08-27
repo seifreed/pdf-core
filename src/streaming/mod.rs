@@ -78,7 +78,7 @@ impl<R: Read + Seek + BufRead> StreamingParser<R> {
         document.budget = budget.clone();
         Self {
             reader,
-            chunk_size: config.chunk_size,
+            chunk_size: config.chunk_size.max(1),
             buffer_size: config.buffer_size,
             current_position: 0,
             document,
@@ -147,6 +147,11 @@ impl<R: Read + Seek + BufRead> StreamingParser<R> {
         }
 
         if let Some(lazy_node) = self.lazy_nodes.get(&node_id) {
+            if lazy_node.byte_length as u64 > self.budget.remaining_input_bytes() {
+                return Err(AstError::ParseError(
+                    "resource budget exceeded: InputBytes".to_string(),
+                ));
+            }
             let current_pos = self.reader.stream_position()?;
 
             // Seek to node position
@@ -246,7 +251,16 @@ impl<R: Read + Seek + BufRead> StreamingParser<R> {
     }
 
     fn read_chunk(&mut self) -> AstResult<Vec<u8>> {
-        let mut buffer = vec![0u8; self.chunk_size];
+        let remaining = self.budget.remaining_input_bytes();
+        if remaining == 0 {
+            return Err(AstError::ParseError(
+                "resource budget exceeded: InputBytes".to_string(),
+            ));
+        }
+        let chunk_size = self
+            .chunk_size
+            .min(usize::try_from(remaining).unwrap_or(usize::MAX));
+        let mut buffer = vec![0u8; chunk_size.max(1)];
         let bytes_read = self.reader.read(&mut buffer)?;
         buffer.truncate(bytes_read);
         self.current_position += bytes_read as u64;
@@ -468,7 +482,10 @@ mod tests {
         let budget = ResourceBudget::new(8, 1024, 1024, 10, 10, 10, 10, 8);
         let mut parser = StreamingParser::new_with_budget(
             BufReader::new(Cursor::new(data)),
-            StreamingConfig::default(),
+            StreamingConfig {
+                chunk_size: 0,
+                ..StreamingConfig::default()
+            },
             budget,
         );
 

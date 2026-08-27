@@ -121,6 +121,11 @@ impl ResourceBudget {
         )
     }
 
+    pub fn remaining_input_bytes(&self) -> u64 {
+        self.max_input_bytes
+            .saturating_sub(self.input_bytes.load(Ordering::Acquire))
+    }
+
     pub fn consume_decoded(&self, bytes: u64) -> Result<(), ResourceBudgetError> {
         self.check()?;
         if bytes > self.max_decoded_bytes_per_stream {

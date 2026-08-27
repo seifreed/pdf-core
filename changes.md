@@ -119,6 +119,9 @@ otras entradas de parseo.
 `RecoveryParser` acepta el mismo presupuesto y trata los excesos de tamaño,
 memoria o contadores como errores terminales; ya no intenta recuperar ni
 construir un documento best-effort después de cruzar un límite de seguridad.
+Las reservas del parser incremental se limitan al presupuesto de entrada
+restante antes de asignar buffers; una configuración `chunk_size = 0` se
+normaliza para mantener progreso y el agotamiento del presupuesto se propaga.
 
 Pendientes actuales, en orden practico:
 
