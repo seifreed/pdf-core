@@ -69,6 +69,8 @@ punto tiene regresion y pasa Clippy estricto. Las APIs publicas de XMP aceptan
 ahora un `ResourceBudget`, y el parser PDF lo propaga al parseo del paquete.
 Las APIs publicas de `PdfParser` para valores, objetos y secuencias tambien
 consumen la entrada del presupuesto antes de analizarla, con regresion.
+Esas mismas operaciones consumen ahora el contador `max_objects` una vez por
+valor de nivel superior, incluidos valores directos y secuencias recuperables.
 `ContentAnalyzer::analyze_content_stream_with_budget` cobra la entrada antes
 de analizarla y cada nodo antes de materializarlo, evitando copias iniciales
 del stream; la API legacy conserva el presupuesto por defecto.
