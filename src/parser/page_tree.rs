@@ -1,7 +1,8 @@
 use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
-use crate::filters::decode_stream_with_limits;
+use crate::filters::decode_stream_with_budget;
 use crate::metadata::icc::parse_icc_profile;
 use crate::parser::reference_resolver::ObjectNodeMap;
+use crate::performance::ResourceBudget;
 use crate::types::{PdfDictionary, PdfValue};
 use std::collections::HashMap;
 
@@ -9,14 +10,24 @@ pub struct PageTreeParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
     resources_cache: HashMap<NodeId, PdfDictionary>,
+    budget: ResourceBudget,
 }
 
 impl<'a> PageTreeParser<'a> {
     pub fn new(ast: &'a mut PdfAstGraph, resolver: &'a ObjectNodeMap) -> Self {
+        Self::new_with_budget(ast, resolver, &ResourceBudget::default())
+    }
+
+    pub fn new_with_budget(
+        ast: &'a mut PdfAstGraph,
+        resolver: &'a ObjectNodeMap,
+        budget: &ResourceBudget,
+    ) -> Self {
         PageTreeParser {
             ast,
             resolver,
             resources_cache: HashMap::new(),
+            budget: budget.clone(),
         }
     }
 
@@ -465,8 +476,10 @@ impl<'a> PageTreeParser<'a> {
         };
 
         let filters = stream.get_filters();
-        let decoded = decode_stream_with_limits(raw, &filters, 10 * 1024 * 1024, 50)
-            .unwrap_or_else(|_| raw.to_vec());
+        let decoded = match decode_stream_with_budget(raw, &filters, &self.budget) {
+            Ok(decoded) => decoded,
+            Err(_) => return,
+        };
 
         let info = match parse_icc_profile(&decoded) {
             Some(info) => info,

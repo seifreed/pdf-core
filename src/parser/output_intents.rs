@@ -1,18 +1,32 @@
 use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
-use crate::filters::decode_stream_with_limits;
+use crate::filters::decode_stream_with_budget;
 use crate::metadata::icc::parse_icc_profile;
 use crate::parser::reference_resolver::ObjectNodeMap;
+use crate::performance::ResourceBudget;
 use crate::types::{PdfDictionary, PdfValue};
 
 /// Parser for OutputIntents from catalog
 pub struct OutputIntentsParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
+    budget: ResourceBudget,
 }
 
 impl<'a> OutputIntentsParser<'a> {
     pub fn new(ast: &'a mut PdfAstGraph, resolver: &'a ObjectNodeMap) -> Self {
-        OutputIntentsParser { ast, resolver }
+        Self::new_with_budget(ast, resolver, &ResourceBudget::default())
+    }
+
+    pub fn new_with_budget(
+        ast: &'a mut PdfAstGraph,
+        resolver: &'a ObjectNodeMap,
+        budget: &ResourceBudget,
+    ) -> Self {
+        OutputIntentsParser {
+            ast,
+            resolver,
+            budget: budget.clone(),
+        }
     }
 
     pub fn parse_output_intents(&mut self, catalog: &PdfDictionary) -> Vec<NodeId> {
@@ -179,8 +193,10 @@ impl<'a> OutputIntentsParser<'a> {
         };
 
         let filters = stream.get_filters();
-        let decoded = decode_stream_with_limits(raw, &filters, 10 * 1024 * 1024, 50)
-            .unwrap_or_else(|_| raw.to_vec());
+        let decoded = match decode_stream_with_budget(raw, &filters, &self.budget) {
+            Ok(decoded) => decoded,
+            Err(_) => return,
+        };
 
         let info = match parse_icc_profile(&decoded) {
             Some(info) => info,
