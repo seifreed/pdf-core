@@ -85,6 +85,8 @@ de veraPDF pasa `1/1` con el corpus local.
 `d5f5ce3` acepta tambien `/Kids` como referencia indirecta a un array, y
 `d62d062` procesa diccionarios `/Names` inline ademas de los indirectos; ambos
 casos tienen regresiones serializadas y mantienen Clippy estricto en verde.
+`a15f5f0` valida que `/Count` sea un entero no negativo, incluso cuando el
+valor es indirecto, con regresion strict/tolerante.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
