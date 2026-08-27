@@ -230,6 +230,10 @@ pub fn parse_xref_stream_with_limits(
                 .get(data_offset..end)
                 .ok_or_else(|| "XRef entry is outside decoded data".to_string())?;
 
+            limits
+                .budget
+                .consume_object()
+                .map_err(|error| format!("XRef object budget exceeded: {error}"))?;
             let entry = parse_xref_stream_entry(entry_data, w1, w2, w3)?;
             let object_number = start
                 .checked_add(i)
@@ -614,6 +618,27 @@ mod tests {
         let error = super::parse_xref_stream_with_limits(&stream, &limits)
             .expect_err("xref data over the shared budget must be rejected");
         assert!(error.contains("DecodedBytes"));
+    }
+
+    #[test]
+    fn xref_stream_respects_shared_object_budget() {
+        let stream = xref_stream(
+            vec![
+                PdfValue::Integer(1),
+                PdfValue::Integer(1),
+                PdfValue::Integer(1),
+            ],
+            None,
+        );
+        let mut limits = PerformanceLimits {
+            max_nodes: 0,
+            ..PerformanceLimits::default()
+        };
+        limits.refresh_budget();
+
+        let error = super::parse_xref_stream_with_limits(&stream, &limits)
+            .expect_err("xref entries must consume the shared object budget");
+        assert!(error.contains("Objects"));
     }
 
     #[test]
