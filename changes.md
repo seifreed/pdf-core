@@ -76,6 +76,8 @@ publicas y la deteccion de xref hibrido tambien cobran cada entrada contra el
 mismo presupuesto.
 La seleccion de esquemas en `validate_all` ya no aplica PDF/A-1 a documentos
 1.7/2.0 ni el esquema PDF 2.0 a documentos 1.x.
+Los perfiles PDF/X tambien exigen ahora la version PDF base que corresponde a
+cada familia, evitando aceptar versiones posteriores incompatibles.
 Los trailers asociados a tablas xref tambien se decodifican con el presupuesto
 compartido, con regresion de limite de entrada.
 

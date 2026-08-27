@@ -289,11 +289,14 @@ impl PdfSchema for PdfXSchema {
     }
 
     fn supports_pdf_version(&self, version: &PdfVersion) -> bool {
-        let required_version = self.version().parse::<f32>().unwrap_or(1.3);
-        let doc_version = format!("{}.{}", version.major, version.minor)
-            .parse::<f32>()
-            .unwrap_or(0.0);
-        doc_version >= required_version
+        match self.level {
+            PdfXLevel::PdfX1a | PdfXLevel::PdfX3 => version.major == 1 && version.minor == 3,
+            PdfXLevel::PdfX4
+            | PdfXLevel::PdfX4p
+            | PdfXLevel::PdfX5g
+            | PdfXLevel::PdfX5n
+            | PdfXLevel::PdfX5pg => version.major == 1 && version.minor == 6,
+        }
     }
 
     fn validate(&self, document: &PdfDocument) -> ValidationReport {
@@ -409,5 +412,16 @@ mod tests {
         assert!(!pdfa2.supports_pdf_version(&PdfVersion::new(2, 0)));
         assert!(pdf20.supports_pdf_version(&PdfVersion::new(2, 0)));
         assert!(!pdf20.supports_pdf_version(&PdfVersion::new(1, 7)));
+    }
+
+    #[test]
+    fn pdfx_version_gates_do_not_accept_newer_pdf_versions() {
+        let pdfx1a = PdfXSchema::new(PdfXLevel::PdfX1a);
+        let pdfx4 = PdfXSchema::new(PdfXLevel::PdfX4);
+
+        assert!(pdfx1a.supports_pdf_version(&PdfVersion::new(1, 3)));
+        assert!(!pdfx1a.supports_pdf_version(&PdfVersion::new(1, 4)));
+        assert!(pdfx4.supports_pdf_version(&PdfVersion::new(1, 6)));
+        assert!(!pdfx4.supports_pdf_version(&PdfVersion::new(2, 0)));
     }
 }
