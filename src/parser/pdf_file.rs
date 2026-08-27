@@ -2159,10 +2159,28 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             PdfValue::Reference(reference) => self.load_object(&reference.id())?,
             value => value.clone(),
         };
-        Ok(match resolved {
-            PdfValue::Dictionary(dict) => dict,
-            _ => PdfDictionary::new(),
-        })
+        match resolved {
+            PdfValue::Dictionary(dict) => Ok(dict),
+            invalid => {
+                let message = format!(
+                    "Page Resources must be a dictionary, got {}",
+                    invalid.type_name()
+                );
+                if !self.tolerant {
+                    return Err(AstError::ParseError(message));
+                }
+                self.record_diagnostic(
+                    None,
+                    None,
+                    "invalid_resources",
+                    "ignored_invalid_resources",
+                    1.0,
+                    0,
+                    &message,
+                )?;
+                Ok(PdfDictionary::new())
+            }
+        }
     }
 
     fn merge_resource_dictionaries(parent: &PdfDictionary, child: &PdfDictionary) -> PdfDictionary {
