@@ -30,6 +30,27 @@ mod integration_tests {
         }
     }
 
+    #[test]
+    fn parse_bytes_original_retention_respects_memory_budget() {
+        let minimal_pdf = create_minimal_pdf();
+        let budget = pdf_ast::performance::ResourceBudget::new(
+            1024 * 1024,
+            (minimal_pdf.len() - 1) as u64,
+            1024 * 1024,
+            100,
+            10_000,
+            10_000,
+            10_000,
+            100,
+        );
+
+        let error = PdfParser::new()
+            .with_resource_budget(budget)
+            .parse_bytes(&minimal_pdf)
+            .expect_err("lossless source retention must respect the memory budget");
+        assert!(error.to_string().contains("DecodedBytes"));
+    }
+
     /// Test PDF with JavaScript content
     #[test]
     fn test_javascript_detection() {
