@@ -94,6 +94,19 @@ impl<'a> StructTreeParser<'a> {
         }
     }
 
+    fn resolve_array(&self, value: &PdfValue) -> Option<PdfArray> {
+        match value {
+            PdfValue::Array(array) => Some(array.clone()),
+            PdfValue::Reference(reference) => self
+                .resolver
+                .get_node_id(&reference.id())
+                .and_then(|node_id| self.ast.get_node(node_id))
+                .and_then(|node| node.value.as_array())
+                .cloned(),
+            _ => None,
+        }
+    }
+
     fn parse_class_map(&mut self, dict: &PdfDictionary) -> HashMap<String, NodeId> {
         let mut class_map = HashMap::new();
 
@@ -148,13 +161,19 @@ impl<'a> StructTreeParser<'a> {
         let mut parent_tree = ParentTree::new();
 
         // Parse Nums array for leaf entries
-        if let Some(PdfValue::Array(nums_array)) = tree_dict.get("Nums") {
-            self.parse_parent_tree_nums(nums_array, &mut parent_tree);
+        if let Some(nums_array) = tree_dict
+            .get("Nums")
+            .and_then(|value| self.resolve_array(value))
+        {
+            self.parse_parent_tree_nums(&nums_array, &mut parent_tree);
         }
 
         // Parse intermediate nodes recursively
-        if let Some(PdfValue::Array(kids_array)) = tree_dict.get("Kids") {
-            for kid in kids_array.iter() {
+        if let Some(kids_array) = tree_dict
+            .get("Kids")
+            .and_then(|value| self.resolve_array(value))
+        {
+            for kid in &kids_array {
                 if let PdfValue::Reference(obj_id) = kid {
                     self.parse_parent_tree_intermediate(&obj_id.id(), &mut parent_tree);
                 } else if let PdfValue::Dictionary(kid_dict) = kid {
@@ -164,7 +183,10 @@ impl<'a> StructTreeParser<'a> {
         }
 
         // Parse Limits to understand number range
-        if let Some(PdfValue::Array(limits)) = tree_dict.get("Limits") {
+        if let Some(limits) = tree_dict
+            .get("Limits")
+            .and_then(|value| self.resolve_array(value))
+        {
             if limits.len() >= 2 {
                 if let (Some(PdfValue::Integer(min)), Some(PdfValue::Integer(max))) =
                     (limits.get(0), limits.get(1))
@@ -234,8 +256,8 @@ impl<'a> StructTreeParser<'a> {
         parent_tree: &mut ParentTree,
     ) {
         // Parse Nums array directly instead of recursive call
-        if let Some(PdfValue::Array(nums_array)) = dict.get("Nums") {
-            self.parse_parent_tree_nums(nums_array, parent_tree);
+        if let Some(nums_array) = dict.get("Nums").and_then(|value| self.resolve_array(value)) {
+            self.parse_parent_tree_nums(&nums_array, parent_tree);
         }
     }
 
@@ -770,6 +792,61 @@ mod tests {
                 .map(String::as_str),
             Some("actual")
         );
+    }
+
+    #[test]
+    fn struct_tree_parser_resolves_indirect_parent_tree_arrays() {
+        let mut ast = PdfAstGraph::new();
+        let element_id = ast.create_node(
+            NodeType::Object(ObjectId::new(1, 0)),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("S", PdfValue::Name(PdfName::new("P")));
+                dict
+            }),
+        );
+        let nums_id = ast.create_node(
+            NodeType::Object(ObjectId::new(3, 0)),
+            PdfValue::Array(PdfArray::from(vec![
+                PdfValue::Integer(7),
+                PdfValue::Reference(PdfReference::new(1, 0)),
+            ])),
+        );
+        let limits_id = ast.create_node(
+            NodeType::Object(ObjectId::new(4, 0)),
+            PdfValue::Array(PdfArray::from(vec![
+                PdfValue::Integer(7),
+                PdfValue::Integer(7),
+            ])),
+        );
+        let parent_tree_id = ast.create_node(
+            NodeType::Object(ObjectId::new(2, 0)),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Nums", PdfValue::Reference(PdfReference::new(3, 0)));
+                dict.insert("Limits", PdfValue::Reference(PdfReference::new(4, 0)));
+                dict
+            }),
+        );
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), element_id);
+        resolver.insert(ObjectId::new(2, 0), parent_tree_id);
+        resolver.insert(ObjectId::new(3, 0), nums_id);
+        resolver.insert(ObjectId::new(4, 0), limits_id);
+
+        let mut root_dict = PdfDictionary::new();
+        root_dict.insert("ParentTree", PdfValue::Reference(PdfReference::new(2, 0)));
+        root_dict.insert("K", PdfValue::Reference(PdfReference::new(1, 0)));
+        let mut parser = StructTreeParser::new(&mut ast, &resolver);
+        let tree = parser
+            .parse_struct_tree_root(&root_dict)
+            .expect("structure tree should parse");
+
+        assert!(matches!(
+            tree.parent_tree.get_parents(7),
+            Some(ParentTreeEntry::Single(id)) if *id == element_id
+        ));
+        assert_eq!(tree.parent_tree.limits, Some((7, 7)));
     }
 
     #[test]
