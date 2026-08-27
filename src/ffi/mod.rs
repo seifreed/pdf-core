@@ -516,7 +516,7 @@ mod tests {
     #[test]
     fn failed_parse_clears_output_handle() {
         let input = b"not a PDF";
-        let mut document = 1usize as *mut CPdfDocument;
+        let mut document = std::ptr::dangling_mut::<CPdfDocument>();
         let mut result = unsafe { pdf_ast_parse(input.as_ptr(), input.len(), &mut document) };
 
         assert_eq!(result.error_code, CErrorCode::ParseError);
