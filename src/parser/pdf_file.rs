@@ -2162,9 +2162,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                         continue;
                     }
 
-                    if node_type == NodeType::Pages {
-                        self.validate_pages_node_fields(obj_id, pages_dict)?;
-                    }
+                    self.validate_page_tree_fields(obj_id, pages_dict, &node_type)?;
 
                     let is_page = node_type == NodeType::Page;
                     let mut node_value = pages_value.clone();
@@ -2271,23 +2269,38 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         Ok(())
     }
 
-    fn validate_pages_node_fields(
+    fn validate_page_tree_fields(
         &mut self,
         obj_id: ObjectId,
         pages_dict: &PdfDictionary,
+        node_type: &NodeType,
     ) -> AstResult<()> {
-        for (key, error_code, message) in [
-            (
-                "Kids",
-                "missing_page_tree_kids",
-                "Page tree /Pages node is missing required /Kids",
-            ),
-            (
-                "Count",
-                "missing_page_tree_count",
-                "Page tree /Pages node is missing required /Count",
-            ),
-        ] {
+        let required_fields = if *node_type == NodeType::Pages {
+            [
+                Some((
+                    "Kids",
+                    "missing_page_tree_kids",
+                    "Page tree /Pages node is missing required /Kids",
+                )),
+                Some((
+                    "Count",
+                    "missing_page_tree_count",
+                    "Page tree /Pages node is missing required /Count",
+                )),
+                None,
+            ]
+        } else {
+            [
+                Some((
+                    "Parent",
+                    "missing_page_parent",
+                    "Page tree /Page node is missing required /Parent",
+                )),
+                None,
+                None,
+            ]
+        };
+        for (key, error_code, message) in required_fields.into_iter().flatten() {
             if pages_dict.contains_key(key) {
                 continue;
             }
@@ -2299,6 +2312,24 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 None,
                 error_code,
                 "continued_with_missing_page_tree_field",
+                1.0,
+                0,
+                message,
+            )?;
+        }
+
+        if *node_type == NodeType::Page
+            && !matches!(pages_dict.get("Parent"), Some(PdfValue::Reference(_)))
+        {
+            let message = "Page tree /Page node /Parent must be an indirect reference";
+            if !self.tolerant {
+                return Err(AstError::ParseError(message.to_string()));
+            }
+            self.record_diagnostic(
+                Some(obj_id),
+                None,
+                "invalid_page_parent",
+                "continued_with_invalid_page_parent",
                 1.0,
                 0,
                 message,
