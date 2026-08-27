@@ -3,7 +3,7 @@ use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
 use crate::parser::reference_resolver::ObjectNodeMap;
 use crate::performance::ResourceBudget;
 use crate::types::{PdfArray, PdfDictionary, PdfValue};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 pub struct NameTreeParser<'a> {
     ast: &'a mut PdfAstGraph,
@@ -222,7 +222,7 @@ impl<'a> NameTreeParser<'a> {
 
     pub fn collect_all_names(&mut self, tree_node: &NameTreeNode) -> BTreeMap<String, NodeId> {
         let mut all_names = BTreeMap::new();
-        self.collect_names_recursive(tree_node, &mut all_names);
+        self.collect_names_recursive(tree_node, &mut all_names, &mut HashSet::new(), 0);
         all_names
     }
 
@@ -230,31 +230,46 @@ impl<'a> NameTreeParser<'a> {
         &mut self,
         tree_node: &NameTreeNode,
         all_names: &mut BTreeMap<String, NodeId>,
+        active: &mut HashSet<NodeId>,
+        depth: usize,
     ) {
         // Add direct names
         for (name, node_id) in &tree_node.names {
             all_names.insert(name.clone(), *node_id);
         }
 
-        // Recursively process kids
-        let kid_dicts: Vec<_> = tree_node
-            .kids
-            .iter()
-            .filter_map(|&kid_id| {
-                self.ast
-                    .get_node(kid_id)
-                    .and_then(|kid_node| kid_node.as_dict())
-                    .cloned()
-            })
-            .collect();
+        if depth >= self.budget.max_depth {
+            return;
+        }
 
-        for kid_dict in kid_dicts {
-            let kid_tree = self.parse_name_tree_node(&kid_dict);
-            self.collect_names_recursive(&kid_tree, all_names);
+        for kid_id in tree_node.kids.clone() {
+            if !active.insert(kid_id) {
+                continue;
+            }
+            if let Some(kid_dict) = self
+                .ast
+                .get_node(kid_id)
+                .and_then(|kid_node| kid_node.as_dict())
+                .cloned()
+            {
+                let kid_tree = self.parse_name_tree_node(&kid_dict);
+                self.collect_names_recursive(&kid_tree, all_names, active, depth + 1);
+            }
+            active.remove(&kid_id);
         }
     }
 
     pub fn find_name(&mut self, tree_node: &NameTreeNode, target: &str) -> Option<NodeId> {
+        self.find_name_recursive(tree_node, target, &mut HashSet::new(), 0)
+    }
+
+    fn find_name_recursive(
+        &mut self,
+        tree_node: &NameTreeNode,
+        target: &str,
+        active: &mut HashSet<NodeId>,
+        depth: usize,
+    ) -> Option<NodeId> {
         // Check limits first for early termination
         if let Some((min, max)) = &tree_node.limits {
             if target < min.as_str() || target > max.as_str() {
@@ -269,22 +284,26 @@ impl<'a> NameTreeParser<'a> {
             }
         }
 
-        // Binary search in kids based on limits
-        let kid_dicts: Vec<_> = tree_node
-            .kids
-            .iter()
-            .filter_map(|&kid_id| {
-                self.ast
-                    .get_node(kid_id)
-                    .and_then(|kid_node| kid_node.as_dict())
-                    .cloned()
-            })
-            .collect();
+        if depth >= self.budget.max_depth {
+            return None;
+        }
 
-        for kid_dict in kid_dicts {
-            let kid_tree = self.parse_name_tree_node(&kid_dict);
-            if let Some(result) = self.find_name(&kid_tree, target) {
-                return Some(result);
+        for kid_id in tree_node.kids.clone() {
+            if !active.insert(kid_id) {
+                continue;
+            }
+            let result = self
+                .ast
+                .get_node(kid_id)
+                .and_then(|kid_node| kid_node.as_dict())
+                .cloned()
+                .and_then(|kid_dict| {
+                    let kid_tree = self.parse_name_tree_node(&kid_dict);
+                    self.find_name_recursive(&kid_tree, target, active, depth + 1)
+                });
+            active.remove(&kid_id);
+            if result.is_some() {
+                return result;
             }
         }
 
@@ -420,6 +439,7 @@ impl<'a> NameTreeParser<'a> {
 mod tests {
     use super::*;
     use crate::ast::{AstNode, NodeId};
+    use crate::types::PdfReference;
 
     #[test]
     fn javascript_names_use_the_shared_decode_budget() {
@@ -442,6 +462,34 @@ mod tests {
         let mut parser = NameTreeParser::new_with_budget(&mut ast, &resolver, &budget);
 
         assert!(parser.parse_javascript_names(&tree).is_empty());
+    }
+
+    #[test]
+    fn name_tree_queries_terminate_on_cycles() {
+        let mut ast = PdfAstGraph::new();
+        let node_id = ast.add_node(AstNode::new(
+            NodeId(0),
+            NodeType::NameTree,
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert(
+                    "Kids",
+                    PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(1, 0))].into()),
+                );
+                dict
+            }),
+        ));
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(crate::types::ObjectId::new(1, 0), node_id);
+        let mut parser = NameTreeParser::new(&mut ast, &resolver);
+        let tree = NameTreeNode {
+            names: Vec::new(),
+            kids: vec![node_id],
+            limits: None,
+        };
+
+        assert!(parser.collect_all_names(&tree).is_empty());
+        assert_eq!(parser.find_name(&tree, "missing"), None);
     }
 }
 
