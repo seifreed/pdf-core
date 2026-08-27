@@ -2114,10 +2114,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         pages_ref: &PdfReference,
         parent_id: crate::ast::NodeId,
     ) -> AstResult<()> {
-        let mut stack = vec![(*pages_ref, parent_id, PdfDictionary::new())];
+        let mut stack = vec![(*pages_ref, parent_id, PdfDictionary::new(), true)];
         let mut visited = std::collections::HashSet::new();
 
-        while let Some((current_ref, current_parent, inherited_resources)) = stack.pop() {
+        while let Some((current_ref, current_parent, inherited_resources, is_root)) = stack.pop() {
             let obj_id = current_ref.id();
             if !visited.insert(obj_id) {
                 if !self.tolerant {
@@ -2175,6 +2175,26 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                         continue;
                     }
 
+                    if is_root && node_type != NodeType::Pages {
+                        let message = format!(
+                            "Catalog /Pages must resolve to a /Pages node, got {:?}",
+                            node_type
+                        );
+                        if !self.tolerant {
+                            return Err(AstError::ParseError(message));
+                        }
+                        self.record_diagnostic(
+                            Some(obj_id),
+                            None,
+                            "invalid_pages_root_type",
+                            "skipped_page_tree",
+                            1.0,
+                            0,
+                            &message,
+                        )?;
+                        continue;
+                    }
+
                     self.validate_page_tree_fields(obj_id, pages_dict, &node_type)?;
 
                     let is_page = node_type == NodeType::Page;
@@ -2209,6 +2229,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                                             *kid_ref,
                                             pages_id,
                                             effective_resources.clone(),
+                                            false,
                                         ));
                                     } else {
                                         let message = format!(

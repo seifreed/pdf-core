@@ -268,6 +268,26 @@ mod integration_tests {
     }
 
     #[test]
+    fn catalog_pages_root_must_be_a_pages_node() {
+        let pdf = create_pdf_with_page_as_catalog_pages_root();
+
+        let error = PdfParser::strict()
+            .parse_bytes(&pdf)
+            .expect_err("strict mode must reject a /Page as catalog /Pages root");
+        assert!(error
+            .to_string()
+            .contains("Catalog /Pages must resolve to a /Pages node"));
+
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant mode should retain a diagnostic");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "invalid_pages_root_type"));
+    }
+
+    #[test]
     fn invalid_catalog_pages_root_is_strict_error_or_tolerant_diagnostic() {
         let pdf = create_pdf_with_invalid_catalog_pages_root();
 
@@ -684,6 +704,30 @@ startxref
             b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
             b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".as_slice(),
             b"3 0 obj\n<< /Type /Page /MediaBox [0 0 10 10] >>\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 4\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_page_as_catalog_pages_root() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Page /Parent 3 0 R /MediaBox [0 0 10 10] >>\nendobj\n".as_slice(),
+            b"3 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n".as_slice(),
         ];
         let mut offsets = vec![0usize];
         for object in objects {
