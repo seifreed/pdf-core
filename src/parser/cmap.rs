@@ -640,7 +640,7 @@ impl<'a> CMapParser<'a> {
             RangeDest::Single(base) => {
                 // Calculate offset
                 let offset = self.bytes_to_u32(code)? - self.bytes_to_u32(start)?;
-                let unicode_value = self.bytes_to_u32(base)? + offset;
+                let unicode_value = self.bytes_to_u32(base)?.checked_add(offset)?;
 
                 // Convert to Unicode character
                 char::from_u32(unicode_value).map(|c| c.to_string())
@@ -745,6 +745,17 @@ mod tests {
         let cmap = parser.parse_cmap_data(data).expect("CMap should parse");
 
         assert_eq!(parser.decode_bytes(&cmap, b"\x01\x02"), "AB");
+    }
+
+    #[test]
+    fn rejects_bfrange_unicode_overflow() {
+        let data = b"/CMapName /Test def\n1 begincodespacerange\n<00000000> <00000001>\nendcodespacerange\n1 beginbfrange\n<00000000> <00000001> <FFFFFFFF>\nendbfrange";
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let parser = CMapParser::new(&mut ast, &resolver);
+        let cmap = parser.parse_cmap_data(data).expect("CMap should parse");
+
+        assert!(parser.map_code_to_unicode(&cmap, &[0, 0, 0, 1]).is_none());
     }
 
     #[test]
