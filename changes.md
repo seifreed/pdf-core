@@ -121,6 +121,8 @@ y Clippy estricto.
 `53f80fb` resuelve arrays indirectos `Nums`, `Kids` y `Limits` del `ParentTree`
 de estructura etiquetada; la regresion pasa `5/5` en la suite de estructura y
 Clippy estricto.
+`e426a22` hace que la extraccion de texto resuelva tambien el array indirecto
+`W` de anchos CID; la regresion de fuentes pasa `5/5` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
