@@ -136,6 +136,9 @@ estricto.
 regresion conjunta de estructura pasa `5/5` y Clippy estricto.
 `eef5f0d` recorre `K` cuando apunta indirectamente a arrays de hijos, incluidos
 arrays anidados; la suite de estructura pasa `6/6` y Clippy estricto.
+`22417e5` conserva tambien entradas `ClassMap` inline con arrays de clases,
+sin perderlas al materializar la estructura; la suite pasa `6/6` y Clippy
+estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
