@@ -1,4 +1,5 @@
 use crate::ast::{NodeId, NodeType, PdfAstGraph};
+use crate::performance::ResourceBudget;
 use crate::serialization::{edge_type_name, node_type_name};
 use crate::types::{
     ObjectId, PdfArray, PdfDictionary, PdfName, PdfReference, PdfStream, PdfString, PdfValue,
@@ -75,12 +76,18 @@ pub struct StableAstSchema {
 
 impl StableAstSchema {
     pub fn to_graph(&self) -> Result<PdfAstGraph, String> {
+        self.to_graph_with_budget(&ResourceBudget::default())
+    }
+
+    pub fn to_graph_with_budget(&self, budget: &ResourceBudget) -> Result<PdfAstGraph, String> {
+        budget.check().map_err(|error| error.to_string())?;
         let mut graph = PdfAstGraph::new();
         graph.set_deterministic_ids(false);
 
         let mut id_map: HashMap<String, NodeId> = HashMap::new();
 
         for node in &self.nodes {
+            budget.consume_node().map_err(|error| error.to_string())?;
             let node_type = parse_node_type(node)?;
             let value = stable_value_to_pdf(&node.value_type, &node.value)?;
             let node_id = graph.create_node(node_type, value);
@@ -88,6 +95,7 @@ impl StableAstSchema {
         }
 
         for edge in &self.edges {
+            budget.consume_edge().map_err(|error| error.to_string())?;
             let from = id_map
                 .get(&edge.source)
                 .ok_or_else(|| format!("Unknown edge source: {}", edge.source))?;
@@ -822,5 +830,29 @@ mod tests {
 
         assert_eq!(imported.node_count(), graph.node_count());
         assert!(imported.get_root().is_some());
+    }
+
+    #[test]
+    fn schema_graph_import_respects_node_budget() {
+        let schema = StableAstSchema {
+            version: SchemaVersion::current(),
+            document_metadata: HashMap::new(),
+            nodes: vec![StableNode {
+                id: "root".to_string(),
+                node_type: "Root".to_string(),
+                value_type: "null".to_string(),
+                value: Value::Null,
+                metadata: HashMap::new(),
+                object_id: None,
+            }],
+            edges: Vec::new(),
+            deterministic_ids: true,
+        };
+        let budget = crate::performance::ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 10);
+
+        let error = schema
+            .to_graph_with_budget(&budget)
+            .expect_err("schema graph import must respect node budget");
+        assert!(error.contains("Nodes"));
     }
 }
