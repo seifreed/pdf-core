@@ -1,7 +1,7 @@
 use crate::ast::document::{ParentTree, ParentTreeEntry, StructureTree};
 use crate::ast::{AstNode, EdgeType, NodeId, NodeType, PdfAstGraph};
 use crate::parser::reference_resolver::ObjectNodeMap;
-use crate::performance::ResourceBudget;
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::types::{ObjectId, PdfArray, PdfDictionary, PdfValue};
 use std::collections::{HashMap, HashSet};
 
@@ -473,7 +473,12 @@ impl<'a> StructTreeParser<'a> {
                 crate::parser::content_stream::ContentOperator::ShowText(text)
                     if current_mcid.is_some() =>
                 {
-                    mcid_content.push(String::from_utf8_lossy(text).to_string());
+                    let text = String::from_utf8_lossy(text);
+                    if self.budget.consume_object().is_ok()
+                        && self.budget.consume_decoded(text.len() as u64).is_ok()
+                    {
+                        mcid_content.push(text.into_owned());
+                    }
                 }
                 _ => {}
             }
@@ -570,6 +575,11 @@ impl<'a> StructTreeParser<'a> {
         // Store the actual text content associated with this MCID
         if let Some(struct_elem_id) = self.mcid_map.get(&(page_id, mcid)) {
             if let Some(node) = self.ast.get_node_mut(*struct_elem_id) {
+                let output_bytes = content.iter().map(String::len).sum::<usize>()
+                    + content.len().saturating_sub(1);
+                if self.budget.consume_decoded(output_bytes as u64).is_err() {
+                    return;
+                }
                 let text = content.join(" ");
                 node.metadata
                     .set_property(format!("mcid_{}_content", mcid), text);
@@ -583,22 +593,43 @@ impl<'a> StructTreeParser<'a> {
 
     pub fn get_text_for_structure(&self, struct_elem_id: NodeId) -> Vec<String> {
         let mut texts = Vec::new();
+        let _ = self.get_text_for_structure_into(struct_elem_id, &mut texts);
+        texts
+    }
 
+    pub fn get_text_for_structure_with_budget(
+        &self,
+        struct_elem_id: NodeId,
+    ) -> Result<Vec<String>, ResourceBudgetError> {
+        let mut texts = Vec::new();
+        self.get_text_for_structure_into(struct_elem_id, &mut texts)?;
+        Ok(texts)
+    }
+
+    fn get_text_for_structure_into(
+        &self,
+        struct_elem_id: NodeId,
+        texts: &mut Vec<String>,
+    ) -> Result<(), ResourceBudgetError> {
         if let Some(node) = self.ast.get_node(struct_elem_id) {
             // Collect all MCID content
             for (key, value) in &node.metadata.properties {
                 if key.starts_with("mcid_") && key.ends_with("_content") {
+                    self.budget.consume_object()?;
+                    self.budget.consume_decoded(value.len() as u64)?;
                     texts.push(value.clone());
                 }
             }
 
             // Check for ActualText
             if let Some(actual) = node.metadata.get_property("actual_text") {
+                self.budget.consume_object()?;
+                self.budget.consume_decoded(actual.len() as u64)?;
                 texts.push(actual.clone());
             }
         }
 
-        texts
+        Ok(())
     }
 }
 
@@ -655,5 +686,24 @@ mod tests {
             .parse_struct_tree_root(&root_dict)
             .expect("structure tree should parse");
         assert_eq!(ast.edge_count(), 1);
+    }
+
+    #[test]
+    fn struct_tree_text_query_reports_budget_exhaustion() {
+        let mut ast = PdfAstGraph::new();
+        let mut node = AstNode::new(NodeId(0), NodeType::Unknown, PdfValue::Null);
+        node.metadata
+            .set_property("actual_text".to_string(), "text".to_string());
+        ast.add_node(node);
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 0, 10, 10, 10);
+        let parser = StructTreeParser::new_with_budget(&mut ast, &resolver, &budget);
+
+        assert_eq!(
+            parser
+                .get_text_for_structure_with_budget(NodeId(0))
+                .expect_err("structure text must respect the object budget"),
+            ResourceBudgetError::Objects
+        );
     }
 }

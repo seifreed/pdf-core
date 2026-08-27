@@ -90,6 +90,8 @@ el presupuesto.
 La materializacion y el aplanado de outlines exponen tambien variantes con
 presupuesto que limitan objetos y bytes de salida, manteniendo las APIs legacy
 con resultados parciales.
+Las consultas de texto de `StructTreeParser` y el almacenamiento de contenido
+MCID cobran objetos y bytes antes de materializar resultados o metadatos.
 El parseo de cabeceras de object streams limita tambien el numero de entradas
 con el mismo presupuesto en sus rutas publicas e internas.
 El parser publico de imagenes inline tambien rechaza entradas que exceden el
