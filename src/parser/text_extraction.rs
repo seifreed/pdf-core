@@ -23,6 +23,7 @@ pub struct FontInfo {
     pub font_type: String,
     pub base_font: String,
     pub encoding: String,
+    pub differences: HashMap<u8, String>,
     pub to_unicode: Option<NodeId>,
     pub width_map: HashMap<u32, f64>,
     pub default_width: f64,
@@ -205,14 +206,18 @@ impl<'a> TextExtractor<'a> {
             .and_then(PdfValue::as_name)
             .map(|value| value.without_slash().to_string())
             .unwrap_or_else(|| name.to_string());
-        let encoding = match top_dict.get("Encoding") {
-            Some(PdfValue::Name(value)) => value.without_slash().to_string(),
-            Some(PdfValue::Dictionary(dict)) => dict
-                .get("BaseEncoding")
-                .and_then(PdfValue::as_name)
-                .map(|value| value.without_slash().to_string())
-                .unwrap_or_else(|| "StandardEncoding".to_string()),
-            _ => "StandardEncoding".to_string(),
+        let (encoding, differences) = match top_dict.get("Encoding") {
+            Some(PdfValue::Name(value)) => (value.without_slash().to_string(), HashMap::new()),
+            Some(value) => {
+                let dict = self.resolve_dict(value).unwrap_or_default();
+                let encoding = dict
+                    .get("BaseEncoding")
+                    .and_then(PdfValue::as_name)
+                    .map(|value| value.without_slash().to_string())
+                    .unwrap_or_else(|| "StandardEncoding".to_string());
+                (encoding, Self::parse_differences(dict.get("Differences")))
+            }
+            None => ("StandardEncoding".to_string(), HashMap::new()),
         };
 
         let mut width_map = HashMap::new();
@@ -254,6 +259,7 @@ impl<'a> TextExtractor<'a> {
             font_type,
             base_font,
             encoding,
+            differences,
             to_unicode,
             width_map,
             default_width,
@@ -332,6 +338,85 @@ impl<'a> TextExtractor<'a> {
         (numbers.len() == 6)
             .then(|| numbers.try_into().ok())
             .flatten()
+    }
+
+    fn parse_differences(value: Option<&PdfValue>) -> HashMap<u8, String> {
+        let Some(PdfValue::Array(values)) = value else {
+            return HashMap::new();
+        };
+        let mut code = None;
+        let mut differences = HashMap::new();
+        for value in values {
+            match value {
+                PdfValue::Integer(value) => code = u8::try_from(*value).ok(),
+                PdfValue::Name(name) => {
+                    if let Some(current_code) = code {
+                        if let Some(unicode) = Self::glyph_name_to_unicode(name.without_slash()) {
+                            differences.insert(current_code, unicode);
+                            code = current_code.checked_add(1);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        differences
+    }
+
+    fn glyph_name_to_unicode(name: &str) -> Option<String> {
+        let unicode = match name {
+            "space" => " ",
+            "nbspace" | "nonbreakingspace" => "\u{00a0}",
+            "exclam" => "!",
+            "quotedbl" => "\"",
+            "numbersign" => "#",
+            "dollar" => "$",
+            "percent" => "%",
+            "ampersand" => "&",
+            "quotesingle" => "'",
+            "parenleft" => "(",
+            "parenright" => ")",
+            "asterisk" => "*",
+            "plus" => "+",
+            "comma" => ",",
+            "hyphen" => "-",
+            "period" => ".",
+            "slash" => "/",
+            "colon" => ":",
+            "semicolon" => ";",
+            "less" => "<",
+            "equal" => "=",
+            "greater" => ">",
+            "question" => "?",
+            "at" => "@",
+            "bracketleft" => "[",
+            "backslash" => "\\",
+            "bracketright" => "]",
+            "asciicircum" => "^",
+            "underscore" => "_",
+            "grave" => "`",
+            "braceleft" => "{",
+            "bar" => "|",
+            "braceright" => "}",
+            "asciitilde" => "~",
+            "Euro" => "€",
+            "bullet" => "•",
+            "endash" => "–",
+            "emdash" => "—",
+            "Aacute" => "Á",
+            "aacute" => "á",
+            "Adieresis" => "Ä",
+            "adieresis" => "ä",
+            "Ntilde" => "Ñ",
+            "ntilde" => "ñ",
+            "Oslash" => "Ø",
+            "oslash" => "ø",
+            "fi" => "ﬁ",
+            "fl" => "ﬂ",
+            _ if name.chars().count() == 1 && name.is_ascii() => name,
+            _ => return None,
+        };
+        Some(unicode.to_string())
     }
 
     fn process_operator_with_budget(
@@ -537,18 +622,18 @@ impl<'a> TextExtractor<'a> {
 
         // Fallback to encoding
         budget.consume_input(text_bytes.len() as u64)?;
-        let decoded = match font.encoding.as_str() {
-            "WinAnsiEncoding" => self.decode_win_ansi(text_bytes),
-            "MacRomanEncoding" => self.decode_mac_roman(text_bytes),
-            "StandardEncoding" => {
-                // Simple ASCII decoding
-                String::from_utf8_lossy(text_bytes).to_string()
-            }
-            _ => {
-                // Default fallback encoding
-                String::from_utf8_lossy(text_bytes).to_string()
-            }
-        };
+        let decoded = text_bytes
+            .iter()
+            .map(|byte| {
+                font.differences.get(byte).cloned().unwrap_or_else(|| {
+                    match font.encoding.as_str() {
+                        "WinAnsiEncoding" => self.decode_win_ansi_byte(*byte).to_string(),
+                        "MacRomanEncoding" => self.decode_mac_roman_byte(*byte).to_string(),
+                        _ => (*byte as char).to_string(),
+                    }
+                })
+            })
+            .collect::<String>();
         budget.consume_decoded(decoded.len() as u64)?;
         Ok(decoded)
     }
@@ -565,66 +650,53 @@ impl<'a> TextExtractor<'a> {
             .decode_bytes_with_budget(cmap, text_bytes, budget)
     }
 
-    fn decode_win_ansi(&self, text_bytes: &[u8]) -> String {
-        text_bytes
-            .iter()
-            .map(|&b| {
-                if b < 128 {
-                    b as char
-                } else {
-                    // Windows-1252 mapping for 128-255
-                    match b {
-                        0x80 => '€',
-                        0x82 => '‚',
-                        0x83 => 'ƒ',
-                        0x84 => '„',
-                        0x85 => '…',
-                        0x86 => '†',
-                        0x87 => '‡',
-                        0x88 => 'ˆ',
-                        0x89 => '‰',
-                        0x8A => 'Š',
-                        0x8B => '‹',
-                        0x8C => 'Œ',
-                        0x8E => 'Ž',
-                        0x91 => '\'',
-                        0x92 => '\'',
-                        0x93 => '"',
-                        0x94 => '"',
-                        0x95 => '•',
-                        0x96 => '–',
-                        0x97 => '—',
-                        0x98 => '˜',
-                        0x99 => '™',
-                        0x9A => 'š',
-                        0x9B => '›',
-                        0x9C => 'œ',
-                        0x9E => 'ž',
-                        0x9F => 'Ÿ',
-                        _ => b as char,
-                    }
-                }
-            })
-            .collect()
+    fn decode_win_ansi_byte(&self, byte: u8) -> char {
+        if byte < 128 {
+            return byte as char;
+        }
+        match byte {
+            0x80 => '€',
+            0x82 => '‚',
+            0x83 => 'ƒ',
+            0x84 => '„',
+            0x85 => '…',
+            0x86 => '†',
+            0x87 => '‡',
+            0x88 => 'ˆ',
+            0x89 => '‰',
+            0x8A => 'Š',
+            0x8B => '‹',
+            0x8C => 'Œ',
+            0x8E => 'Ž',
+            0x91 => '\'',
+            0x92 => '\'',
+            0x93 => '"',
+            0x94 => '"',
+            0x95 => '•',
+            0x96 => '–',
+            0x97 => '—',
+            0x98 => '˜',
+            0x99 => '™',
+            0x9A => 'š',
+            0x9B => '›',
+            0x9C => 'œ',
+            0x9E => 'ž',
+            0x9F => 'Ÿ',
+            _ => byte as char,
+        }
     }
 
-    fn decode_mac_roman(&self, text_bytes: &[u8]) -> String {
+    fn decode_mac_roman_byte(&self, byte: u8) -> char {
         const MAC_ROMAN_HIGH: &str =
             "ÄÅÇÉÑÖÜáàâäãåçéèêëíìîïñóòôöõúùûü†°¢£§•¶ß®©™´¨≠ÆØ∞±≤≥¥µ∂∑∏π∫ªºΩæø¿¡¬√ƒ≈∆«»…\u{00a0}ÀÃÕŒœ–—“”‘’÷◊ÿŸ⁄€‹›ﬁﬂ‡·‚„‰ÂÊÁËÈÍÎÏÌÓÔ\u{f8ff}ÒÚÛÙıˆ˜¯˘˙˚¸˝˛ˇ";
-
-        text_bytes
-            .iter()
-            .map(|byte| {
-                if *byte < 0x80 {
-                    *byte as char
-                } else {
-                    MAC_ROMAN_HIGH
-                        .chars()
-                        .nth(usize::from(*byte - 0x80))
-                        .unwrap_or('\u{fffd}')
-                }
-            })
-            .collect()
+        if byte < 0x80 {
+            byte as char
+        } else {
+            MAC_ROMAN_HIGH
+                .chars()
+                .nth(usize::from(byte - 0x80))
+                .unwrap_or('\u{fffd}')
+        }
     }
 
     fn get_char_width(&self, ch: char, font: &FontInfo) -> f64 {
@@ -853,6 +925,45 @@ mod tests {
         let resources = PdfDictionary::new();
         let extractor = TextExtractor::new(&ast, &resources);
 
-        assert_eq!(extractor.decode_mac_roman(&[0x8e, 0xdb, 0xff]), "é€ˇ");
+        let decoded: String = [0x8e, 0xdb, 0xff]
+            .iter()
+            .map(|byte| extractor.decode_mac_roman_byte(*byte))
+            .collect();
+        assert_eq!(decoded, "é€ˇ");
+    }
+
+    #[test]
+    fn applies_simple_font_encoding_differences() {
+        let ast = PdfAstGraph::new();
+        let mut encoding = PdfDictionary::new();
+        encoding.insert(
+            "BaseEncoding",
+            PdfValue::Name(PdfName::new("WinAnsiEncoding")),
+        );
+        encoding.insert(
+            "Differences",
+            PdfValue::Array(PdfArray::from(vec![
+                PdfValue::Integer(65),
+                PdfValue::Name(PdfName::new("Euro")),
+                PdfValue::Name(PdfName::new("Aacute")),
+            ])),
+        );
+        let mut font = PdfDictionary::new();
+        font.insert("Subtype", PdfValue::Name(PdfName::new("Type1")));
+        font.insert("Encoding", PdfValue::Dictionary(encoding));
+
+        let mut fonts = PdfDictionary::new();
+        fonts.insert("F1", PdfValue::Dictionary(font));
+        let mut resources = PdfDictionary::new();
+        resources.insert("Font", PdfValue::Dictionary(fonts));
+        let operators = [
+            ContentOperator::BeginText,
+            ContentOperator::SetFont("/F1".to_string(), 10.0),
+            ContentOperator::ShowText(vec![65, 66]),
+            ContentOperator::EndText,
+        ];
+
+        let spans = TextExtractor::new(&ast, &resources).extract_text(&operators);
+        assert_eq!(spans[0].text, "€Á");
     }
 }
