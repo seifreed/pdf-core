@@ -27,8 +27,11 @@ Avance local adicional: el parser `Strict` rechaza tokens no consumidos en
 recorridos aunque el grafo tenga ciclos; y los helpers publicos legacy de
 `PageTreeParser` y `OutputIntentsParser` usan el mismo `ResourceBudget` para
 decodificar perfiles ICC. `StructTreeParser` y `OutlineParser` tambien limitan
-profundidad y ciclos durante la construccion y la consulta de sus arboles.
-Cada punto tiene regresion y pasa Clippy estricto.
+profundidad y ciclos durante la construccion y la consulta de sus arboles, y
+presupuestan sus aristas. La resolucion de `/Length` indirecto conserva ahora
+el diccionario declarado y todos los bytes observados, registrando la longitud
+resuelta como metadato separado. Cada punto tiene regresion y pasa Clippy
+estricto.
 
 Pendientes actuales, en orden practico:
 
