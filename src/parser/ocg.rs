@@ -212,13 +212,21 @@ impl<'a> OCGParser<'a> {
     }
 
     fn parse_order_item(&mut self, value: &PdfValue) -> Option<OCOrderItem> {
+        self.parse_order_item_at_depth(value, 0)
+    }
+
+    fn parse_order_item_at_depth(&mut self, value: &PdfValue, depth: usize) -> Option<OCOrderItem> {
+        if depth >= self.budget.max_depth {
+            return None;
+        }
+
         match value {
             PdfValue::Reference(_) => self.resolve_reference(value).map(OCOrderItem::Group),
             PdfValue::String(s) => Some(OCOrderItem::Label(s.to_string_lossy())),
             PdfValue::Array(arr) => {
                 let mut items = Vec::new();
                 for sub_item in arr {
-                    if let Some(item) = self.parse_order_item(sub_item) {
+                    if let Some(item) = self.parse_order_item_at_depth(sub_item, depth + 1) {
                         items.push(item);
                     }
                 }
@@ -505,6 +513,20 @@ mod tests {
         let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 10, 10, 2);
         let mut parser = OCGParser::new_with_budget(&mut ast, &resolver, &budget);
         let node_id = parser.parse_ocmd(&ocmd).expect("OCMD should be parsed");
+
+        let mut order = PdfValue::String("label".into());
+        for _ in 0..4 {
+            order = PdfValue::Array(vec![order].into());
+        }
+        let item = parser.parse_order_item(&order).expect("order should parse");
+        let mut nesting = 0;
+        let mut current = &item;
+        while let OCOrderItem::Array(items) = current {
+            nesting += 1;
+            let Some(first) = items.first() else { break };
+            current = first;
+        }
+        assert_eq!(nesting, 2);
         drop(parser);
 
         let expression = ast
