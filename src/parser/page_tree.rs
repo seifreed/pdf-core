@@ -4,13 +4,14 @@ use crate::metadata::icc::parse_icc_profile;
 use crate::parser::reference_resolver::ObjectNodeMap;
 use crate::performance::ResourceBudget;
 use crate::types::{PdfDictionary, PdfValue};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct PageTreeParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
     resources_cache: HashMap<NodeId, PdfDictionary>,
     budget: ResourceBudget,
+    visited: HashSet<NodeId>,
 }
 
 impl<'a> PageTreeParser<'a> {
@@ -28,6 +29,7 @@ impl<'a> PageTreeParser<'a> {
             resolver,
             resources_cache: HashMap::new(),
             budget: budget.clone(),
+            visited: HashSet::new(),
         }
     }
 
@@ -36,7 +38,19 @@ impl<'a> PageTreeParser<'a> {
         pages_dict: &PdfDictionary,
         parent_id: NodeId,
     ) -> Vec<NodeId> {
+        self.parse_page_tree_at_depth(pages_dict, parent_id, 0)
+    }
+
+    fn parse_page_tree_at_depth(
+        &mut self,
+        pages_dict: &PdfDictionary,
+        parent_id: NodeId,
+        depth: usize,
+    ) -> Vec<NodeId> {
         let mut page_nodes = Vec::new();
+        if depth >= self.budget.max_depth {
+            return page_nodes;
+        }
 
         // Get parent resources for inheritance
         let parent_resources = self.extract_resources(pages_dict);
@@ -44,8 +58,14 @@ impl<'a> PageTreeParser<'a> {
         // Process Kids array
         if let Some(PdfValue::Array(kids)) = pages_dict.get("Kids") {
             for kid_ref in kids.iter() {
+                if self.budget.check().is_err() {
+                    break;
+                }
                 if let PdfValue::Reference(obj_id) = kid_ref {
                     if let Some(kid_node_id) = self.resolver.get_node_id(&obj_id.id()) {
+                        if !self.visited.insert(kid_node_id) {
+                            continue;
+                        }
                         if let Some(kid_node) = self.ast.get_node(kid_node_id) {
                             if let Some(kid_dict) = kid_node.as_dict() {
                                 let kid_dict = kid_dict.clone();
@@ -61,8 +81,11 @@ impl<'a> PageTreeParser<'a> {
                                         );
                                         self.resources_cache.insert(kid_node_id, child_resources);
 
-                                        let child_pages =
-                                            self.parse_page_tree(&kid_dict, kid_node_id);
+                                        let child_pages = self.parse_page_tree_at_depth(
+                                            &kid_dict,
+                                            kid_node_id,
+                                            depth + 1,
+                                        );
                                         page_nodes.extend(child_pages);
 
                                         // Link pages node to parent
@@ -553,5 +576,37 @@ impl<'a> PageTreeParser<'a> {
         }
 
         resources
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::AstNode;
+    use crate::types::{ObjectId, PdfReference};
+
+    #[test]
+    fn page_tree_parser_terminates_on_cycles() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.add_node(AstNode::new(NodeId(0), NodeType::Catalog, PdfValue::Null));
+        let mut pages_dict = PdfDictionary::new();
+        pages_dict.insert(
+            "Type",
+            PdfValue::Name(crate::types::primitive::PdfName::new("Pages")),
+        );
+        pages_dict.insert(
+            "Kids",
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(1, 0))].into()),
+        );
+        let pages_id = ast.add_node(AstNode::new(
+            NodeId(1),
+            NodeType::Pages,
+            PdfValue::Dictionary(pages_dict.clone()),
+        ));
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), pages_id);
+        let mut parser = PageTreeParser::new(&mut ast, &resolver);
+
+        assert!(parser.parse_page_tree(&pages_dict, root_id).is_empty());
     }
 }
