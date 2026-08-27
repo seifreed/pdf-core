@@ -87,6 +87,10 @@ de veraPDF pasa `1/1` con el corpus local.
 casos tienen regresiones serializadas y mantienen Clippy estricto en verde.
 `a15f5f0` valida que `/Count` sea un entero no negativo, incluso cuando el
 valor es indirecto, con regresion strict/tolerante.
+`4e12ad5` conecta `OutputIntentsParser` al flujo principal despues de resolver
+referencias, y `deb999a` valida en PDF/A-1b que el array no este vacio y que
+cada salida declare `GTS_PDFA1`, identificador y perfil ICC resoluble. La
+regresion combinada de integracion y validacion pasa `51/51` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
