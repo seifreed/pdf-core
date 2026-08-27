@@ -74,10 +74,21 @@ jobs:
           PDF_EXTERNAL_CORPUS: ${{ runner.temp }}/verapdf-corpus
           PDF_VERAPDF_CORPUS: ${{ runner.temp }}/verapdf-corpus/verapdf-pdfa-1b
           PDF_EXTERNAL_MAX_FILES: "3000"
-        run: cargo test --test external_corpus_tests --locked -- --test-threads=1
+        run: |
+          set -o pipefail
+          cargo test --test external_corpus_tests --locked -- --test-threads=1 --nocapture \
+            2>&1 | tee "$RUNNER_TEMP/external-corpus.log"
 
       - name: Run veraPDF comparison
         env:
           PDF_VERAPDF_CORPUS: ${{ runner.temp }}/verapdf-corpus/verapdf-pdfa-1b
           PDF_EXTERNAL_MAX_FILES: "3000"
         run: cargo test --test verapdf_tests --locked -- --test-threads=1
+
+      - name: Upload corpus evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: external-corpus-evidence
+          path: ${{ runner.temp }}/external-corpus.log
+          if-no-files-found: error
