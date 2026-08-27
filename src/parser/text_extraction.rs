@@ -700,8 +700,27 @@ impl<'a> TextExtractor<'a> {
     }
 
     fn get_char_width(&self, ch: char, font: &FontInfo) -> f64 {
-        // Get width from font metrics
-        let code = ch as u32;
+        let code = font
+            .width_map
+            .contains_key(&(ch as u32))
+            .then_some(ch as u32)
+            .or_else(|| {
+                font.differences.iter().find_map(|(code, unicode)| {
+                    (unicode.chars().count() == 1 && unicode.starts_with(ch))
+                        .then_some(u32::from(*code))
+                })
+            })
+            .or_else(|| {
+                (0..=u8::MAX).find_map(|code| {
+                    let decoded = match font.encoding.as_str() {
+                        "WinAnsiEncoding" => self.decode_win_ansi_byte(code),
+                        "MacRomanEncoding" => self.decode_mac_roman_byte(code),
+                        _ => code as char,
+                    };
+                    (decoded == ch).then_some(u32::from(code))
+                })
+            })
+            .unwrap_or(ch as u32);
         font.width_map
             .get(&code)
             .copied()
@@ -965,5 +984,32 @@ mod tests {
 
         let spans = TextExtractor::new(&ast, &resources).extract_text(&operators);
         assert_eq!(spans[0].text, "€Á");
+    }
+
+    #[test]
+    fn uses_pdf_width_for_encoded_byte_not_unicode_codepoint() {
+        let ast = PdfAstGraph::new();
+        let mut font = PdfDictionary::new();
+        font.insert("Subtype", PdfValue::Name(PdfName::new("Type1")));
+        font.insert("Encoding", PdfValue::Name(PdfName::new("WinAnsiEncoding")));
+        font.insert("FirstChar", PdfValue::Integer(128));
+        font.insert(
+            "Widths",
+            PdfValue::Array(PdfArray::from(vec![PdfValue::Integer(700)])),
+        );
+        let mut fonts = PdfDictionary::new();
+        fonts.insert("F1", PdfValue::Dictionary(font));
+        let mut resources = PdfDictionary::new();
+        resources.insert("Font", PdfValue::Dictionary(fonts));
+        let operators = [
+            ContentOperator::BeginText,
+            ContentOperator::SetFont("/F1".to_string(), 10.0),
+            ContentOperator::ShowText(vec![0x80]),
+            ContentOperator::EndText,
+        ];
+
+        let spans = TextExtractor::new(&ast, &resources).extract_text(&operators);
+        assert_eq!(spans[0].text, "€");
+        assert!((spans[0].width - 7.0).abs() < 1e-9);
     }
 }
