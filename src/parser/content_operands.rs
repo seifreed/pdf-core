@@ -140,6 +140,67 @@ pub fn parse_content_stream_with_offsets_with_budget(
     Ok(operators)
 }
 
+pub fn parse_content_stream_strict_with_budget(
+    input: &[u8],
+    budget: &ResourceBudget,
+) -> Result<Vec<ContentOperator>, String> {
+    parse_content_stream_with_offsets_strict_with_budget(input, budget).map(|operators| {
+        operators
+            .into_iter()
+            .map(|operator| operator.operator)
+            .collect()
+    })
+}
+
+pub fn parse_content_stream_with_offsets_strict_with_budget(
+    input: &[u8],
+    budget: &ResourceBudget,
+) -> Result<Vec<ContentOperatorWithOffset>, String> {
+    budget
+        .consume_input(input.len() as u64)
+        .map_err(|error| error.to_string())?;
+    let mut operators = Vec::new();
+    let mut operand_stack: Vec<Operand> = Vec::new();
+    let mut remaining = input;
+    let base_len = input.len();
+
+    while !remaining.is_empty() {
+        let (rest, _) = multispace0::<_, nom::error::Error<_>>(remaining)
+            .map_err(|error| format!("Invalid content stream whitespace: {error:?}"))?;
+        remaining = rest;
+        if remaining.is_empty() {
+            break;
+        }
+
+        if let Ok((rest, operand)) = parse_operand(remaining) {
+            operand_stack.push(operand);
+            remaining = rest;
+            continue;
+        }
+
+        if let Ok((rest, operator)) = parse_operator_with_operands(remaining, &mut operand_stack) {
+            budget.consume_node().map_err(|error| error.to_string())?;
+            let offset = base_len.saturating_sub(remaining.len());
+            operators.push(ContentOperatorWithOffset { operator, offset });
+            remaining = rest;
+            continue;
+        }
+
+        let preview_len = remaining.len().min(16);
+        return Err(format!(
+            "Invalid content stream token at offset {}: {:?}",
+            base_len.saturating_sub(remaining.len()),
+            &remaining[..preview_len]
+        ));
+    }
+
+    if !operand_stack.is_empty() {
+        return Err("Content stream ended with unconsumed operands".to_string());
+    }
+
+    Ok(operators)
+}
+
 /// Parse a single operand
 fn parse_operand(input: &[u8]) -> IResult<&[u8], Operand> {
     alt((
@@ -1014,12 +1075,20 @@ fn pdf_value_to_content_operand(
 
 #[cfg(test)]
 mod tests {
-    use super::parse_inline_image_with_budget;
+    use super::{parse_content_stream_strict_with_budget, parse_inline_image_with_budget};
     use crate::performance::ResourceBudget;
 
     #[test]
     fn inline_image_parser_respects_input_budget() {
         let budget = ResourceBudget::new(3, 1024, 1024, 10, 10, 10, 10, 8);
         assert!(parse_inline_image_with_budget(b"BI ID x EI", &budget).is_err());
+    }
+
+    #[test]
+    fn strict_content_parser_rejects_residual_tokens() {
+        let budget = ResourceBudget::default();
+        assert!(parse_content_stream_strict_with_budget(b"1 0 m", &budget).is_ok());
+        assert!(parse_content_stream_strict_with_budget(b"1", &budget).is_err());
+        assert!(parse_content_stream_strict_with_budget(b"q @", &budget).is_err());
     }
 }

@@ -1169,10 +1169,19 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                     continue;
                 };
 
-                let indexed = match content_operands::parse_content_stream_with_offsets_with_budget(
-                    &stream_data,
-                    &self.limits.budget,
-                ) {
+                let indexed_result = if self.tolerant {
+                    content_operands::parse_content_stream_with_offsets_with_budget(
+                        &stream_data,
+                        &self.limits.budget,
+                    )
+                    .map_err(|error| error.to_string())
+                } else {
+                    content_operands::parse_content_stream_with_offsets_strict_with_budget(
+                        &stream_data,
+                        &self.limits.budget,
+                    )
+                };
+                let indexed = match indexed_result {
                     Ok(indexed) => indexed,
                     Err(error) => {
                         let message = format!("Failed to parse content stream: {}", error);

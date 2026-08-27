@@ -178,6 +178,15 @@ impl ContentStreamParser {
         self.operators = operators.clone();
         Ok(operators)
     }
+
+    pub fn parse_strict(&mut self, data: &[u8]) -> Result<Vec<ContentOperator>, String> {
+        let operators = crate::parser::content_operands::parse_content_stream_strict_with_budget(
+            data,
+            &self.budget,
+        )?;
+        self.operators = operators.clone();
+        Ok(operators)
+    }
 }
 
 #[cfg(test)]
@@ -198,5 +207,11 @@ mod tests {
         let mut parser = ContentStreamParser::new_with_budget(&budget);
 
         assert!(parser.parse(b"1 0 m").is_err());
+    }
+
+    #[test]
+    fn strict_content_stream_parser_rejects_residual_tokens() {
+        let mut parser = ContentStreamParser::new();
+        assert!(parser.parse_strict(b"q @").is_err());
     }
 }
