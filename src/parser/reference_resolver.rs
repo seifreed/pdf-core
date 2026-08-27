@@ -964,22 +964,16 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             }
         }
 
-        // Apply the resolved lengths
+        // Keep the declared /Length and raw bytes intact; record the resolved value separately.
         for (node_id, length) in updates {
             if let Some(node) = ast.get_node_mut(node_id) {
                 if let PdfValue::Stream(ref mut stream) = node.value {
-                    // Update the Length entry
-                    stream
-                        .dict
-                        .insert("Length", PdfValue::Integer(length as i64));
-
-                    // If we have raw data, validate/truncate to correct length
-                    if let StreamData::Raw(ref mut data) = stream.data {
-                        if data.len() > length {
-                            data.truncate(length);
-                            debug!("Truncated stream data to resolved length {}", length);
-                        }
-                    }
+                    node.metadata
+                        .properties
+                        .insert("resolved_length".to_string(), length.to_string());
+                    node.metadata
+                        .properties
+                        .insert("observed_length".to_string(), stream.data.len().to_string());
                 }
             }
         }
@@ -1522,6 +1516,46 @@ mod tests {
 
         let error = resolver.resolve_stream_lengths(&mut ast).unwrap_err();
         assert!(error.contains("non-negative"));
+    }
+
+    #[test]
+    fn resolves_indirect_length_without_mutating_lossless_stream_state() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(b"2 0 obj\n3\nendobj\n".to_vec()),
+            &document,
+            true,
+            crate::performance::PerformanceLimits::default(),
+        );
+        resolver.xref_table.insert(ObjectId::new(2, 0), 0);
+
+        let mut dict = PdfDictionary::new();
+        let length_ref = PdfReference::new(2, 0);
+        dict.insert("Length", PdfValue::Reference(length_ref));
+        let mut ast = PdfAstGraph::new();
+        let node_id = ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream(crate::types::PdfStream::new(dict, b"abcd".to_vec())),
+        );
+
+        resolver
+            .resolve_stream_lengths(&mut ast)
+            .expect("indirect length should resolve");
+        let node = ast.get_node(node_id).expect("stream node");
+        let stream = node.value.as_stream().expect("stream value");
+        assert_eq!(
+            stream.dict.get("Length"),
+            Some(&PdfValue::Reference(length_ref))
+        );
+        assert_eq!(stream.raw_data(), Some(b"abcd".as_slice()));
+        assert_eq!(
+            node.metadata.properties.get("resolved_length"),
+            Some(&"3".to_string())
+        );
+        assert_eq!(
+            node.metadata.properties.get("observed_length"),
+            Some(&"4".to_string())
+        );
     }
 
     #[test]
