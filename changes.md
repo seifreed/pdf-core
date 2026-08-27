@@ -83,6 +83,10 @@ defecto.
 `LazyStream::load_with_budget` y `to_stream_with_budget` cobran lecturas,
 clones, buffers padres de object streams y datos cacheados antes de
 materializarlos.
+Las consultas publicas de `NameTreeParser` exponen variantes con presupuesto
+para recopilar nombres, buscar entradas, extraer JavaScript y describir
+archivos embebidos; las APIs legacy conservan resultados parciales al agotar
+el presupuesto.
 El parseo de cabeceras de object streams limita tambien el numero de entradas
 con el mismo presupuesto en sus rutas publicas e internas.
 El parser publico de imagenes inline tambien rechaza entradas que exceden el
