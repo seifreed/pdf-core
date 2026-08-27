@@ -284,7 +284,7 @@ impl<'a> CMapParser<'a> {
             }
             // Code space ranges
             else if line.contains("begincodespacerange") {
-                let count = self.extract_count(line).unwrap_or(0);
+                let count = self.extract_count(line)?;
                 i += 1;
                 for _ in 0..count {
                     self.budget.consume_node().ok()?;
@@ -300,7 +300,7 @@ impl<'a> CMapParser<'a> {
             }
             // Character mappings
             else if line.contains("beginbfchar") {
-                let count = self.extract_count(line).unwrap_or(0);
+                let count = self.extract_count(line)?;
                 i += 1;
                 for _ in 0..count {
                     self.budget.consume_node().ok()?;
@@ -316,7 +316,7 @@ impl<'a> CMapParser<'a> {
             }
             // Range mappings
             else if line.contains("beginbfrange") {
-                let count = self.extract_count(line).unwrap_or(0);
+                let count = self.extract_count(line)?;
                 i += 1;
                 for _ in 0..count {
                     self.budget.consume_node().ok()?;
@@ -332,7 +332,7 @@ impl<'a> CMapParser<'a> {
             }
             // CID character mappings
             else if line.contains("begincidchar") {
-                let count = self.extract_count(line).unwrap_or(0);
+                let count = self.extract_count(line)?;
                 i += 1;
                 for _ in 0..count {
                     self.budget.consume_node().ok()?;
@@ -348,7 +348,7 @@ impl<'a> CMapParser<'a> {
             }
             // CID range mappings
             else if line.contains("begincidrange") {
-                let count = self.extract_count(line).unwrap_or(0);
+                let count = self.extract_count(line)?;
                 i += 1;
                 for _ in 0..count {
                     self.budget.consume_node().ok()?;
@@ -790,6 +790,17 @@ mod tests {
 
         assert!(parser
             .parse_cmap_data(b"begincmap\n\xff\nendcmap")
+            .is_none());
+    }
+
+    #[test]
+    fn rejects_cmap_mapping_with_invalid_count() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let parser = CMapParser::new(&mut ast, &resolver);
+
+        assert!(parser
+            .parse_cmap_data(b"begincmap\ninvalid beginbfchar\nendcmap")
             .is_none());
     }
 
