@@ -115,6 +115,9 @@ espacios; la suite PDF/UA pasa `25/25` y Clippy estricto.
 `d122cb4` propaga los errores de entradas CMap malformadas y rechaza bloques
 truncados cuyo contador declara mas lineas; la suite focalizada pasa `12/12`
 y Clippy estricto.
+`1005b2e` hace que `StructTreeParser` materialice `Lang`, `Alt` y
+`ActualText` cuando sus valores son referencias indirectas; la regresion pasa
+`4/4` en la suite de estructura y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
