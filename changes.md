@@ -130,6 +130,8 @@ temporal.
 Las reservas del parser incremental se limitan al presupuesto de entrada
 restante antes de asignar buffers; una configuración `chunk_size = 0` se
 normaliza para mantener progreso y el agotamiento del presupuesto se propaga.
+El workflow de release verifica el tag firmado también antes de construir
+bindings y attesta los binarios, paquetes, SBOM y checksums generados.
 
 Pendientes actuales, en orden practico:
 
