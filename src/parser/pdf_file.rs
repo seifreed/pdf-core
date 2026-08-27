@@ -478,7 +478,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         }
         self.limits
             .budget
-            .consume_decoded(remaining)
+            .consume_memory(remaining)
             .map_err(|error| AstError::ParseError(error.to_string()))?;
 
         self.reader.seek(SeekFrom::Start(offset))?;
@@ -896,8 +896,18 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn read_recovery_buffer(&mut self, start: u64, end: u64) -> AstResult<Vec<u8>> {
+        let size = end.saturating_sub(start);
+        self.limits
+            .budget
+            .consume_memory(size)
+            .map_err(|error| AstError::ParseError(error.to_string()))?;
         self.reader.seek(SeekFrom::Start(start))?;
-        let mut buffer = vec![0u8; (end - start) as usize];
+        let mut buffer = vec![
+            0u8;
+            usize::try_from(size).map_err(|_| {
+                AstError::ParseError("Recovery buffer size does not fit in usize".to_string())
+            })?
+        ];
         let n = self.reader.read(&mut buffer)?;
         buffer.truncate(n);
         Ok(buffer)
