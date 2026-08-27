@@ -43,6 +43,8 @@ Las APIs publicas de `PdfParser` para valores, objetos y secuencias tambien
 consumen la entrada del presupuesto antes de analizarla, con regresion.
 El parseo de cabeceras de object streams limita tambien el numero de entradas
 con el mismo presupuesto en sus rutas publicas e internas.
+El parser publico de imagenes inline tambien rechaza entradas que exceden el
+presupuesto antes de clonar los datos.
 
 Pendientes actuales, en orden practico:
 
