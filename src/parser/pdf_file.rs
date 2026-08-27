@@ -2600,7 +2600,17 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             self.limits.max_depth,
             &self.limits.budget,
         ) {
-            Ok((_, value)) => Ok(value),
+            Ok((remaining, value)) => {
+                let remaining = crate::parser::lexer::skip_whitespace_and_comments(remaining)
+                    .map(|(remaining, _)| remaining)
+                    .unwrap_or(remaining);
+                if !self.tolerant && !remaining.is_empty() {
+                    return Err(AstError::ParseError(
+                        "Residual bytes after compressed object".to_string(),
+                    ));
+                }
+                Ok(value)
+            }
             Err(err) if self.tolerant => {
                 log::warn!("Failed to parse compressed object: {:?}", err);
                 Ok(PdfValue::Null)
@@ -3520,5 +3530,41 @@ mod tests {
             .parse_form_field_value(&value, root, 0)
             .expect_err("strict form parsing must reject excessive depth");
         assert!(error.to_string().contains("Maximum form field depth"));
+    }
+
+    #[test]
+    fn strict_object_stream_objects_reject_residual_bytes() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut dict = PdfDictionary::new();
+        dict.insert("N", PdfValue::Integer(1));
+        dict.insert("First", PdfValue::Integer(4));
+        let data = b"1 0 42 trailing";
+
+        let strict = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("strict parser should initialize");
+        assert!(strict
+            .parse_object_from_stream(data, 0, &dict)
+            .expect_err("strict object streams must reject residual bytes")
+            .to_string()
+            .contains("Residual bytes"));
+
+        let tolerant = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Tolerant,
+            10,
+            PerformanceLimits::default(),
+        )
+        .expect("tolerant parser should initialize");
+        assert_eq!(
+            tolerant
+                .parse_object_from_stream(data, 0, &dict)
+                .expect("tolerant object streams should recover"),
+            PdfValue::Integer(42)
+        );
     }
 }
