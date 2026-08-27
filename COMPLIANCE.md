@@ -24,7 +24,8 @@ and covers 205 negative fixtures with 95 distinct veraPDF rule IDs. The
 clause-level ISO 32000 inventory is maintained in
 [ISO-32000-MATRIX.md](ISO-32000-MATRIX.md). It records implementation scope
 and known boundaries for both PDF 1.7 and PDF 2.0; it is not a conformance
-certificate.
+certificate. Registry-wide validation now gates PDF/A-1 to PDF 1.4 and earlier,
+PDF/A-2/3 to PDF 1.7, and the PDF 2.0 schema to PDF 2.0 documents.
 
 ## Feature Matrix
 

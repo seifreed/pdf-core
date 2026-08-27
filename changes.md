@@ -74,6 +74,8 @@ Los parsers publicos de valores, objetos indirectos y prefijos de streams en
 variantes con `ResourceBudget`, con regresion dedicada. Las tablas xref
 publicas y la deteccion de xref hibrido tambien cobran cada entrada contra el
 mismo presupuesto.
+La seleccion de esquemas en `validate_all` ya no aplica PDF/A-1 a documentos
+1.7/2.0 ni el esquema PDF 2.0 a documentos 1.x.
 
 Pendientes actuales, en orden practico:
 

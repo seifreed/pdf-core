@@ -122,7 +122,7 @@ impl PdfSchema for Pdf20Schema {
     }
 
     fn supports_pdf_version(&self, version: &PdfVersion) -> bool {
-        version.major >= 2 || (version.major == 1 && version.minor >= 4)
+        version.major == 2 && version.minor == 0
     }
 
     fn validate(&self, document: &PdfDocument) -> ValidationReport {
@@ -196,11 +196,15 @@ impl PdfSchema for PdfASchema {
     }
 
     fn supports_pdf_version(&self, version: &PdfVersion) -> bool {
-        let required_version = self.version().parse::<f32>().unwrap_or(1.4);
-        let doc_version = format!("{}.{}", version.major, version.minor)
-            .parse::<f32>()
-            .unwrap_or(0.0);
-        doc_version >= required_version
+        match self.level {
+            PdfALevel::PdfA1a | PdfALevel::PdfA1b => version.major == 1 && version.minor <= 4,
+            PdfALevel::PdfA2a
+            | PdfALevel::PdfA2b
+            | PdfALevel::PdfA2u
+            | PdfALevel::PdfA3a
+            | PdfALevel::PdfA3b
+            | PdfALevel::PdfA3u => version.major == 1 && version.minor == 7,
+        }
     }
 
     fn validate(&self, document: &PdfDocument) -> ValidationReport {
@@ -386,5 +390,24 @@ impl PdfSchema for PdfUASchema {
             Box::new(LanguageSpecificationConstraint),
             Box::new(LogicalReadingOrderConstraint),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_version_gates_do_not_apply_the_wrong_standard() {
+        let pdfa1 = PdfASchema::new(PdfALevel::PdfA1b);
+        let pdfa2 = PdfASchema::new(PdfALevel::PdfA2b);
+        let pdf20 = Pdf20Schema::new();
+
+        assert!(pdfa1.supports_pdf_version(&PdfVersion::new(1, 4)));
+        assert!(!pdfa1.supports_pdf_version(&PdfVersion::new(1, 7)));
+        assert!(pdfa2.supports_pdf_version(&PdfVersion::new(1, 7)));
+        assert!(!pdfa2.supports_pdf_version(&PdfVersion::new(2, 0)));
+        assert!(pdf20.supports_pdf_version(&PdfVersion::new(2, 0)));
+        assert!(!pdf20.supports_pdf_version(&PdfVersion::new(1, 7)));
     }
 }
