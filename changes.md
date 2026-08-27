@@ -259,7 +259,9 @@ Pendientes actuales, en orden practico:
   impedía obtener evidencia completa tras cada push; los IDs y estados se
   consultan con `gh run list` para evitar referencias obsoletas.
 * **Parser endurecido:** strict y varios recorridos ya tienen guardas, y los
-  streams conservan ahora estado lossless explícito, pero falta hacer
+  streams conservan ahora estado lossless explícito. Las APIs públicas de
+  valores/objetos cobran también la memoria retenida, y la resolución usa el
+  presupuesto configurado para su recorrido inicial, pero falta hacer
   completamente estrictos los modos de error/recuperacion y demostrar que
   `ResourceBudget` cubre la superficie publica restante de parseo, resolucion,
   recorrido, decodificacion y serializacion. Las variantes acotadas de
