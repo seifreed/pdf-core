@@ -116,6 +116,9 @@ cobra cabecera, chunks y nodos, reutiliza el presupuesto al parsear objetos y
 propaga los excesos en lugar de tratarlos como chunks malformados recuperables.
 La API `PdfParser::with_resource_budget` permite reutilizar ese presupuesto en
 otras entradas de parseo.
+`RecoveryParser` acepta el mismo presupuesto y trata los excesos de tamaño,
+memoria o contadores como errores terminales; ya no intenta recuperar ni
+construir un documento best-effort después de cruzar un límite de seguridad.
 
 Pendientes actuales, en orden practico:
 

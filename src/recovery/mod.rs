@@ -4,8 +4,9 @@
 /// the parser to continue processing even when encountering malformed or
 /// corrupted PDF data, making it suitable for forensic analysis and
 /// handling real-world, imperfect PDF documents.
-use crate::ast::{AstNode, AstResult, NodeId, NodeMetadata, NodeType, PdfDocument};
+use crate::ast::{AstError, AstNode, AstResult, NodeId, NodeMetadata, NodeType, PdfDocument};
 use crate::parser::PdfParser;
+use crate::performance::ResourceBudget;
 use crate::types::PdfValue;
 use std::collections::HashMap;
 use std::io::Cursor;
@@ -152,6 +153,12 @@ impl RecoveryParser {
         parser
     }
 
+    /// Uses an explicit budget for both the initial and recovered parse.
+    pub fn with_resource_budget(mut self, budget: ResourceBudget) -> Self {
+        self.base_parser = self.base_parser.with_resource_budget(budget);
+        self
+    }
+
     /// Parse a PDF document with error recovery
     pub fn parse_with_recovery(&mut self, data: &[u8]) -> AstResult<(PdfDocument, RecoveryReport)> {
         let start_time = std::time::Instant::now();
@@ -170,6 +177,9 @@ impl RecoveryParser {
                 return Ok((document, report));
             }
             Err(initial_error) => {
+                if is_resource_limit_error(&initial_error) {
+                    return Err(initial_error);
+                }
                 // Normal parsing failed, begin recovery
                 self.log_error(RecoveryError {
                     error_type: RecoveryErrorType::ParseError,
@@ -259,6 +269,7 @@ impl RecoveryParser {
         // Final parsing attempt with recovered data
         let final_document = match self.base_parser.parse(&mut Cursor::new(&current_data)) {
             Ok(doc) => doc,
+            Err(error) if is_resource_limit_error(&error) => return Err(error),
             Err(_) => {
                 // If all recovery failed, return best-effort document
                 self.create_best_effort_document(&current_data)?
@@ -511,6 +522,10 @@ impl RecoveryParser {
     }
 }
 
+fn is_resource_limit_error(error: &AstError) -> bool {
+    matches!(error, AstError::ParseError(message) if message.contains("resource budget exceeded") || message.contains("File too large"))
+}
+
 /// Report generated after recovery attempt
 #[derive(Debug, Clone)]
 pub struct RecoveryReport {
@@ -557,4 +572,20 @@ pub enum DocumentHealth {
 pub fn parse_with_automatic_recovery(data: &[u8]) -> AstResult<(PdfDocument, RecoveryReport)> {
     let mut parser = RecoveryParser::new(RecoveryConfig::default());
     parser.parse_with_recovery(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RecoveryConfig, RecoveryParser};
+    use crate::performance::ResourceBudget;
+
+    #[test]
+    fn recovery_does_not_bypass_input_budget() {
+        let budget = ResourceBudget::new(8, 1024, 1024, 10, 10, 10, 10, 8);
+        let error = RecoveryParser::new(RecoveryConfig::default())
+            .with_resource_budget(budget)
+            .parse_with_recovery(b"%PDF-1.7\n")
+            .expect_err("oversized input must not enter best-effort recovery");
+        assert!(error.to_string().contains("InputBytes"));
+    }
 }
