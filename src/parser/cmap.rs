@@ -289,12 +289,11 @@ impl<'a> CMapParser<'a> {
                 for _ in 0..count {
                     self.budget.consume_node().ok()?;
                     if i >= lines.len() {
-                        break;
+                        return None;
                     }
                     let range_line = lines[i].trim();
-                    if let Some((start, end)) = self.parse_hex_range(range_line) {
-                        cmap.code_space_ranges.push(CodeSpaceRange { start, end });
-                    }
+                    let (start, end) = self.parse_hex_range(range_line)?;
+                    cmap.code_space_ranges.push(CodeSpaceRange { start, end });
                     i += 1;
                 }
             }
@@ -305,12 +304,11 @@ impl<'a> CMapParser<'a> {
                 for _ in 0..count {
                     self.budget.consume_node().ok()?;
                     if i >= lines.len() {
-                        break;
+                        return None;
                     }
                     let char_line = lines[i].trim();
-                    if let Some((src, dst)) = self.parse_char_mapping(char_line) {
-                        chars.insert(src, dst);
-                    }
+                    let (src, dst) = self.parse_char_mapping(char_line)?;
+                    chars.insert(src, dst);
                     i += 1;
                 }
             }
@@ -321,12 +319,10 @@ impl<'a> CMapParser<'a> {
                 for _ in 0..count {
                     self.budget.consume_node().ok()?;
                     if i >= lines.len() {
-                        break;
+                        return None;
                     }
                     let range_line = lines[i].trim();
-                    if let Some(mapping) = self.parse_range_mapping(range_line) {
-                        ranges.push(mapping);
-                    }
+                    ranges.push(self.parse_range_mapping(range_line)?);
                     i += 1;
                 }
             }
@@ -337,12 +333,11 @@ impl<'a> CMapParser<'a> {
                 for _ in 0..count {
                     self.budget.consume_node().ok()?;
                     if i >= lines.len() {
-                        break;
+                        return None;
                     }
                     let cid_line = lines[i].trim();
-                    if let Some((src, cid)) = self.parse_cid_char(cid_line) {
-                        cid_chars.insert(src, cid);
-                    }
+                    let (src, cid) = self.parse_cid_char(cid_line)?;
+                    cid_chars.insert(src, cid);
                     i += 1;
                 }
             }
@@ -353,12 +348,10 @@ impl<'a> CMapParser<'a> {
                 for _ in 0..count {
                     self.budget.consume_node().ok()?;
                     if i >= lines.len() {
-                        break;
+                        return None;
                     }
                     let cid_range_line = lines[i].trim();
-                    if let Some(mapping) = self.parse_cid_range(cid_range_line) {
-                        cid_ranges.push(mapping);
-                    }
+                    cid_ranges.push(self.parse_cid_range(cid_range_line)?);
                     i += 1;
                 }
             }
@@ -801,6 +794,17 @@ mod tests {
 
         assert!(parser
             .parse_cmap_data(b"begincmap\ninvalid beginbfchar\nendcmap")
+            .is_none());
+    }
+
+    #[test]
+    fn rejects_cmap_mapping_with_invalid_entry() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let parser = CMapParser::new(&mut ast, &resolver);
+
+        assert!(parser
+            .parse_cmap_data(b"begincmap\n1 beginbfchar\nnot-a-mapping\nendcmap")
             .is_none());
     }
 
