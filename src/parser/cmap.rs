@@ -61,11 +61,19 @@ pub struct CIDRangeMapping {
     pub cid: u32,
 }
 
+type MappingParts = (
+    HashMap<Vec<u8>, Vec<u8>>,
+    Vec<CharRangeMapping>,
+    HashMap<Vec<u8>, u32>,
+    Vec<CIDRangeMapping>,
+);
+
 #[allow(dead_code)]
 pub struct CMapParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
     budget: ResourceBudget,
+    parsed_cmaps: HashMap<String, CMap>,
 }
 
 impl<'a> CMapParser<'a> {
@@ -82,12 +90,17 @@ impl<'a> CMapParser<'a> {
             ast,
             resolver,
             budget: budget.clone(),
+            parsed_cmaps: HashMap::new(),
         }
     }
 
     pub fn parse_cmap_stream(&mut self, stream: &PdfStream) -> Option<(NodeId, CMap)> {
         let data = stream.decode_with_budget(&self.budget).ok()?;
-        let cmap = self.parse_cmap_data(&data)?;
+        let mut cmap = self.parse_cmap_data(&data)?;
+        self.resolve_usecmap(&mut cmap);
+        if !cmap.name.is_empty() {
+            self.parsed_cmaps.insert(cmap.name.clone(), cmap.clone());
+        }
 
         // Create CMap node
         let mut node = AstNode::new(
@@ -122,7 +135,11 @@ impl<'a> CMapParser<'a> {
 
     pub fn parse_tounicode_stream(&mut self, stream: &PdfStream) -> Option<NodeId> {
         let data = stream.decode_with_budget(&self.budget).ok()?;
-        let cmap = self.parse_cmap_data(&data)?;
+        let mut cmap = self.parse_cmap_data(&data)?;
+        self.resolve_usecmap(&mut cmap);
+        if !cmap.name.is_empty() {
+            self.parsed_cmaps.insert(cmap.name.clone(), cmap.clone());
+        }
 
         // Create ToUnicode node
         let mut node = AstNode::new(
@@ -156,6 +173,48 @@ impl<'a> CMapParser<'a> {
         let node_id = self.ast.add_node(node);
 
         Some(node_id)
+    }
+
+    fn resolve_usecmap(&self, cmap: &mut CMap) {
+        let Some(base_name) = cmap.usecmap.as_deref() else {
+            return;
+        };
+        let Some(base) = self.parsed_cmaps.get(base_name) else {
+            return;
+        };
+
+        if cmap.code_space_ranges.is_empty() {
+            cmap.code_space_ranges = base.code_space_ranges.clone();
+        }
+        if cmap.name.is_empty() {
+            cmap.name = base.name.clone();
+        }
+        if cmap.cid_system_info.registry.is_empty() {
+            cmap.cid_system_info.registry = base.cid_system_info.registry.clone();
+        }
+        if cmap.cid_system_info.ordering.is_empty() {
+            cmap.cid_system_info.ordering = base.cid_system_info.ordering.clone();
+        }
+        if cmap.cid_system_info.supplement == 0 {
+            cmap.cid_system_info.supplement = base.cid_system_info.supplement;
+        }
+        if cmap.wmode == 0 {
+            cmap.wmode = base.wmode;
+        }
+
+        let (mut chars, mut ranges, mut cid_chars, mut cid_ranges) = mapping_parts(&base.mappings);
+        let (derived_chars, derived_ranges, derived_cid_chars, derived_cid_ranges) =
+            mapping_parts(&cmap.mappings);
+        chars.extend(derived_chars);
+        cid_chars.extend(derived_cid_chars);
+        ranges = derived_ranges.into_iter().chain(ranges).collect();
+        cid_ranges = derived_cid_ranges.into_iter().chain(cid_ranges).collect();
+        cmap.mappings = CMapMappings::Mixed {
+            chars,
+            ranges,
+            cid_chars,
+            cid_ranges,
+        };
     }
 
     fn parse_cmap_data(&self, data: &[u8]) -> Option<CMap> {
@@ -602,11 +661,37 @@ impl<'a> CMapParser<'a> {
     }
 }
 
+fn mapping_parts(mappings: &CMapMappings) -> MappingParts {
+    match mappings {
+        CMapMappings::Char(chars) => (chars.clone(), Vec::new(), HashMap::new(), Vec::new()),
+        CMapMappings::Range(ranges) => (HashMap::new(), ranges.clone(), HashMap::new(), Vec::new()),
+        CMapMappings::CID(cid_chars) => (HashMap::new(), Vec::new(), cid_chars.clone(), Vec::new()),
+        CMapMappings::CIDRange(cid_ranges) => (
+            HashMap::new(),
+            Vec::new(),
+            HashMap::new(),
+            cid_ranges.clone(),
+        ),
+        CMapMappings::Mixed {
+            chars,
+            ranges,
+            cid_chars,
+            cid_ranges,
+        } => (
+            chars.clone(),
+            ranges.clone(),
+            cid_chars.clone(),
+            cid_ranges.clone(),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CMapMappings, CMapParser};
     use crate::ast::PdfAstGraph;
     use crate::parser::reference_resolver::ObjectNodeMap;
+    use crate::types::{PdfDictionary, PdfStream};
 
     #[test]
     fn decodes_code_space_widths_and_utf16_surrogates() {
@@ -638,5 +723,30 @@ mod tests {
         let parser = CMapParser::new(&mut ast, &resolver);
 
         assert!(parser.hex_to_bytes("\u{fffd}0").is_none());
+    }
+
+    #[test]
+    fn inherits_usecmap_mappings_from_a_parsed_base() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let mut parser = CMapParser::new(&mut ast, &resolver);
+        let base = PdfStream::new(
+            PdfDictionary::new(),
+            b"/CMapName /Base def\n1 begincodespacerange\n<01> <02>\nendcodespacerange\n1 beginbfchar\n<01> <0041>\nendbfchar".to_vec(),
+        );
+        parser
+            .parse_cmap_stream(&base)
+            .expect("base CMap should parse");
+
+        let derived = PdfStream::new(
+            PdfDictionary::new(),
+            b"/CMapName /Derived def\n/UseCMap /Base usecmap\n1 beginbfchar\n<02> <0042>\nendbfchar".to_vec(),
+        );
+        let (_, cmap) = parser
+            .parse_cmap_stream(&derived)
+            .expect("derived CMap should parse");
+
+        assert_eq!(parser.decode_bytes(&cmap, b"\x01\x02"), "AB");
+        assert!(matches!(cmap.mappings, CMapMappings::Mixed { .. }));
     }
 }
