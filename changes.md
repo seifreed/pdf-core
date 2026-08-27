@@ -98,6 +98,9 @@ La recuperación de xref cercana queda limitada a modos tolerantes; `Strict`
 rechaza una sección malformada aunque exista otra tabla recuperable próxima.
 Los ciclos de `/Prev` reciben ahora el mismo tratamiento: son recuperables en
 modos tolerantes y errores en `Strict`, con regresión dedicada.
+La decodificación pública de `PdfStream` ya no trata filtros desconocidos o
+malformados como datos sin filtrar, y los errores de `JBIG2Globals` se
+propagan en `Strict` en lugar de descartarse silenciosamente.
 
 Pendientes actuales, en orden practico:
 

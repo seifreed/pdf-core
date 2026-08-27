@@ -401,7 +401,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
         // Resolve direct stream values for JBIG2 globals before any stream AST
         // decoding pass consumes the filter parameters.
-        self.resolve_jbig2_globals(ast);
+        self.resolve_jbig2_globals(ast)?;
 
         // Fourth pass: build page resource nodes (colorspaces, ICC profiles)
         self.build_page_resources(ast)?;
@@ -1005,7 +1005,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         Ok(())
     }
 
-    fn resolve_jbig2_globals(&mut self, ast: &mut PdfAstGraph) {
+    fn resolve_jbig2_globals(&mut self, ast: &mut PdfAstGraph) -> Result<(), String> {
         let node_ids: Vec<NodeId> = ast.get_all_nodes().iter().map(|node| node.id).collect();
 
         for node_id in node_ids {
@@ -1019,10 +1019,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 None => continue,
             };
 
-            let changed = dict
-                .get_mut("DecodeParms")
-                .map(|params| self.resolve_jbig2_globals_value(params, ast))
-                .unwrap_or(false);
+            let changed = match dict.get_mut("DecodeParms") {
+                Some(params) => self.resolve_jbig2_globals_value(params, ast)?,
+                None => false,
+            };
             if changed {
                 if let Some(node) = ast.get_node_mut(node_id) {
                     if let PdfValue::Stream(stream) = &mut node.value {
@@ -1031,22 +1031,35 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 }
             }
         }
+        Ok(())
     }
 
-    fn resolve_jbig2_globals_value(&mut self, value: &mut PdfValue, ast: &PdfAstGraph) -> bool {
+    fn resolve_jbig2_globals_value(
+        &mut self,
+        value: &mut PdfValue,
+        ast: &PdfAstGraph,
+    ) -> Result<bool, String> {
         match value {
             PdfValue::Dictionary(dict) => self.resolve_jbig2_globals_dict(dict, ast),
-            PdfValue::Array(values) => values
-                .iter_mut()
-                .any(|value| self.resolve_jbig2_globals_value(value, ast)),
-            _ => false,
+            PdfValue::Array(values) => {
+                let mut changed = false;
+                for value in values.iter_mut() {
+                    changed |= self.resolve_jbig2_globals_value(value, ast)?;
+                }
+                Ok(changed)
+            }
+            _ => Ok(false),
         }
     }
 
-    fn resolve_jbig2_globals_dict(&mut self, dict: &mut PdfDictionary, ast: &PdfAstGraph) -> bool {
+    fn resolve_jbig2_globals_dict(
+        &mut self,
+        dict: &mut PdfDictionary,
+        ast: &PdfAstGraph,
+    ) -> Result<bool, String> {
         let reference = match dict.get("JBIG2Globals") {
             Some(PdfValue::Reference(reference)) => *reference,
-            _ => return false,
+            _ => return Ok(false),
         };
         let Some(mut stream) = self
             .object_to_node
@@ -1055,17 +1068,19 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .and_then(|node| node.as_stream())
             .cloned()
         else {
-            return false;
+            return Ok(false);
         };
 
         if let Some(raw) = stream.raw_data() {
             let filters = stream.get_filters_with_params();
-            if let Ok(decoded) = decode_stream_with_budget(raw, &filters, &self.limits.budget) {
-                stream.set_decoded(decoded);
+            match decode_stream_with_budget(raw, &filters, &self.limits.budget) {
+                Ok(decoded) => stream.set_decoded(decoded),
+                Err(_) if self.tolerant => {}
+                Err(error) => return Err(format!("Failed to decode JBIG2Globals: {error}")),
             }
         }
         dict.insert("JBIG2Globals", PdfValue::Stream(stream));
-        true
+        Ok(true)
     }
 
     /// Build AST nodes from content streams

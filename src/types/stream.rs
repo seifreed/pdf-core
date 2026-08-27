@@ -234,7 +234,7 @@ impl PdfStream {
     pub fn decode_with_budget(&self, budget: &ResourceBudget) -> Result<Vec<u8>, String> {
         match &self.data {
             StreamData::Raw(data) | StreamData::Decoded(data) => {
-                let filters = self.get_filters_with_params();
+                let filters = self.get_filters_with_params_checked()?;
                 crate::filters::decode_stream_with_budget(data, &filters, budget)
                     .map_err(|e| e.to_string())
             }
@@ -249,7 +249,7 @@ impl PdfStream {
     ) -> Result<Vec<u8>, String> {
         match &self.data {
             StreamData::Raw(data) | StreamData::Decoded(data) => {
-                let filters = self.get_filters_with_params();
+                let filters = self.get_filters_with_params_checked()?;
                 crate::filters::decode_stream_with_limits(
                     data,
                     &filters,
@@ -285,16 +285,28 @@ impl PdfStream {
     }
 
     pub fn get_filters_with_params(&self) -> Vec<StreamFilter> {
+        self.get_filters_with_params_checked().unwrap_or_default()
+    }
+
+    pub fn get_filters_with_params_checked(&self) -> Result<Vec<StreamFilter>, String> {
         let mut filters = Vec::new();
 
         let filter_names: Vec<&PdfName> = match self.dict.get("Filter") {
             Some(PdfValue::Name(name)) => vec![name],
-            Some(PdfValue::Array(array)) => array.iter().filter_map(|v| v.as_name()).collect(),
-            _ => Vec::new(),
+            Some(PdfValue::Array(array)) => array
+                .iter()
+                .map(|value| {
+                    value
+                        .as_name()
+                        .ok_or_else(|| "Filter array contains a non-name value".to_string())
+                })
+                .collect::<Result<_, _>>()?,
+            None => Vec::new(),
+            Some(_) => return Err("Filter must be a name or an array of names".to_string()),
         };
 
         if filter_names.is_empty() {
-            return filters;
+            return Ok(filters);
         }
 
         let mut decode_params = match self.dict.get("DecodeParms") {
@@ -310,12 +322,12 @@ impl PdfStream {
 
         for (i, name) in filter_names.iter().enumerate() {
             let params = decode_params.get(i).copied().unwrap_or(None);
-            if let Some(filter) = Self::filter_from_name_with_params(name, params) {
-                filters.push(filter);
-            }
+            let filter = Self::filter_from_name_with_params(name, params)
+                .ok_or_else(|| format!("Unsupported stream filter: {}", name.without_slash()))?;
+            filters.push(filter);
         }
 
-        filters
+        Ok(filters)
     }
 
     fn filter_from_name_with_params(
@@ -532,5 +544,18 @@ mod tests {
             stream.lossless.recovery_actions,
             vec!["content_stream_skipped"]
         );
+    }
+
+    #[test]
+    fn unknown_filter_is_not_treated_as_unfiltered_data() {
+        let mut dict = PdfDictionary::new();
+        dict.insert("Filter", PdfValue::Name(PdfName::new("FutureDecode")));
+        let stream = PdfStream::new(dict, b"raw".to_vec());
+
+        let error = stream
+            .decode_with_budget(&ResourceBudget::default())
+            .expect_err("unknown filters must not be silently discarded");
+        assert!(error.contains("Unsupported stream filter"));
+        assert!(stream.get_filters_with_params_checked().is_err());
     }
 }
