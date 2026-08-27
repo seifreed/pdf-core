@@ -19,18 +19,22 @@ profile fixtures; the other profiles are available for parser and preflight
 campaigns.
 
 The complete serialized Isartor-to-veraPDF mapping is maintained in
-[`RULE-MAPPINGS.json`](https://github.com/seifreed/pdf-core-corpus/blob/9979a2a8618dcdf23ad3f20c760c1f06e5b36fe6/RULE-MAPPINGS.json)
+[`RULE-MAPPINGS.json`](https://github.com/seifreed/pdf-core-corpus/blob/e9f4b49f9ad8825883b9b5fe92e38821865940eb)
 and covers 205 negative fixtures with 95 distinct veraPDF rule IDs. The
-published mapping currently has no exact positive fixture for those 95 rule
-IDs; the upstream corpus contains passing files, but they are not yet isolated
-and mapped one rule at a time.
+`RULE-COVERAGE.json` records eight positive/negative pairs for the published
+local rules, with seven exact veraPDF rule IDs. The positive evidence is
+document-level (`compliant=true`); veraPDF emits no passing rule summaries, so
+positive rule-level results remain unrecorded for the 95 mapped IDs.
+[`RULE-COVERAGE.json`](https://github.com/seifreed/pdf-core-corpus/blob/e9f4b49f9ad8825883b9b5fe92e38821865940eb/RULE-COVERAGE.json)
+contains the pair definitions and this limitation explicitly.
 clause-level ISO 32000 inventory is maintained in
 [ISO-32000-MATRIX.md](ISO-32000-MATRIX.md). It records implementation scope
 and known boundaries for both PDF 1.7 and PDF 2.0; it is not a conformance
 certificate. Registry-wide validation now gates PDF/A-1 to PDF 1.4 and earlier,
 PDF/A-2/3 to PDF 1.7, and the PDF 2.0 schema to PDF 2.0 documents.
 PDF/X profiles are likewise gated to their declared PDF 1.3 or 1.6 base
-version, and PDF/UA-1/2 are gated to PDF 1.7 and PDF 2.0 respectively.
+version, and PDF/UA-1/2 are gated to PDF 1.x up to 1.7 and PDF 2.0
+respectively.
 The direct registry entry point returns no report for an unknown or
 version-incompatible profile, matching `validate_all`.
 
@@ -85,7 +89,7 @@ The `pdf-compliance` adapter exposes both PDF/UA-1 and PDF/UA-2; both remain
 experimental preflight profiles.
 
 The latest local parser gate (2026-08-27 UTC, corpus commit
-`9979a2a8618dcdf23ad3f20c760c1f06e5b36fe6`) processed 2,809 files and
+`e9f4b49f9ad8825883b9b5fe92e38821865940eb`) processed 2,809 files and
 161,227,640 bytes without a panic. It recorded 1,898 controlled parse errors,
 `peak_rss_kib=310176`, and p50/p95/p99 latencies of 0/9/55 ms. Reproduce it
 with `PDF_EXTERNAL_CORPUS=/path/to/pdf-core-corpus/fixtures PDF_EXTERNAL_MAX_FILES=3000 cargo test --test external_corpus_tests --locked -- --test-threads=1 --nocapture`.
@@ -110,8 +114,9 @@ divergences. Reproduce it with
 ## Required Before Conformance Claims
 
 - The local positive/negative fixture branch is covered by the matrix above;
-  exact serialized upstream positive mappings remain outstanding for 95
-  veraPDF rule IDs, despite the available passing corpus files.
+  eight serialized upstream positive/negative pairs are verified, but
+  positive rule-level results remain outstanding for the 95 mapped veraPDF
+  rule IDs because passing summaries are not emitted.
 - Run serialized versions of the same fixtures through a pinned veraPDF
   release and record pass/fail/divergence results per veraPDF rule ID.
 - Use `VERAPDF_BIN=/path/to/verapdf cargo test --test verapdf_tests` to run the

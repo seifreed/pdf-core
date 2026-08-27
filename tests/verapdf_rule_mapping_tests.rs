@@ -314,9 +314,14 @@ fn local_pdfua_rules_match_serialized_upstream_cases() {
         let document = parser.parse_bytes(&bytes).unwrap_or_else(|error| {
             panic!("parse local PDF/UA fixture {}: {error}", path.display())
         });
-        let report = registry
-            .validate(&document, "PDF/UA-1")
-            .expect("PDF/UA-1 report should be produced");
+        let report = registry.validate(&document, "PDF/UA-1").unwrap_or_else(|| {
+            panic!(
+                "PDF/UA-1 does not support parsed version {}.{} for {}",
+                document.version.major,
+                document.version.minor,
+                path.display()
+            )
+        });
         let has_issue = report
             .issues
             .iter()
@@ -375,5 +380,104 @@ fn pdfua_rules_match_verapdf_ids() {
             }),
             "veraPDF rule {expected_rule} missing"
         );
+    }
+}
+
+#[test]
+fn published_rule_coverage_has_positive_and_negative_verapdf_evidence() {
+    let Some(verapdf) = verapdf_binary() else {
+        eprintln!("Skipping positive veraPDF rule coverage: veraPDF is not available");
+        return;
+    };
+    let Some(root) = corpus_root() else {
+        eprintln!("Skipping positive veraPDF rule coverage: corpus root is not configured");
+        return;
+    };
+    let manifest_path = root
+        .parent()
+        .expect("corpus fixtures should have a parent directory")
+        .join("RULE-COVERAGE.json");
+    if !manifest_path.is_file() {
+        eprintln!(
+            "Skipping positive veraPDF rule coverage: {} is not available",
+            manifest_path.display()
+        );
+        return;
+    }
+
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(&manifest_path).expect("read coverage manifest"))
+            .expect("valid coverage manifest");
+    let mappings = manifest["mappings"].as_array().expect("coverage mappings");
+    assert_eq!(mappings.len(), 8);
+
+    for mapping in mappings {
+        let positive = root
+            .parent()
+            .expect("corpus fixtures should have a parent directory")
+            .join(
+                mapping["positive_fixture"]
+                    .as_str()
+                    .expect("positive fixture"),
+            );
+        let negative = root
+            .parent()
+            .expect("corpus fixtures should have a parent directory")
+            .join(
+                mapping["negative_fixture"]
+                    .as_str()
+                    .expect("negative fixture"),
+            );
+        assert!(
+            positive.is_file(),
+            "missing positive fixture: {}",
+            positive.display()
+        );
+        assert!(
+            negative.is_file(),
+            "missing negative fixture: {}",
+            negative.display()
+        );
+
+        let flavour = if mapping["local_rule"]
+            .as_str()
+            .expect("local rule")
+            .starts_with("PDF_A_")
+        {
+            "1b"
+        } else {
+            "ua1"
+        };
+        let output = Command::new(&verapdf)
+            .args(["--format", "json", "--flavour", flavour])
+            .arg(&positive)
+            .arg(&negative)
+            .output()
+            .expect("veraPDF should run");
+        let report: Value = serde_json::from_slice(&output.stdout).expect("valid veraPDF JSON");
+        let jobs = report["report"]["jobs"].as_array().expect("veraPDF jobs");
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(jobs[0]["validationResult"][0]["jobEndStatus"], "normal");
+        assert_eq!(jobs[1]["validationResult"][0]["jobEndStatus"], "normal");
+        assert_eq!(jobs[0]["validationResult"][0]["compliant"], true);
+        assert_eq!(jobs[1]["validationResult"][0]["compliant"], false);
+
+        if let Some(expected_rule) = mapping["veraPDF_rule"].as_str() {
+            let rules = jobs[1]["validationResult"][0]["details"]["ruleSummaries"]
+                .as_array()
+                .expect("veraPDF rule summaries");
+            assert!(
+                rules.iter().any(|rule| {
+                    format!(
+                        "{}:{}:{}",
+                        rule["specification"].as_str().unwrap_or_default(),
+                        rule["clause"].as_str().unwrap_or_default(),
+                        rule["testNumber"].as_u64().unwrap_or_default()
+                    ) == expected_rule
+                }),
+                "veraPDF rule {expected_rule} missing for {}",
+                negative.display()
+            );
+        }
     }
 }

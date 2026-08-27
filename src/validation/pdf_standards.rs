@@ -359,7 +359,9 @@ impl PdfSchema for PdfUASchema {
 
     fn supports_pdf_version(&self, version: &PdfVersion) -> bool {
         match self.level {
-            PdfUALevel::PdfUA1 => version.major == 1 && version.minor == 7,
+            // PDF/UA-1 is based on PDF 1.7, but valid documents in the
+            // upstream corpus may carry an older PDF 1.x header.
+            PdfUALevel::PdfUA1 => version.major == 1 && version.minor <= 7,
             PdfUALevel::PdfUA2 => version.major == 2 && version.minor == 0,
         }
     }
@@ -430,6 +432,7 @@ mod tests {
         let pdfua2 = PdfUASchema::new(PdfUALevel::PdfUA2);
 
         assert!(pdfua1.supports_pdf_version(&PdfVersion::new(1, 7)));
+        assert!(pdfua1.supports_pdf_version(&PdfVersion::new(1, 5)));
         assert!(!pdfua1.supports_pdf_version(&PdfVersion::new(2, 0)));
         assert!(pdfua2.supports_pdf_version(&PdfVersion::new(2, 0)));
         assert!(!pdfua2.supports_pdf_version(&PdfVersion::new(1, 7)));
