@@ -1,4 +1,5 @@
 use crate::parser::content_stream::{ContentOperator, InlineImageInfo, TextArrayElement};
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while, take_while1},
@@ -48,6 +49,14 @@ impl Operand {
 
 /// Parse complete content stream with operands
 pub fn parse_content_stream(input: &[u8]) -> Vec<ContentOperator> {
+    parse_content_stream_with_budget(input, &ResourceBudget::default()).unwrap_or_default()
+}
+
+pub fn parse_content_stream_with_budget(
+    input: &[u8],
+    budget: &ResourceBudget,
+) -> Result<Vec<ContentOperator>, ResourceBudgetError> {
+    budget.consume_input(input.len() as u64)?;
     let mut operators = Vec::new();
     let mut operand_stack: Vec<Operand> = Vec::new();
     let mut remaining = input;
@@ -69,6 +78,9 @@ pub fn parse_content_stream(input: &[u8]) -> Vec<ContentOperator> {
         }
         // Try to parse operator
         else if let Ok((rest, op)) = parse_operator_with_operands(remaining, &mut operand_stack) {
+            if budget.consume_node().is_err() {
+                break;
+            }
             operators.push(op);
             remaining = rest;
         }
@@ -78,7 +90,7 @@ pub fn parse_content_stream(input: &[u8]) -> Vec<ContentOperator> {
         }
     }
 
-    operators
+    Ok(operators)
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +101,15 @@ pub struct ContentOperatorWithOffset {
 
 /// Parse content stream and capture operator byte offsets.
 pub fn parse_content_stream_with_offsets(input: &[u8]) -> Vec<ContentOperatorWithOffset> {
+    parse_content_stream_with_offsets_with_budget(input, &ResourceBudget::default())
+        .unwrap_or_default()
+}
+
+pub fn parse_content_stream_with_offsets_with_budget(
+    input: &[u8],
+    budget: &ResourceBudget,
+) -> Result<Vec<ContentOperatorWithOffset>, ResourceBudgetError> {
+    budget.consume_input(input.len() as u64)?;
     let mut operators = Vec::new();
     let mut operand_stack: Vec<Operand> = Vec::new();
     let mut remaining = input;
@@ -106,6 +127,9 @@ pub fn parse_content_stream_with_offsets(input: &[u8]) -> Vec<ContentOperatorWit
             operand_stack.push(operand);
             remaining = rest;
         } else if let Ok((rest, op)) = parse_operator_with_operands(remaining, &mut operand_stack) {
+            if budget.consume_node().is_err() {
+                break;
+            }
             let offset = base_len.saturating_sub(remaining.len());
             operators.push(ContentOperatorWithOffset {
                 operator: op,
@@ -117,7 +141,7 @@ pub fn parse_content_stream_with_offsets(input: &[u8]) -> Vec<ContentOperatorWit
         }
     }
 
-    operators
+    Ok(operators)
 }
 
 /// Parse a single operand

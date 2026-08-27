@@ -1,3 +1,4 @@
+use crate::performance::ResourceBudget;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -149,6 +150,7 @@ pub enum Operand {
 #[allow(dead_code)]
 pub struct ContentStreamParser {
     operators: Vec<ContentOperator>,
+    budget: ResourceBudget,
 }
 
 impl Default for ContentStreamParser {
@@ -159,14 +161,43 @@ impl Default for ContentStreamParser {
 
 impl ContentStreamParser {
     pub fn new() -> Self {
+        Self::new_with_budget(&ResourceBudget::default())
+    }
+
+    pub fn new_with_budget(budget: &ResourceBudget) -> Self {
         ContentStreamParser {
             operators: Vec::new(),
+            budget: budget.clone(),
         }
     }
 
     pub fn parse(&mut self, data: &[u8]) -> Result<Vec<ContentOperator>, String> {
-        let operators = crate::parser::content_operands::parse_content_stream(data);
+        let operators =
+            crate::parser::content_operands::parse_content_stream_with_budget(data, &self.budget)
+                .map_err(|err| err.to_string())?;
         self.operators = operators.clone();
         Ok(operators)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_stream_parser_respects_operator_budget() {
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 1, 10, 8);
+        let mut parser = ContentStreamParser::new_with_budget(&budget);
+
+        let operators = parser.parse(b"1 0 m 2 0 l").expect("content should parse");
+        assert_eq!(operators.len(), 1);
+    }
+
+    #[test]
+    fn content_stream_parser_rejects_input_over_budget() {
+        let budget = ResourceBudget::new(3, 1024, 1024, 10, 10, 10, 10, 8);
+        let mut parser = ContentStreamParser::new_with_budget(&budget);
+
+        assert!(parser.parse(b"1 0 m").is_err());
     }
 }
