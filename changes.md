@@ -82,6 +82,8 @@ PDF/UA-1 y PDF/UA-2 siguen la misma regla de version base y ya no se aplican
 entre si por una simple comparacion de version minima.
 `SchemaRegistry::validate` comparte ahora ese filtro y devuelve `None` para
 perfiles desconocidos o incompatibles con la version del documento.
+El adaptador `pdf-compliance` expone tambien PDF/UA-2 con su funcion de
+validacion y smoke test para documentos PDF 2.0.
 Los trailers asociados a tablas xref tambien se decodifican con el presupuesto
 compartido, con regresion de limite de entrada.
 

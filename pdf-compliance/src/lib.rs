@@ -22,6 +22,7 @@ pub enum ComplianceProfile {
     PdfA3b,
     PdfA3u,
     PdfUA1,
+    PdfUA2,
 }
 
 impl ComplianceProfile {
@@ -36,6 +37,7 @@ impl ComplianceProfile {
             Self::PdfA3b => "PDF/A-3b",
             Self::PdfA3u => "PDF/A-3u",
             Self::PdfUA1 => "PDF/UA-1",
+            Self::PdfUA2 => "PDF/UA-2",
         }
     }
 }
@@ -84,6 +86,11 @@ pub fn validate_pdfa1b(document: &PdfDocument) -> ComplianceReport {
 pub fn validate_pdfua1(document: &PdfDocument) -> ComplianceReport {
     validate_profile(document, ComplianceProfile::PdfUA1)
         .expect("PDF/UA-1 is registered by the root validation registry")
+}
+
+pub fn validate_pdfua2(document: &PdfDocument) -> ComplianceReport {
+    validate_profile(document, ComplianceProfile::PdfUA2)
+        .expect("PDF/UA-2 is registered by the root validation registry")
 }
 
 fn convert_report(
@@ -184,6 +191,13 @@ mod tests {
     }
 
     #[test]
+    fn test_pdfua2_validation() {
+        let doc = PdfDocument::new(PdfVersion::new(2, 0));
+        let report = validate_pdfua2(&doc);
+        assert_eq!(report.profile, ComplianceProfile::PdfUA2);
+    }
+
+    #[test]
     fn validates_exposed_profiles_through_the_root_registry() {
         for (profile, version) in [
             (ComplianceProfile::PdfA1a, PdfVersion::new(1, 4)),
@@ -195,6 +209,7 @@ mod tests {
             (ComplianceProfile::PdfA3b, PdfVersion::new(1, 7)),
             (ComplianceProfile::PdfA3u, PdfVersion::new(1, 7)),
             (ComplianceProfile::PdfUA1, PdfVersion::new(1, 7)),
+            (ComplianceProfile::PdfUA2, PdfVersion::new(2, 0)),
         ] {
             assert!(validate_profile(&PdfDocument::new(version), profile).is_some());
         }

@@ -44,7 +44,7 @@ version-incompatible profile, matching `validate_all`.
 | ISO 32000-1/2 | CMap and ToUnicode mappings | Partial | Variable-width code spaces, bfrange, and UTF-16BE tests |
 | ISO 19005-1:2005 | 6.3.4 embedded font programs | Preflight | `PDF_A_FONT_EMBEDDING` |
 | ISO 19005-1:2005 | 6.5.2 annotation types and 6.6.1 actions | Preflight | `PDF_A_MULTIMEDIA`, `PDF_A_JAVASCRIPT` |
-| ISO 14289-1:2014 | 7.1 structure tree | Preflight | `NO_TAGGED_STRUCTURE`, `STRUCT_ELEM_MISSING` |
+| ISO 14289-1:2014 / ISO 14289-2 | 7.1 structure tree | Preflight | `NO_TAGGED_STRUCTURE`, `STRUCT_ELEM_MISSING` |
 | ISO 14289-1:2014 | 7.2 document language | Preflight | `LANG_MISSING`, `LANG_EMPTY` |
 | ISO 19005 / ISO 14289 | Full profile conformance | Not implemented | Requires rule-complete validation and veraPDF comparison |
 | ISO 32000-1/2 | JBIG2 pixel decoding | Partial | Bounded pure-Rust embedded/standalone decode with direct and parser-resolved indirect `/JBIG2Globals`; codec coverage remains incomplete |
@@ -78,6 +78,8 @@ rechecks the exact veraPDF IDs when `VERAPDF_BIN` and
 PDF/A and PDF/UA validators are then run against those serialized bytes.
 The complete manifest check also passed locally with veraPDF 1.30.2: all 205
 Isartor mappings were present and every expected failed rule ID was observed.
+The `pdf-compliance` adapter exposes both PDF/UA-1 and PDF/UA-2; both remain
+experimental preflight profiles.
 
 The latest local parser gate (2026-08-26 UTC, corpus commit
 `9979a2a8618dcdf23ad3f20c760c1f06e5b36fe6`) processed 2,809 files and
