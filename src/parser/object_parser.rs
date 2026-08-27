@@ -405,13 +405,7 @@ pub(crate) fn charge_value_memory<'a>(
             }
             Ok(())
         }
-        PdfValue::Dictionary(dictionary) => {
-            for (name, value) in dictionary {
-                charge(name.as_str().len())?;
-                charge_value_memory(value, budget, input)?;
-            }
-            Ok(())
-        }
+        PdfValue::Dictionary(dictionary) => charge_dictionary_memory(dictionary, budget, input),
         PdfValue::Stream(stream) => {
             if let Some(data) = stream.data.as_bytes() {
                 charge(data.len())?;
@@ -419,7 +413,7 @@ pub(crate) fn charge_value_memory<'a>(
             if let Some(original_bytes) = stream.original_data() {
                 charge(original_bytes.len())?;
             }
-            charge_value_memory(&PdfValue::Dictionary(stream.dict.clone()), budget, input)
+            charge_dictionary_memory(&stream.dict, budget, input)
         }
         PdfValue::Null
         | PdfValue::Boolean(_)
@@ -427,6 +421,25 @@ pub(crate) fn charge_value_memory<'a>(
         | PdfValue::Real(_)
         | PdfValue::Reference(_) => Ok(()),
     }
+}
+
+fn charge_dictionary_memory<'a>(
+    dictionary: &PdfDictionary,
+    budget: &ResourceBudget,
+    input: &'a [u8],
+) -> Result<(), nom::Err<nom::error::Error<&'a [u8]>>> {
+    for (name, value) in dictionary {
+        budget
+            .consume_memory(name.as_str().len() as u64)
+            .map_err(|_| {
+                nom::Err::Failure(nom::error::Error::new(
+                    input,
+                    nom::error::ErrorKind::TooLarge,
+                ))
+            })?;
+        charge_value_memory(value, budget, input)?;
+    }
+    Ok(())
 }
 
 fn parse_stream_data(input: &[u8], dict_value: PdfValue) -> IResult<&[u8], PdfValue> {
