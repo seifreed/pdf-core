@@ -1,6 +1,17 @@
 #include "pdf_ast.h"
 
+#include <stddef.h>
 #include <stdio.h>
+
+_Static_assert(offsetof(pdf_ast_result_t, error_code) == 0,
+               "pdf_ast_result_t error_code layout changed");
+_Static_assert(offsetof(pdf_ast_result_t, message) >= sizeof(pdf_ast_error_t) &&
+                   offsetof(pdf_ast_result_t, message) % _Alignof(char *) == 0,
+               "pdf_ast_result_t message layout changed");
+_Static_assert(offsetof(pdf_ast_node_info_t, id) == 0,
+               "pdf_ast_node_info_t id layout changed");
+_Static_assert(offsetof(pdf_ast_node_info_t, node_type) == sizeof(uint64_t),
+               "pdf_ast_node_info_t node_type layout changed");
 
 int main(void) {
     static const char *path =
