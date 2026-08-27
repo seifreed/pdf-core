@@ -972,7 +972,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                             .seek(SeekFrom::Start(offset))
                             .map_err(|e| format!("Seek error: {}", e))?;
 
-                        let mut buffer = vec![0u8; 1024];
+                        let mut buffer = [0u8; 1024];
                         let bytes_read = self
                             .reader
                             .read(&mut buffer)

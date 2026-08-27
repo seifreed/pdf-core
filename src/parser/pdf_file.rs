@@ -2393,10 +2393,19 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         self.reader.seek(SeekFrom::Start(0))?;
         let max_bytes = self.limits.budget.max_input_bytes;
         let mut buffer = Vec::new();
-        self.reader
-            .by_ref()
-            .take(max_bytes.saturating_add(1))
-            .read_to_end(&mut buffer)?;
+        let mut chunk = [0u8; 8192];
+        let mut limited = self.reader.by_ref().take(max_bytes.saturating_add(1));
+        loop {
+            let bytes_read = limited.read(&mut chunk)?;
+            if bytes_read == 0 {
+                break;
+            }
+            self.limits
+                .budget
+                .consume_decoded(bytes_read as u64)
+                .map_err(|error| AstError::ParseError(error.to_string()))?;
+            buffer.extend_from_slice(&chunk[..bytes_read]);
+        }
         if buffer.len() as u64 > max_bytes {
             return Err(AstError::ParseError(format!(
                 "Input exceeds resource limit of {} bytes",

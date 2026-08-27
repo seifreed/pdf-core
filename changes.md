@@ -193,6 +193,8 @@ de crear la copia lossless.
 Las lecturas auxiliares de xref, objetos y escaneos del `ReferenceResolver`
 reservan sus buffers mediante el presupuesto compartido antes de materializar
 los bytes.
+La recuperación de xref del `PdfFileParser` lee en chunks y cobra cada bloque;
+la resolución de longitudes usa un buffer fijo en la pila.
 El timeout configurado en `RecoveryConfig` se comprueba antes de cada
 estrategia y antes del parseo final, evitando recuperaciones sin límite
 temporal.
