@@ -522,6 +522,12 @@ mod validation_tests {
             .expect("PDF/UA-1 report should be produced");
         assert!(has_issue(&empty, "LANG_EMPTY"));
 
+        set_catalog_lang(&mut empty_document, b"   ");
+        let whitespace = registry
+            .validate(&empty_document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(has_issue(&whitespace, "LANG_EMPTY"));
+
         let mut valid_document = create_test_document();
         set_catalog_lang(&mut valid_document, b"en-US");
         let valid = registry

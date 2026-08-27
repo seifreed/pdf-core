@@ -1517,7 +1517,11 @@ impl SchemaConstraint for LanguageSpecificationConstraint {
             .get("Lang")
             .and_then(|value| resolve_string_from_value(document, value));
         if let Some(lang) = lang_value {
-            if lang.as_bytes().is_empty() {
+            if lang
+                .as_bytes()
+                .iter()
+                .all(|byte| byte.is_ascii_whitespace())
+            {
                 report.add_issue(ValidationIssue {
                     severity: ValidationSeverity::Error,
                     code: "LANG_EMPTY".to_string(),
