@@ -475,6 +475,38 @@ mod validation_tests {
     }
 
     #[test]
+    fn pdfua_tagged_structure_resolves_indirect_catalog_entries() {
+        let mut document = create_test_document();
+        let catalog_id = document.catalog.expect("Catalog should exist");
+        document.ast.create_node(
+            NodeType::Object(ObjectId::new(901, 0)),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Marked", PdfValue::Boolean(true));
+                dict
+            }),
+        );
+        document.ast.create_node(
+            NodeType::Object(ObjectId::new(902, 0)),
+            PdfValue::Dictionary(PdfDictionary::new()),
+        );
+        if let Some(catalog) = document.ast.get_node_mut(catalog_id) {
+            if let PdfValue::Dictionary(dict) = &mut catalog.value {
+                dict.insert("MarkInfo", PdfValue::Reference(PdfReference::new(901, 0)));
+                dict.insert(
+                    "StructTreeRoot",
+                    PdfValue::Reference(PdfReference::new(902, 0)),
+                );
+            }
+        }
+
+        let report = SchemaRegistry::new()
+            .validate(&document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(!has_issue(&report, "NO_TAGGED_STRUCTURE"));
+    }
+
+    #[test]
     fn fixture_pdfua_language_rule_has_positive_and_negative_cases() {
         let registry = SchemaRegistry::new();
 

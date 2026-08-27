@@ -903,16 +903,18 @@ impl SchemaConstraint for TaggedStructureConstraint {
         if let Some(catalog_id) = catalog_nodes.first() {
             if let Some(catalog) = document.ast.get_node(*catalog_id) {
                 if let PdfValue::Dictionary(dict) = &catalog.value {
-                    if let Some(PdfValue::Dictionary(mark_info)) = dict.get("MarkInfo") {
-                        if let Some(PdfValue::Boolean(marked)) = mark_info.get("Marked") {
-                            if *marked {
-                                // Check for StructTreeRoot
-                                if dict.contains_key("StructTreeRoot") {
-                                    report.add_passed_check();
-                                    return;
-                                }
-                            }
-                        }
+                    let marked = dict
+                        .get("MarkInfo")
+                        .and_then(|value| resolve_dict_from_value(document, value))
+                        .and_then(|mark_info| mark_info.get("Marked").and_then(PdfValue::as_bool))
+                        .unwrap_or(false);
+                    let has_struct_tree_root = dict
+                        .get("StructTreeRoot")
+                        .and_then(|value| resolve_dict_from_value(document, value))
+                        .is_some();
+                    if marked && has_struct_tree_root {
+                        report.add_passed_check();
+                        return;
                     }
                 }
             }
