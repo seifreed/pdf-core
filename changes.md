@@ -245,6 +245,8 @@ El smoke local strict/tolerante contra 100 fixtures externos y veraPDF no
 detectó divergencias del parser; el corpus completo de CI sigue pendiente.
 El workflow de release verifica el tag firmado también antes de construir
 bindings y attesta los binarios, paquetes, SBOM y checksums generados.
+`README.md` ya no afirma que esos artefactos se publiquen: el workflow los
+construye y prepara, pero la publicación en registros sigue deshabilitada.
 
 Pendientes actuales, en orden practico:
 

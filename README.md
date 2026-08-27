@@ -97,10 +97,11 @@ Or with Cargo:
 cargo add --git https://github.com/seifreed/pdf-core pdf-ast
 ```
 
-Signed releases publish the Rust crate, Python wheels, and the Node package
-with platform-specific native packages. The release workflow requires the
-`PUBLISH_REGISTRIES=true` repository variable, registry credentials, and the
-release signing key/fingerprint variables.
+The signed release workflow builds the Rust, C, Python, and Node artifacts,
+checks their provenance inputs, and prepares checksums and attestations.
+Registry publication remains disabled until the required CI gates and
+registry credentials are configured; use the repository checkout while it is
+pending.
 
 ### Feature Flags
 
