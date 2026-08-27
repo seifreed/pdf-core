@@ -56,8 +56,10 @@ peor caso de expansión AES; `6a18db2` cobra la materialización de XML XMP;
 terminen ciclos sin progreso. `d8d9d36` corrige el sentinel de la regresion
 FFI para mantener Clippy estricto en verde. `05c496e` unifica las 13
 comprobaciones PDF/A-1b en la misma colección de constraints que consume el
-registro, sin alterar sus códigos ni severidades. Sus workflows aun estan
-pendientes o en cola.
+registro, sin alterar sus códigos ni severidades. `e34d732` propaga los
+recursos efectivos por niveles `Pages` anidados y añade una regresión que
+verifica la herencia y la creación de recursos derivados. Sus workflows aun
+estan pendientes o en cola.
 
 Avance publicado en `f2e8a5f`: el smoke test de instalación JavaScript ejecuta
 la carga del addon nativo en un proceso hijo, evitando el bloqueo `EPERM` de
