@@ -132,6 +132,8 @@ regresion de estructura pasa `5/5` y Clippy estricto.
 `f14c494` aplica la misma resolucion a `ClassMap` indirecto y conserva sus
 entradas de clase; la regresion conjunta de estructura pasa `5/5` y Clippy
 estricto.
+`ba531ed` resuelve tambien nombres indirectos como valores de `RoleMap`; la
+regresion conjunta de estructura pasa `5/5` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
