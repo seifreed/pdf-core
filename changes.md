@@ -31,6 +31,14 @@ de recuperación y estado raw/decoded/lazy; el estado se conserva al
 serializar y al convertir streams durante desencriptación o resolución de
 JBIG2Globals. Ambos cambios tienen regresiones locales.
 
+Avance adicional: `SerializableGraph` y `SerializableDocument` exponen ahora
+variantes `*_with_budget` que cargan nodos, aristas, revisiones y payloads de
+streams contra `ResourceBudget`; visitantes, consultas y walkers de nodos,
+aristas y revisiones tienen la misma variante acotada. CMap aplica
+`UseCMap` cuando el base ya fue parseado, acepta hex PDF de longitud impar y
+limita el número de mappings procesados. El smoke C se compila en CI con
+`-Wall -Wextra -Werror`.
+
 Avance local adicional: el parser `Strict` rechaza tokens no consumidos en
 `parse_value` y `parse_object`; `PdfAstGraph` y `NameTreeParser` terminan sus
 recorridos aunque el grafo tenga ciclos; y los helpers publicos legacy de
@@ -62,9 +70,9 @@ Pendientes actuales, en orden practico:
 
 * **Evidencia remota:** faltan ejecuciones verdes y repetidas del CI completo,
   corpus/differential, ClusterFuzzLite y los seis smoke tests de bindings. Los
-  runs actuales sobre `76d9fd6` son CI `33036516601`, bindings `33036516606`,
-  corpus externo `33036516624`, diferencial `33036516647`, ClusterFuzzLite
-  `33036516666`, fuzzing `33036516671` y API stability `33036516646`; estaban
+  runs actuales sobre `ef0c6bf` son CI `33037533751`, bindings `33037533735`,
+  corpus externo `33037533757`, diferencial `33037533746`, ClusterFuzzLite
+  `33037533755`, fuzzing `33037533758` y API stability `33037533774`; estaban
   pendientes/en cola al actualizar este documento.
 * **Parser endurecido:** strict y varios recorridos ya tienen guardas, y los
   streams conservan ahora estado lossless explícito, pero falta hacer
@@ -84,9 +92,8 @@ Pendientes actuales, en orden practico:
   para beta. No hay publicación firmada en crates.io, PyPI o npm, ni
   consumidores externos.
 
-El chequeo local de `cargo-semver-checks` pasa para `pdf-ast` contra `0.1.0`;
-el workspace completo no es auditable porque
-`pdf-ast-dynamic-plugin-example` no esta publicado en crates.io. La
+El chequeo local de `cargo-semver-checks` pasa para `pdf-ast` contra `0.1.0`,
+también invocado sin `--package` sobre este workspace. La
 publicacion sigue bloqueada hasta disponer de credenciales de registro,
 firma/provenance y artefactos verdes; no se debe crear un release ficticio.
 
