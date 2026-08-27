@@ -91,6 +91,9 @@ valor es indirecto, con regresion strict/tolerante.
 referencias, y `deb999a` valida en PDF/A-1b que el array no este vacio y que
 cada salida declare `GTS_PDFA1`, identificador y perfil ICC resoluble. La
 regresion combinada de integracion y validacion pasa `51/51` y Clippy estricto.
+`ab1de0d` hace que la regla PDF/UA de idioma resuelva tambien un `/Lang`
+indirecto, evitando marcar como ausente un idioma valido; su regresion pasa
+`23/23` en la suite de validacion y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
