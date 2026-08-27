@@ -310,12 +310,12 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         loop {
             if !seen.insert(offset) {
-                self.record_anomaly(
-                    "xref_prev_cycle",
-                    "Detected cycle in xref /Prev chain",
-                    Some(offset),
-                )?;
-                break;
+                let message = "Detected cycle in xref /Prev chain";
+                if self.tolerant {
+                    self.record_anomaly("xref_prev_cycle", message, Some(offset))?;
+                    break;
+                }
+                return Err(AstError::ParseError(message.to_string()));
             }
 
             let (entries, trailer) = match self.parse_single_xref_at(offset) {
@@ -3175,5 +3175,21 @@ mod tests {
         )
         .expect("tolerant parser should initialize");
         assert!(tolerant.parse_single_xref_at(malformed_offset).is_ok());
+    }
+
+    #[test]
+    fn strict_mode_rejects_xref_prev_cycles() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let data = b"%PDF-1.7\nxref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size 1 /Prev 9 >>\n";
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data.to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("strict parser should initialize");
+        parser.xref_offset = Some(9);
+
+        assert!(parser.parse_xref_chain().is_err());
     }
 }

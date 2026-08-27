@@ -96,6 +96,8 @@ Las primitives publicas de `parser::lexer` ofrecen ahora variantes
 evitar asignaciones de tokens fuera de `ResourceBudget`.
 La recuperación de xref cercana queda limitada a modos tolerantes; `Strict`
 rechaza una sección malformada aunque exista otra tabla recuperable próxima.
+Los ciclos de `/Prev` reciben ahora el mismo tratamiento: son recuperables en
+modos tolerantes y errores en `Strict`, con regresión dedicada.
 
 Pendientes actuales, en orden practico:
 
