@@ -19,7 +19,54 @@ const MAX_NESTING_DEPTH: usize = 256;
 
 /// Parse a value with a caller-selected nesting limit.
 pub fn parse_value_with_max_depth(input: &[u8], max_depth: usize) -> IResult<&[u8], PdfValue> {
+    parse_value_with_max_depth_and_budget(input, max_depth, &ResourceBudget::default())
+}
+
+pub fn parse_value_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], PdfValue> {
+    parse_value_with_max_depth_and_budget(input, MAX_NESTING_DEPTH, budget)
+}
+
+pub fn parse_value_with_max_depth_and_budget<'a>(
+    input: &'a [u8],
+    max_depth: usize,
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], PdfValue> {
+    charge_input(input, budget)?;
+    parse_value_with_max_depth_unbudgeted(input, max_depth)
+}
+
+fn parse_value_with_max_depth_unbudgeted(
+    input: &[u8],
+    max_depth: usize,
+) -> IResult<&[u8], PdfValue> {
     parse_value_with_depth(input, 0, max_depth)
+}
+
+fn charge_input<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> Result<(), nom::Err<nom::error::Error<&'a [u8]>>> {
+    budget.consume_input(input.len() as u64).map_err(|_| {
+        nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::TooLarge,
+        ))
+    })
+}
+
+fn charge_object<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> Result<(), nom::Err<nom::error::Error<&'a [u8]>>> {
+    budget.consume_object().map_err(|_| {
+        nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::TooLarge,
+        ))
+    })
 }
 
 fn parse_value_with_depth(
@@ -151,9 +198,26 @@ pub fn parse_indirect_object_with_max_depth(
     input: &[u8],
     max_depth: usize,
 ) -> IResult<&[u8], (ObjectId, PdfValue)> {
+    parse_indirect_object_with_max_depth_and_budget(input, max_depth, &ResourceBudget::default())
+}
+
+pub fn parse_indirect_object_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], (ObjectId, PdfValue)> {
+    parse_indirect_object_with_max_depth_and_budget(input, MAX_NESTING_DEPTH, budget)
+}
+
+pub fn parse_indirect_object_with_max_depth_and_budget<'a>(
+    input: &'a [u8],
+    max_depth: usize,
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], (ObjectId, PdfValue)> {
+    charge_input(input, budget)?;
+    charge_object(input, budget)?;
     let (input, obj_id) = parse_indirect_object_header(input)?;
     let (input, _) = skip_whitespace_and_comments(input)?;
-    let (input, value) = parse_value_with_max_depth(input, max_depth)?;
+    let (input, value) = parse_value_with_max_depth_unbudgeted(input, max_depth)?;
     let (input, _) = skip_whitespace_and_comments(input)?;
 
     let (input, value) =
@@ -193,6 +257,34 @@ pub fn parse_indirect_stream_prefix_with_max_depth(
     input: &[u8],
     max_depth: usize,
 ) -> IResult<&[u8], (ObjectId, PdfDictionary)> {
+    parse_indirect_stream_prefix_with_max_depth_and_budget(
+        input,
+        max_depth,
+        &ResourceBudget::default(),
+    )
+}
+
+pub fn parse_indirect_stream_prefix_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], (ObjectId, PdfDictionary)> {
+    parse_indirect_stream_prefix_with_max_depth_and_budget(input, MAX_NESTING_DEPTH, budget)
+}
+
+pub fn parse_indirect_stream_prefix_with_max_depth_and_budget<'a>(
+    input: &'a [u8],
+    max_depth: usize,
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], (ObjectId, PdfDictionary)> {
+    charge_input(input, budget)?;
+    charge_object(input, budget)?;
+    parse_indirect_stream_prefix_with_max_depth_unbudgeted(input, max_depth)
+}
+
+fn parse_indirect_stream_prefix_with_max_depth_unbudgeted(
+    input: &[u8],
+    max_depth: usize,
+) -> IResult<&[u8], (ObjectId, PdfDictionary)> {
     let (input, obj_num) = integer(input)?;
     let (input, _) = skip_whitespace(input)?;
     let (input, gen_num) = integer(input)?;
@@ -205,7 +297,7 @@ pub fn parse_indirect_stream_prefix_with_max_depth(
         )));
     }
     let (input, _) = skip_whitespace_and_comments(input)?;
-    let (input, value) = parse_value_with_max_depth(input, max_depth)?;
+    let (input, value) = parse_value_with_max_depth_unbudgeted(input, max_depth)?;
     let dict = match value {
         PdfValue::Dictionary(dict) => dict,
         _ => {
@@ -234,7 +326,37 @@ pub fn parse_indirect_object_with_stream_length_and_max_depth(
     length: usize,
     max_depth: usize,
 ) -> IResult<&[u8], (ObjectId, PdfValue)> {
-    let (input, (obj_id, dict)) = parse_indirect_stream_prefix_with_max_depth(input, max_depth)?;
+    parse_indirect_object_with_stream_length_and_max_depth_and_budget(
+        input,
+        length,
+        max_depth,
+        &ResourceBudget::default(),
+    )
+}
+
+pub fn parse_indirect_object_with_stream_length_and_budget<'a>(
+    input: &'a [u8],
+    length: usize,
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], (ObjectId, PdfValue)> {
+    parse_indirect_object_with_stream_length_and_max_depth_and_budget(
+        input,
+        length,
+        MAX_NESTING_DEPTH,
+        budget,
+    )
+}
+
+pub fn parse_indirect_object_with_stream_length_and_max_depth_and_budget<'a>(
+    input: &'a [u8],
+    length: usize,
+    max_depth: usize,
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], (ObjectId, PdfValue)> {
+    charge_input(input, budget)?;
+    charge_object(input, budget)?;
+    let (input, (obj_id, dict)) =
+        parse_indirect_stream_prefix_with_max_depth_unbudgeted(input, max_depth)?;
     let (input, data) = nom::bytes::complete::take(length)(input)?;
     let (input, _) = skip_whitespace(input)?;
     let (input, _) = tag(b"endstream")(input)?;

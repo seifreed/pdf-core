@@ -65,20 +65,26 @@ presupuesto antes de clonar los datos.
 El resolver ya no parsea content streams con un presupuesto por defecto ni
 silencia sus fallos: comparte el presupuesto, conserva el error en el nodo y
 en el estado lossless del stream, y propaga el fallo en modo `Strict`.
+Los parsers publicos de valores, objetos indirectos y prefijos de streams en
+`parser::object_parser` aplican ahora el presupuesto estandar y exponen
+variantes con `ResourceBudget`, con regresion dedicada.
 
 Pendientes actuales, en orden practico:
 
 * **Evidencia remota:** faltan ejecuciones verdes y repetidas del CI completo,
   corpus/differential, ClusterFuzzLite y los seis smoke tests de bindings. Los
-  runs actuales sobre `ef0c6bf` son CI `33037533751`, bindings `33037533735`,
-  corpus externo `33037533757`, diferencial `33037533746`, ClusterFuzzLite
-  `33037533755`, fuzzing `33037533758` y API stability `33037533774`; estaban
+  runs actuales sobre `3526f07` son CI `33037569748`, bindings `33037569749`,
+  corpus externo `33037569719`, diferencial `33037569722`, ClusterFuzzLite
+  `33037569727`, fuzzing `33037569738` y API stability `33037569720`; estaban
   pendientes/en cola al actualizar este documento.
 * **Parser endurecido:** strict y varios recorridos ya tienen guardas, y los
   streams conservan ahora estado lossless explícito, pero falta hacer
   completamente estrictos los modos de error/recuperacion y demostrar que
   `ResourceBudget` cubre toda operacion publica de parseo, resolucion,
-  recorrido, decodificacion y serializacion.
+  recorrido, decodificacion y serializacion. Los helpers sintacticos publicos
+  de bajo nivel en `parser::lexer` siguen sin una variante presupuestada; no
+  deben presentarse como frontera de parseo estructural para entradas no
+  confiables.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa, fusionar las validaciones y

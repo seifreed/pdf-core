@@ -55,6 +55,20 @@ mod parser_tests {
     }
 
     #[test]
+    fn low_level_object_parsers_respect_resource_budgets() {
+        use object_parser::{parse_indirect_object_with_budget, parse_value_with_budget};
+        use pdf_ast::performance::ResourceBudget;
+
+        let input_budget = ResourceBudget::new(2, 1024, 1024, 10, 10, 10, 10, 8);
+        assert!(parse_value_with_budget(b"123", &input_budget).is_err());
+
+        let object_budget = ResourceBudget::new(1024, 1024, 1024, 10, 0, 10, 10, 8);
+        assert!(
+            parse_indirect_object_with_budget(b"1 0 obj\nnull\nendobj", &object_budget).is_err()
+        );
+    }
+
+    #[test]
     fn test_array_parsing() {
         use object_parser::parse_value;
 
