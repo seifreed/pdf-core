@@ -98,6 +98,9 @@ indirecto, evitando marcar como ausente un idioma valido; su regresion pasa
 vacia ni compuesta solo por espacios, y resuelva valores indirectos; su
 regresion pasa `24/24` en validacion, `53/53` en integracion y validacion
 combinadas, y Clippy estricto.
+`06bda33` hace que la regla de estructura etiquetada PDF/UA resuelva tambien
+`MarkInfo` y `StructTreeRoot` indirectos; su regresion pasa `25/25` en
+validacion, `54/54` en las suites combinadas y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
