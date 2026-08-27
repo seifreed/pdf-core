@@ -233,7 +233,7 @@ impl<'a> TextExtractor<'a> {
         };
 
         let mut width_map = HashMap::new();
-        Self::parse_simple_widths(&top_dict, &mut width_map);
+        self.parse_simple_widths(&top_dict, &mut width_map);
         if !descendant_dict.is_empty() {
             self.parse_cid_widths(&descendant_dict, &mut width_map);
         }
@@ -283,11 +283,14 @@ impl<'a> TextExtractor<'a> {
         value.and_then(PdfValue::as_real)
     }
 
-    fn parse_simple_widths(dict: &PdfDictionary, width_map: &mut HashMap<u32, f64>) {
+    fn parse_simple_widths(&self, dict: &PdfDictionary, width_map: &mut HashMap<u32, f64>) {
         let Some(first_char) = dict.get("FirstChar").and_then(PdfValue::as_integer) else {
             return;
         };
-        let Some(PdfValue::Array(widths)) = dict.get("Widths") else {
+        let Some(widths) = dict
+            .get("Widths")
+            .and_then(|value| self.resolve_array(value))
+        else {
             return;
         };
         for (index, width) in widths.iter().enumerate() {
@@ -1010,15 +1013,20 @@ mod tests {
 
     #[test]
     fn uses_pdf_width_for_encoded_byte_not_unicode_codepoint() {
-        let ast = PdfAstGraph::new();
+        let mut ast = PdfAstGraph::new();
         let mut font = PdfDictionary::new();
         font.insert("Subtype", PdfValue::Name(PdfName::new("Type1")));
         font.insert("Encoding", PdfValue::Name(PdfName::new("WinAnsiEncoding")));
         font.insert("FirstChar", PdfValue::Integer(128));
         font.insert(
             "Widths",
-            PdfValue::Array(PdfArray::from(vec![PdfValue::Integer(700)])),
+            PdfValue::Reference(crate::types::PdfReference::new(1, 0)),
         );
+        ast.add_node(AstNode::new(
+            NodeId::new(1),
+            NodeType::Object(ObjectId::new(1, 0)),
+            PdfValue::Array(PdfArray::from(vec![PdfValue::Integer(700)])),
+        ));
         let mut fonts = PdfDictionary::new();
         fonts.insert("F1", PdfValue::Dictionary(font));
         let mut resources = PdfDictionary::new();
