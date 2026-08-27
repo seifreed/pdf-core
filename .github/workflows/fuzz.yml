@@ -53,19 +53,28 @@ jobs:
         run: |
           artifact_dir="$RUNNER_TEMP/fuzz-artifacts"
           log_file="$RUNNER_TEMP/fuzz-${{ matrix.target }}.log"
+          resource_file="$RUNNER_TEMP/fuzz-${{ matrix.target }}.resources"
           summary_file="$RUNNER_TEMP/fuzz-${{ matrix.target }}.summary"
           mkdir -p "$artifact_dir"
           set -o pipefail
-          cargo fuzz run "${{ matrix.target }}" -- \
+          /usr/bin/time -v -o "$resource_file" cargo fuzz run "${{ matrix.target }}" -- \
             -runs=1000 \
             -timeout=5 \
             -print_final_stats=1 \
             -artifact_prefix="$artifact_dir/" 2>&1 | tee "$log_file"
+          peak_rss_kib=$(awk -F: '/Maximum resident set size/ {gsub(/^[[:space:]]+/, "", $2); print $2; exit}' "$resource_file")
+          peak_rss_kib="${peak_rss_kib:-unknown}"
           if find "$artifact_dir" -type f -print -quit | grep -q .; then
-            echo "findings=1" | tee "$summary_file"
+            {
+              echo "findings=1"
+              echo "peak_rss_kib=$peak_rss_kib"
+            } | tee "$summary_file"
             exit 1
           fi
-          echo "findings=0" | tee "$summary_file"
+          {
+            echo "findings=0"
+            echo "peak_rss_kib=$peak_rss_kib"
+          } | tee "$summary_file"
 
       - name: Upload fuzz evidence
         if: always()
@@ -74,6 +83,7 @@ jobs:
           name: fuzz-evidence-${{ matrix.target }}
           path: |
             ${{ runner.temp }}/fuzz-${{ matrix.target }}.log
+            ${{ runner.temp }}/fuzz-${{ matrix.target }}.resources
             ${{ runner.temp }}/fuzz-${{ matrix.target }}.summary
             ${{ runner.temp }}/fuzz-artifacts
           if-no-files-found: error
