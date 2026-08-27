@@ -1,6 +1,6 @@
 use serde_json::Value;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use pdf_ast::validation::pdfa::PdfA1bValidator;
@@ -133,14 +133,14 @@ fn corpus_root() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-fn manifest_fixture_root(root: &PathBuf) -> PathBuf {
+fn manifest_fixture_root(root: &Path) -> PathBuf {
     root.parent()
         .filter(|parent| parent.join("fixtures").is_dir())
         .map(PathBuf::from)
-        .unwrap_or_else(|| root.clone())
+        .unwrap_or_else(|| root.to_path_buf())
 }
 
-fn manifest_fixture_path(root: &PathBuf, relative: &str) -> PathBuf {
+fn manifest_fixture_path(root: &Path, relative: &str) -> PathBuf {
     let path = manifest_fixture_root(root).join(relative);
     if path.is_file() {
         return path;
