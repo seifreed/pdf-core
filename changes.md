@@ -118,6 +118,8 @@ La API pública de xref streams consume también el contador compartido de
 objetos antes de materializar cada entrada, igual que las tablas xref.
 Los fallos de parseo XFA en modo tolerante quedan registrados como
 diagnósticos `xfa_parse` con la acción `skipped_xfa`, además del log.
+Los fallos de decodificación o XML de XMP ya no se silencian en `Strict`;
+`Tolerant` los registra como `xmp_decode`/`xmp_parse` y conserva el stream.
 El parser incremental de `streaming` acepta ahora un `ResourceBudget` compartido:
 cobra cabecera, chunks y nodos, reutiliza el presupuesto al parsear objetos y
 propaga los excesos en lugar de tratarlos como chunks malformados recuperables.

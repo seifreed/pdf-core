@@ -2616,13 +2616,29 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let metadata_id = self.create_xmp_stream_node(&stream, catalog_id)?;
 
         let decoded = match self.decode_xmp_stream(&stream) {
-            Some(data) => data,
-            None => return Ok(()),
+            Ok(data) => data,
+            Err(err) if self.tolerant => {
+                self.record_diagnostic(None, None, "xmp_decode", "skipped_xmp", 0.8, 0, &err)?;
+                return Ok(());
+            }
+            Err(err) => return Err(AstError::ParseError(err)),
         };
 
         let xmp = match XmpMetadata::parse_from_stream_with_budget(&decoded, &self.limits.budget) {
             Ok(metadata) => metadata,
-            Err(_) => return Ok(()),
+            Err(err) if self.tolerant => {
+                self.record_diagnostic(
+                    None,
+                    None,
+                    "xmp_parse",
+                    "skipped_xmp",
+                    0.8,
+                    decoded.len() as u64,
+                    &err,
+                )?;
+                return Ok(());
+            }
+            Err(err) => return Err(AstError::ParseError(err)),
         };
 
         let packet_id = self.create_xmp_packet_node(&xmp, metadata_id)?;
@@ -2667,8 +2683,8 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         Ok(metadata_id)
     }
 
-    fn decode_xmp_stream(&self, stream: &PdfStream) -> Option<Vec<u8>> {
-        stream.decode_with_budget(&self.limits.budget).ok()
+    fn decode_xmp_stream(&self, stream: &PdfStream) -> Result<Vec<u8>, String> {
+        stream.decode_with_budget(&self.limits.budget)
     }
 
     fn create_xmp_packet_node(
@@ -3057,6 +3073,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 #[cfg(test)]
 mod tests {
     use super::{PdfFileParser, XRefEntry, MAX_FORM_FIELD_DEPTH};
+    use crate::ast::NodeType;
     use crate::parser::ParseMode;
     use crate::performance::PerformanceLimits;
     use crate::types::{ObjectId, PdfArray, PdfDictionary, PdfReference, PdfStream, PdfValue};
@@ -3110,6 +3127,30 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.error_code == "xfa_parse"));
+    }
+
+    #[test]
+    fn strict_xmp_parse_error_is_not_silenced() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("valid header should construct parser");
+        let catalog_id = parser
+            .add_to_ast(
+                PdfValue::Dictionary(PdfDictionary::new()),
+                NodeType::Catalog,
+            )
+            .expect("catalog node should be created");
+        let stream = PdfStream::new(PdfDictionary::new(), b"<".to_vec());
+
+        let error = parser
+            .parse_xmp_metadata(&PdfValue::Stream(stream), catalog_id)
+            .expect_err("strict mode must reject malformed XMP");
+        assert!(error.to_string().contains("XML parse error"));
     }
 
     #[test]
