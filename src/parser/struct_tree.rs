@@ -126,7 +126,10 @@ impl<'a> StructTreeParser<'a> {
     fn parse_class_map(&mut self, dict: &PdfDictionary) -> HashMap<String, NodeId> {
         let mut class_map = HashMap::new();
 
-        if let Some(PdfValue::Dictionary(cm)) = dict.get("ClassMap") {
+        if let Some(cm) = dict
+            .get("ClassMap")
+            .and_then(|value| self.resolve_dict(value))
+        {
             for (key, value) in cm.iter() {
                 match value {
                     PdfValue::Reference(obj_id) => {
@@ -780,17 +783,32 @@ mod tests {
                 dict
             }),
         );
+        let class_id = ast.create_node(
+            NodeType::Object(ObjectId::new(7, 0)),
+            PdfValue::Dictionary(PdfDictionary::new()),
+        );
+        let class_map_id = ast.create_node(
+            NodeType::Object(ObjectId::new(6, 0)),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Layout", PdfValue::Reference(PdfReference::new(7, 0)));
+                dict
+            }),
+        );
         let mut resolver = ObjectNodeMap::new();
         resolver.insert(ObjectId::new(1, 0), element_id);
         resolver.insert(ObjectId::new(2, 0), language_id);
         resolver.insert(ObjectId::new(3, 0), alt_id);
         resolver.insert(ObjectId::new(4, 0), actual_id);
         resolver.insert(ObjectId::new(5, 0), role_map_id);
+        resolver.insert(ObjectId::new(6, 0), class_map_id);
+        resolver.insert(ObjectId::new(7, 0), class_id);
 
         let mut root_dict = PdfDictionary::new();
         root_dict.insert("ParentTree", PdfValue::Dictionary(PdfDictionary::new()));
         root_dict.insert("K", PdfValue::Reference(PdfReference::new(1, 0)));
         root_dict.insert("RoleMap", PdfValue::Reference(PdfReference::new(5, 0)));
+        root_dict.insert("ClassMap", PdfValue::Reference(PdfReference::new(6, 0)));
         let mut parser = StructTreeParser::new(&mut ast, &resolver);
         let tree = parser
             .parse_struct_tree_root(&root_dict)
@@ -822,6 +840,7 @@ mod tests {
             tree.role_map.get("/Figure").map(String::as_str),
             Some("Figure")
         );
+        assert_eq!(tree.class_map.get("/Layout"), Some(&class_id));
     }
 
     #[test]
