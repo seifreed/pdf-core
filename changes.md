@@ -92,6 +92,9 @@ presupuesto que limitan objetos y bytes de salida, manteniendo las APIs legacy
 con resultados parciales.
 Las consultas de texto de `StructTreeParser` y el almacenamiento de contenido
 MCID cobran objetos y bytes antes de materializar resultados o metadatos.
+Las colecciones y recorridos públicos de `PdfAstGraph` ofrecen variantes con
+presupuesto para nodos, aristas, rutas, BFS/DFS y walkers; las APIs legacy
+mantienen wrappers acotados con los límites por defecto.
 El parseo de cabeceras de object streams limita tambien el numero de entradas
 con el mismo presupuesto en sus rutas publicas e internas.
 El parser publico de imagenes inline tambien rechaza entradas que exceden el

@@ -1,5 +1,6 @@
 use crate::ast::{AstNode, NodeId, NodeType};
 use crate::events::AstEventListener;
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::types::{ObjectId, PdfReference, PdfValue};
 use crate::visitor::{AstWalker as VisitorAstWalker, Visitor};
 use petgraph::graph::NodeIndex;
@@ -67,6 +68,15 @@ impl PdfAstGraph {
         F: FnMut(&AstNode),
     {
         self.walk_nodes(&mut CallbackVisitor { callback: &mut f });
+    }
+
+    pub fn walk_nodes_with_budget<V: Visitor>(
+        &self,
+        visitor: &mut V,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError> {
+        let mut walker = VisitorAstWalker::new(self);
+        walker.walk_with_budget(visitor, budget)
     }
 
     /// Creates a new PDF AST graph with content-based deterministic node IDs.
@@ -301,7 +311,20 @@ impl PdfAstGraph {
     /// # Returns
     /// A vector containing immutable references to all nodes in the graph
     pub fn get_all_nodes(&self) -> Vec<&AstNode> {
-        self.graph.node_weights().collect()
+        self.get_all_nodes_with_budget(&ResourceBudget::default())
+            .unwrap_or_default()
+    }
+
+    pub fn get_all_nodes_with_budget(
+        &self,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<&AstNode>, ResourceBudgetError> {
+        let mut nodes = Vec::new();
+        for node in self.graph.node_weights() {
+            budget.consume_node()?;
+            nodes.push(node);
+        }
+        Ok(nodes)
     }
 
     /// Returns all edges in the graph with their source, target, and type information.
@@ -309,18 +332,27 @@ impl PdfAstGraph {
     /// # Returns
     /// A vector of `EdgeInfo` structs describing all edges in the graph
     pub fn get_all_edges(&self) -> Vec<EdgeInfo> {
+        self.get_all_edges_with_budget(&ResourceBudget::default())
+            .unwrap_or_default()
+    }
+
+    pub fn get_all_edges_with_budget(
+        &self,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<EdgeInfo>, ResourceBudgetError> {
         let mut edges = Vec::new();
-        let node_id_reverse_map: HashMap<NodeIndex, NodeId> = self
-            .node_map
-            .iter()
-            .map(|(&node_id, &index)| (index, node_id))
-            .collect();
+        let mut node_id_reverse_map = HashMap::new();
+        for (&node_id, &index) in &self.node_map {
+            budget.consume_node()?;
+            node_id_reverse_map.insert(index, node_id);
+        }
 
         for edge_ref in self.graph.edge_references() {
             if let (Some(&from_id), Some(&to_id)) = (
                 node_id_reverse_map.get(&edge_ref.source()),
                 node_id_reverse_map.get(&edge_ref.target()),
             ) {
+                budget.consume_edge()?;
                 edges.push(EdgeInfo {
                     from: from_id,
                     to: to_id,
@@ -329,7 +361,7 @@ impl PdfAstGraph {
             }
         }
 
-        edges
+        Ok(edges)
     }
 
     /// Returns the total number of nodes in the graph.
@@ -390,16 +422,23 @@ impl PdfAstGraph {
     /// # Returns
     /// A vector of `NodeId`s for all nodes matching the specified type
     pub fn find_nodes_by_type(&self, node_type: NodeType) -> Vec<NodeId> {
-        self.graph
-            .node_weights()
-            .filter_map(|node| {
-                if std::mem::discriminant(&node.node_type) == std::mem::discriminant(&node_type) {
-                    Some(node.id)
-                } else {
-                    None
-                }
-            })
-            .collect()
+        self.find_nodes_by_type_with_budget(node_type, &ResourceBudget::default())
+            .unwrap_or_default()
+    }
+
+    pub fn find_nodes_by_type_with_budget(
+        &self,
+        node_type: NodeType,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<NodeId>, ResourceBudgetError> {
+        let mut nodes = Vec::new();
+        for node in self.graph.node_weights() {
+            if std::mem::discriminant(&node.node_type) == std::mem::discriminant(&node_type) {
+                budget.consume_node()?;
+                nodes.push(node.id);
+            }
+        }
+        Ok(nodes)
     }
 
     /// Adds a directed edge between two nodes in the graph.
@@ -466,20 +505,27 @@ impl PdfAstGraph {
     /// # Returns
     /// A vector of `NodeId`s for all nodes connected via `EdgeType::Child` edges
     pub fn get_children(&self, node_id: NodeId) -> Vec<NodeId> {
+        self.get_children_with_budget(node_id, &ResourceBudget::default())
+            .unwrap_or_default()
+    }
+
+    pub fn get_children_with_budget(
+        &self,
+        node_id: NodeId,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<NodeId>, ResourceBudgetError> {
+        let mut children = Vec::new();
         if let Some(&index) = self.node_map.get(&node_id) {
-            self.graph
-                .edges(index)
-                .filter_map(|edge| {
-                    if *edge.weight() == EdgeType::Child {
-                        self.graph.node_weight(edge.target()).map(|node| node.id)
-                    } else {
-                        None
+            for edge in self.graph.edges(index) {
+                if *edge.weight() == EdgeType::Child {
+                    if let Some(node) = self.graph.node_weight(edge.target()) {
+                        budget.consume_node()?;
+                        children.push(node.id);
                     }
-                })
-                .collect()
-        } else {
-            Vec::new()
+                }
+            }
         }
+        Ok(children)
     }
 
     /// Returns all nodes referenced by the specified node.
@@ -490,20 +536,27 @@ impl PdfAstGraph {
     /// # Returns
     /// A vector of `NodeId`s for all nodes connected via `EdgeType::Reference` edges
     pub fn get_references(&self, node_id: NodeId) -> Vec<NodeId> {
+        self.get_references_with_budget(node_id, &ResourceBudget::default())
+            .unwrap_or_default()
+    }
+
+    pub fn get_references_with_budget(
+        &self,
+        node_id: NodeId,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<NodeId>, ResourceBudgetError> {
+        let mut references = Vec::new();
         if let Some(&index) = self.node_map.get(&node_id) {
-            self.graph
-                .edges(index)
-                .filter_map(|edge| {
-                    if *edge.weight() == EdgeType::Reference {
-                        self.graph.node_weight(edge.target()).map(|node| node.id)
-                    } else {
-                        None
+            for edge in self.graph.edges(index) {
+                if *edge.weight() == EdgeType::Reference {
+                    if let Some(node) = self.graph.node_weight(edge.target()) {
+                        budget.consume_node()?;
+                        references.push(node.id);
                     }
-                })
-                .collect()
-        } else {
-            Vec::new()
+                }
+            }
         }
+        Ok(references)
     }
 
     /// Resolves a PDF indirect reference to its corresponding AST node.
@@ -528,16 +581,29 @@ impl PdfAstGraph {
     where
         F: FnMut(&AstNode),
     {
+        let _ = self.bfs_from_root_with_budget(&mut visitor, &ResourceBudget::default());
+    }
+
+    pub fn bfs_from_root_with_budget<F>(
+        &self,
+        visitor: &mut F,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError>
+    where
+        F: FnMut(&AstNode),
+    {
         if let Some(root_id) = self.root {
             if let Some(&root_index) = self.node_map.get(&root_id) {
                 let mut bfs = Bfs::new(&self.graph, root_index);
                 while let Some(nx) = bfs.next(&self.graph) {
                     if let Some(node) = self.graph.node_weight(nx) {
+                        budget.consume_node()?;
                         visitor(node);
                     }
                 }
             }
         }
+        Ok(())
     }
 
     /// Performs a depth-first traversal of the graph starting from the root node.
@@ -551,16 +617,29 @@ impl PdfAstGraph {
     where
         F: FnMut(&AstNode),
     {
+        let _ = self.dfs_from_root_with_budget(&mut visitor, &ResourceBudget::default());
+    }
+
+    pub fn dfs_from_root_with_budget<F>(
+        &self,
+        visitor: &mut F,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError>
+    where
+        F: FnMut(&AstNode),
+    {
         if let Some(root_id) = self.root {
             if let Some(&root_index) = self.node_map.get(&root_id) {
                 let mut dfs = Dfs::new(&self.graph, root_index);
                 while let Some(nx) = dfs.next(&self.graph) {
                     if let Some(node) = self.graph.node_weight(nx) {
+                        budget.consume_node()?;
                         visitor(node);
                     }
                 }
             }
         }
+        Ok(())
     }
 
     /// Finds all nodes marked as containing errors during parsing.
@@ -568,11 +647,20 @@ impl PdfAstGraph {
     /// # Returns
     /// A vector of `NodeId`s for nodes that encountered parse errors
     pub fn find_error_nodes(&self) -> Vec<NodeId> {
-        self.graph
-            .node_weights()
-            .filter(|node| node.is_error())
-            .map(|node| node.id)
-            .collect()
+        self.find_error_nodes_with_budget(&ResourceBudget::default())
+            .unwrap_or_default()
+    }
+
+    pub fn find_error_nodes_with_budget(
+        &self,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<NodeId>, ResourceBudgetError> {
+        let mut nodes = Vec::new();
+        for node in self.graph.node_weights().filter(|node| node.is_error()) {
+            budget.consume_node()?;
+            nodes.push(node.id);
+        }
+        Ok(nodes)
     }
 
     pub fn get_graph(&self) -> &Graph<AstNode, EdgeType> {
@@ -655,15 +743,38 @@ impl PdfAstGraph {
     }
 
     pub fn node_indices(&self) -> Vec<NodeId> {
-        self.node_map.keys().copied().collect()
+        self.node_indices_with_budget(&ResourceBudget::default())
+            .unwrap_or_default()
+    }
+
+    pub fn node_indices_with_budget(
+        &self,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<NodeId>, ResourceBudgetError> {
+        let mut nodes = Vec::new();
+        for node_id in self.node_map.keys().copied() {
+            budget.consume_node()?;
+            nodes.push(node_id);
+        }
+        Ok(nodes)
     }
 
     pub fn get_path_to_root(&self, node_id: NodeId) -> Vec<NodeId> {
+        self.get_path_to_root_with_budget(node_id, &ResourceBudget::default())
+            .unwrap_or_default()
+    }
+
+    pub fn get_path_to_root_with_budget(
+        &self,
+        node_id: NodeId,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<NodeId>, ResourceBudgetError> {
         let mut path = Vec::new();
         let mut current = node_id;
         let mut visited = HashSet::new();
 
         while visited.insert(current) {
+            budget.consume_node()?;
             path.push(current);
             if let Some(parent) = self.get_parent(current) {
                 current = parent;
@@ -672,7 +783,7 @@ impl PdfAstGraph {
             }
         }
         path.reverse();
-        path
+        Ok(path)
     }
 
     pub fn get_page_number(&self, node_id: NodeId) -> Option<usize> {
@@ -714,7 +825,15 @@ impl PdfAstGraph {
     }
 
     pub fn raw_edges(&self) -> Vec<EdgeInfo> {
-        self.get_all_edges()
+        self.raw_edges_with_budget(&ResourceBudget::default())
+            .unwrap_or_default()
+    }
+
+    pub fn raw_edges_with_budget(
+        &self,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<EdgeInfo>, ResourceBudgetError> {
+        self.get_all_edges_with_budget(budget)
     }
 
     /// Calculates the maximum depth of the graph from the root node.
@@ -758,16 +877,26 @@ impl PdfAstGraph {
     }
 
     pub fn get_edges_from(&self, node_id: NodeId) -> Vec<EdgeInfo> {
+        self.get_edges_from_with_budget(node_id, &ResourceBudget::default())
+            .unwrap_or_default()
+    }
+
+    pub fn get_edges_from_with_budget(
+        &self,
+        node_id: NodeId,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<EdgeInfo>, ResourceBudgetError> {
         let mut edges = Vec::new();
         if let Some(&index) = self.node_map.get(&node_id) {
-            let node_id_reverse_map: HashMap<NodeIndex, NodeId> = self
-                .node_map
-                .iter()
-                .map(|(&node_id, &index)| (index, node_id))
-                .collect();
+            let mut node_id_reverse_map = HashMap::new();
+            for (&id, &index) in &self.node_map {
+                budget.consume_node()?;
+                node_id_reverse_map.insert(index, id);
+            }
 
             for edge in self.graph.edges(index) {
                 if let Some(&target_id) = node_id_reverse_map.get(&edge.target()) {
+                    budget.consume_edge()?;
                     edges.push(EdgeInfo {
                         from: node_id,
                         to: target_id,
@@ -776,7 +905,7 @@ impl PdfAstGraph {
                 }
             }
         }
-        edges
+        Ok(edges)
     }
 }
 
@@ -816,5 +945,19 @@ mod tests {
         assert_eq!(graph.get_max_depth(), 2);
         assert_eq!(graph.get_path_to_root(second), vec![first, second]);
         assert_eq!(graph.get_page_number(first), Some(1));
+    }
+
+    #[test]
+    fn graph_collection_queries_report_budget_exhaustion() {
+        let mut graph = PdfAstGraph::new();
+        graph.add_node(AstNode::new(NodeId(0), NodeType::Unknown, PdfValue::Null));
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 0, 10, 10);
+
+        assert_eq!(
+            graph
+                .get_all_nodes_with_budget(&budget)
+                .expect_err("graph node collection must respect the node budget"),
+            ResourceBudgetError::Nodes
+        );
     }
 }
