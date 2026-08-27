@@ -511,7 +511,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let mut entries: std::collections::HashMap<ObjectId, XRefEntry> =
             table_entries.into_iter().collect();
 
-        let trailer = match Self::extract_trailer_dict(remaining, self.limits.max_depth) {
+        let trailer = match Self::extract_trailer_dict_with_budget(
+            remaining,
+            self.limits.max_depth,
+            &self.limits.budget,
+        ) {
             Some(dict) => dict,
             None => return Ok(None),
         };
@@ -545,11 +549,20 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn extract_trailer_dict(data: &[u8], max_depth: usize) -> Option<PdfDictionary> {
+        Self::extract_trailer_dict_with_budget(data, max_depth, &ResourceBudget::default())
+    }
+
+    fn extract_trailer_dict_with_budget(
+        data: &[u8],
+        max_depth: usize,
+        budget: &ResourceBudget,
+    ) -> Option<PdfDictionary> {
         let trailer_pos = Self::find_pattern(data, TRAILER_KEYWORD)?;
         let trailer_data = &data[trailer_pos + TRAILER_KEYWORD.len()..];
         let trailer_data = Self::skip_whitespace(trailer_data);
 
-        match object_parser::parse_value_with_max_depth(trailer_data, max_depth) {
+        match object_parser::parse_value_with_max_depth_and_budget(trailer_data, max_depth, budget)
+        {
             Ok((_, PdfValue::Dictionary(dict))) => Some(dict),
             _ => None,
         }
@@ -3099,5 +3112,13 @@ mod tests {
         let trailer = b"trailer << /Nested [1] >>";
         assert!(Parser::extract_trailer_dict(trailer, 0).is_none());
         assert!(Parser::extract_trailer_dict(trailer, 256).is_some());
+    }
+
+    #[test]
+    fn trailer_parsing_respects_shared_input_budget() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let trailer = b"trailer << /Name (long value) >>";
+        let budget = crate::performance::ResourceBudget::new(1, 1024, 1024, 100, 10, 10, 10, 8);
+        assert!(Parser::extract_trailer_dict_with_budget(trailer, 256, &budget).is_none());
     }
 }
