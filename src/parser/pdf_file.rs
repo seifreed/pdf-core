@@ -3509,6 +3509,23 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 return Err(AstError::ParseError(err));
             }
         }
+
+        let resolver_map = resolver.get_object_node_map();
+        let catalog = self
+            .document
+            .catalog
+            .and_then(|catalog_id| self.document.ast.get_node(catalog_id))
+            .and_then(|node| node.as_dict())
+            .cloned();
+        if let Some(catalog) = catalog {
+            let mut output_intents =
+                crate::parser::output_intents::OutputIntentsParser::new_with_budget(
+                    &mut self.document.ast,
+                    &resolver_map,
+                    &self.limits.budget,
+                );
+            output_intents.parse_output_intents(&catalog);
+        }
         Ok(())
     }
 }

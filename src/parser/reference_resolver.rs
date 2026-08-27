@@ -88,6 +88,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         })
     }
 
+    pub fn get_object_node_map(&self) -> ObjectNodeMap {
+        ObjectNodeMap::from_map(self.object_to_node.clone())
+    }
+
     /// Create resolver using existing document xref information
     pub fn from_document(
         reader: R,
