@@ -189,8 +189,7 @@ mod tests {
         let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 1, 10, 8);
         let mut parser = ContentStreamParser::new_with_budget(&budget);
 
-        let operators = parser.parse(b"1 0 m 2 0 l").expect("content should parse");
-        assert_eq!(operators.len(), 1);
+        assert!(parser.parse(b"1 0 m 2 0 l").is_err());
     }
 
     #[test]

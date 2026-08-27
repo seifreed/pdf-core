@@ -78,9 +78,7 @@ pub fn parse_content_stream_with_budget(
         }
         // Try to parse operator
         else if let Ok((rest, op)) = parse_operator_with_operands(remaining, &mut operand_stack) {
-            if budget.consume_node().is_err() {
-                break;
-            }
+            budget.consume_node()?;
             operators.push(op);
             remaining = rest;
         }
@@ -127,9 +125,7 @@ pub fn parse_content_stream_with_offsets_with_budget(
             operand_stack.push(operand);
             remaining = rest;
         } else if let Ok((rest, op)) = parse_operator_with_operands(remaining, &mut operand_stack) {
-            if budget.consume_node().is_err() {
-                break;
-            }
+            budget.consume_node()?;
             let offset = base_len.saturating_sub(remaining.len());
             operators.push(ContentOperatorWithOffset {
                 operator: op,

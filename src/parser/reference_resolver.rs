@@ -1078,7 +1078,17 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                     match decode_stream_with_budget(data, &filters, &self.limits.budget) {
                         Ok(decoded) => decoded,
                         Err(e) => {
-                            warn!("Failed to decode stream: {}", e);
+                            let message = format!("Failed to decode stream: {}", e);
+                            self.record_stream_issue(
+                                ast,
+                                stream_node_id,
+                                crate::ast::ErrorCode::CorruptedStream,
+                                message.clone(),
+                                "stream_decode_skipped",
+                            );
+                            if !self.tolerant {
+                                return Err(message);
+                            }
                             continue;
                         }
                     }
@@ -1092,55 +1102,72 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                     continue;
                 };
 
-                // Parse content stream operators
-                let mut parser = content_stream::ContentStreamParser::new();
-                match parser.parse(&stream_data) {
-                    Ok(operators) => {
-                        let indexed =
-                            content_operands::parse_content_stream_with_offsets(&stream_data);
-                        if indexed.is_empty() {
-                            // fallback to operator list only
-                            for (i, op) in operators.iter().enumerate() {
-                                let op_node_id = self.create_operator_node(ast, op, i)?;
-                                self.add_edge(ast, stream_node_id, op_node_id, EdgeType::Child)?;
-                            }
-                            info!(
-                                "Created {} operator nodes for stream {:?}",
-                                operators.len(),
-                                stream_node_id
-                            );
-                        } else {
-                            for (i, item) in indexed.iter().enumerate() {
-                                let op_node_id =
-                                    self.create_operator_node(ast, &item.operator, i)?;
-                                if let Some(node) = ast.get_node_mut(op_node_id) {
-                                    node.metadata.offset = Some(item.offset as u64);
-                                    node.metadata.properties.insert(
-                                        "stream_local_offset".to_string(),
-                                        item.offset.to_string(),
-                                    );
-                                    node.metadata.properties.insert(
-                                        "content_operator_index".to_string(),
-                                        i.to_string(),
-                                    );
-                                }
-                                self.add_edge(ast, stream_node_id, op_node_id, EdgeType::Child)?;
-                            }
-                            info!(
-                                "Created {} operator nodes with offsets for stream {:?}",
-                                indexed.len(),
-                                stream_node_id
-                            );
+                let indexed = match content_operands::parse_content_stream_with_offsets_with_budget(
+                    &stream_data,
+                    &self.limits.budget,
+                ) {
+                    Ok(indexed) => indexed,
+                    Err(error) => {
+                        let message = format!("Failed to parse content stream: {}", error);
+                        self.record_stream_issue(
+                            ast,
+                            stream_node_id,
+                            crate::ast::ErrorCode::InvalidSyntax,
+                            message.clone(),
+                            "content_stream_skipped",
+                        );
+                        if !self.tolerant {
+                            return Err(message);
                         }
+                        continue;
                     }
-                    Err(e) => {
-                        warn!("Failed to parse content stream: {:?}", e);
+                };
+
+                for (i, item) in indexed.iter().enumerate() {
+                    let op_node_id = self.create_operator_node(ast, &item.operator, i)?;
+                    if let Some(node) = ast.get_node_mut(op_node_id) {
+                        node.metadata.offset = Some(item.offset as u64);
+                        node.metadata
+                            .properties
+                            .insert("stream_local_offset".to_string(), item.offset.to_string());
+                        node.metadata
+                            .properties
+                            .insert("content_operator_index".to_string(), i.to_string());
                     }
+                    self.add_edge(ast, stream_node_id, op_node_id, EdgeType::Child)?;
                 }
+                info!(
+                    "Created {} operator nodes with offsets for stream {:?}",
+                    indexed.len(),
+                    stream_node_id
+                );
             }
         }
 
         Ok(())
+    }
+
+    fn record_stream_issue(
+        &self,
+        ast: &mut PdfAstGraph,
+        stream_node_id: NodeId,
+        code: crate::ast::ErrorCode,
+        message: String,
+        recovery: &str,
+    ) {
+        if let Some(node) = ast.get_node_mut(stream_node_id) {
+            let offset = node.metadata.offset;
+            node.metadata.errors.push(crate::ast::ParseError {
+                code,
+                message: message.clone(),
+                offset,
+                recoverable: self.tolerant,
+            });
+            node.metadata.warnings.push(message);
+            node.metadata
+                .properties
+                .insert("recovery".to_string(), recovery.to_string());
+        }
     }
 
     fn build_javascript_nodes(&mut self, ast: &mut PdfAstGraph) -> Result<(), String> {
@@ -1476,6 +1503,54 @@ mod tests {
         }
 
         assert_eq!(resolver.pending_references.len(), 1);
+    }
+
+    #[test]
+    fn content_stream_failures_are_recorded_or_rejected_by_mode() {
+        let mut dictionary = PdfDictionary::new();
+        dictionary.insert(
+            "Filter",
+            PdfValue::Name(crate::types::PdfName::new("FlateDecode")),
+        );
+
+        let make_ast = || {
+            let mut ast = PdfAstGraph::new();
+            ast.create_node(
+                NodeType::ContentStream,
+                PdfValue::Stream(crate::types::PdfStream::new(
+                    dictionary.clone(),
+                    b"not a flate stream".to_vec(),
+                )),
+            );
+            ast
+        };
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+
+        let mut tolerant = ReferenceResolver::from_document(
+            Cursor::new(Vec::new()),
+            &document,
+            true,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut tolerant_ast = make_ast();
+        tolerant
+            .build_content_stream_ast(&mut tolerant_ast)
+            .expect("tolerant mode should preserve the failure and continue");
+        let tolerant_node = tolerant_ast.get_node(crate::ast::NodeId::new(0)).unwrap();
+        assert!(tolerant_node.is_error());
+        assert_eq!(
+            tolerant_node.metadata.properties.get("recovery"),
+            Some(&"stream_decode_skipped".to_string())
+        );
+
+        let mut strict = ReferenceResolver::from_document(
+            Cursor::new(Vec::new()),
+            &document,
+            false,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut strict_ast = make_ast();
+        assert!(strict.build_content_stream_ast(&mut strict_ast).is_err());
     }
 
     #[test]
