@@ -40,6 +40,11 @@ El ultimo SHA publicado es `e3f0d83`; sus workflows de corpus, diferencial,
 fuzzing, API, bindings y CI aun estan pendientes o en cola y no se deben
 contar como evidencia verde hasta completar.
 
+`bb624f1` completa la preservacion del mapeo `ObjectId` en el round-trip de
+serializacion tambien para nodos semanticos, no solo para `NodeType::Object`.
+El chequeo local de `cargo-semver-checks` sigue pasando contra `pdf-ast`
+`0.1.0` (254 checks omitidos por tratarse de un salto mayor alpha).
+
 Avance publicado en `f2e8a5f`: el smoke test de instalación JavaScript ejecuta
 la carga del addon nativo en un proceso hijo, evitando el bloqueo `EPERM` de
 Windows durante la limpieza del directorio temporal. Avance publicado en
