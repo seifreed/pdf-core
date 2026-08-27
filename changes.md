@@ -186,6 +186,8 @@ memoria o contadores como errores terminales; ya no intenta recuperar ni
 construir un documento best-effort después de cruzar un límite de seguridad.
 La fase de recovery conserva ahora el buffer original prestado hasta que una
 estrategia produce datos modificados, eliminando la copia inicial completa.
+La construcción best-effort de recovery reutiliza el presupuesto del parser y
+limita nodos, aristas y copias de objetos antes de materializarlos.
 El timeout configurado en `RecoveryConfig` se comprueba antes de cada
 estrategia y antes del parseo final, evitando recuperaciones sin límite
 temporal.

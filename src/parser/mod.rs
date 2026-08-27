@@ -125,6 +125,10 @@ impl PdfParser {
         self.mode
     }
 
+    pub(crate) fn resource_budget(&self) -> ResourceBudget {
+        self.limits.budget.clone()
+    }
+
     /// Sets the maximum nesting depth for PDF objects.
     ///
     /// # Arguments

@@ -405,7 +405,12 @@ impl RecoveryParser {
 
     /// Create a best-effort document when all recovery fails
     fn create_best_effort_document(&self, data: &[u8]) -> AstResult<PdfDocument> {
+        let budget = self.base_parser.resource_budget();
+        budget
+            .consume_node()
+            .map_err(|error| AstError::ParseError(error.to_string()))?;
         let mut document = PdfDocument::new(crate::ast::PdfVersion { major: 1, minor: 4 });
+        document.budget = budget.clone();
 
         // Create minimal document structure
         let catalog_id = document.ast.create_node(
@@ -422,8 +427,11 @@ impl RecoveryParser {
         document.ast.set_root(catalog_id);
 
         // Try to extract any recognizable objects
-        let objects = self.extract_salvageable_objects(data);
+        let objects = self.extract_salvageable_objects(data, &budget)?;
         for object in objects {
+            budget
+                .consume_edge()
+                .map_err(|error| AstError::ParseError(error.to_string()))?;
             let node_id = document.ast.create_node(object.node_type, object.value);
             // Link to catalog if possible
             document
@@ -435,7 +443,11 @@ impl RecoveryParser {
     }
 
     /// Extract any objects that can be salvaged from corrupted data
-    fn extract_salvageable_objects(&self, data: &[u8]) -> Vec<AstNode> {
+    fn extract_salvageable_objects(
+        &self,
+        data: &[u8],
+        budget: &ResourceBudget,
+    ) -> AstResult<Vec<AstNode>> {
         let mut objects = Vec::new();
         let mut pos = 0;
 
@@ -448,6 +460,12 @@ impl RecoveryParser {
                     let obj_data = &data[pos..pos + obj_end];
 
                     // Try to parse this object
+                    budget
+                        .consume_node()
+                        .map_err(|error| AstError::ParseError(error.to_string()))?;
+                    budget
+                        .consume_decoded(obj_data.len() as u64)
+                        .map_err(|error| AstError::ParseError(error.to_string()))?;
                     if let Ok(node) = self.parse_partial_object(obj_data) {
                         objects.push(node);
                     }
@@ -461,7 +479,7 @@ impl RecoveryParser {
             }
         }
 
-        objects
+        Ok(objects)
     }
 
     /// Find the start of a PDF object
@@ -622,5 +640,16 @@ mod tests {
             .parse_with_recovery(b"not a pdf")
             .expect_err("zero timeout must stop recovery");
         assert!(error.to_string().contains("timeout"));
+    }
+
+    #[test]
+    fn best_effort_recovery_respects_node_budget() {
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 8);
+        let parser = RecoveryParser::new(RecoveryConfig::default()).with_resource_budget(budget);
+
+        let error = parser
+            .create_best_effort_document(b"not a pdf")
+            .expect_err("best-effort recovery must not bypass node limits");
+        assert!(error.to_string().contains("Nodes"));
     }
 }
