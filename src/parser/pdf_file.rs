@@ -1449,7 +1449,22 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                         )?;
                         None
                     }
-                    None => None,
+                    None => {
+                        let message = "Catalog is missing the required /Pages reference";
+                        if !self.tolerant {
+                            return Err(AstError::ParseError(message.to_string()));
+                        }
+                        self.record_diagnostic(
+                            None,
+                            None,
+                            "missing_pages_root",
+                            "skipped_page_tree",
+                            1.0,
+                            0,
+                            message,
+                        )?;
+                        None
+                    }
                 };
 
                 if let Some(pages_ref) = pages_ref {

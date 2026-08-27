@@ -221,6 +221,26 @@ mod integration_tests {
             .any(|diagnostic| diagnostic.error_code == "invalid_pages_root"));
     }
 
+    #[test]
+    fn missing_catalog_pages_root_is_strict_error_or_tolerant_diagnostic() {
+        let pdf = create_pdf_without_catalog_pages_root();
+
+        let error = PdfParser::strict()
+            .parse_bytes(&pdf)
+            .expect_err("strict mode must reject a catalog without /Pages");
+        assert!(error
+            .to_string()
+            .contains("missing the required /Pages reference"));
+
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant mode should retain a diagnostic");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "missing_pages_root"));
+    }
+
     /// Test filter decoding
     #[test]
     fn test_filter_decoding() {
@@ -536,6 +556,21 @@ startxref
         for offset in offsets.iter().skip(1) {
             pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
         }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 2 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_without_catalog_pages_root() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let object = b"1 0 obj\n<< /Type /Catalog >>\nendobj\n";
+        let offset = pdf.len();
+        pdf.extend_from_slice(object);
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 2\n0000000000 65535 f \n");
+        pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
         pdf.extend_from_slice(
             format!("trailer\n<< /Size 2 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
                 .as_bytes(),
