@@ -208,13 +208,6 @@ impl PdfSchema for PdfASchema {
     }
 
     fn validate(&self, document: &PdfDocument) -> ValidationReport {
-        if self.level == PdfALevel::PdfA1b {
-            let mut report = crate::validation::pdfa::PdfA1bValidator::new().validate(document);
-            report.schema_name = self.name().to_string();
-            report.schema_version = self.version().to_string();
-            return report;
-        }
-
         let mut report = ValidationReport::new(self.name().to_string(), self.version().to_string());
         let context = ValidationContext::new(document, &mut report);
 
@@ -234,6 +227,10 @@ impl PdfSchema for PdfASchema {
     }
 
     fn get_constraints(&self) -> Vec<Box<dyn SchemaConstraint>> {
+        if self.level == PdfALevel::PdfA1b {
+            return crate::validation::pdfa::PdfA1bValidator::new().constraints();
+        }
+
         let mut constraints: Vec<Box<dyn SchemaConstraint>> = vec![
             Box::new(HasCatalogConstraint),
             Box::new(HasPagesTreeConstraint),
@@ -436,5 +433,16 @@ mod tests {
         assert!(!pdfua1.supports_pdf_version(&PdfVersion::new(2, 0)));
         assert!(pdfua2.supports_pdf_version(&PdfVersion::new(2, 0)));
         assert!(!pdfua2.supports_pdf_version(&PdfVersion::new(1, 7)));
+    }
+
+    #[test]
+    fn pdfa1b_registry_uses_the_shared_constraint_set() {
+        let schema = PdfASchema::new(PdfALevel::PdfA1b);
+        let constraints = schema.get_constraints();
+
+        assert_eq!(constraints.len(), 13);
+        assert!(constraints
+            .iter()
+            .all(|constraint| constraint.name().starts_with("pdfa-1b-")));
     }
 }

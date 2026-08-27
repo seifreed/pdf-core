@@ -1,11 +1,120 @@
 use crate::ast::{NodeId, NodeType, PdfDocument};
 use crate::types::{PdfDictionary, PdfValue};
-use crate::validation::{ValidationIssue, ValidationReport, ValidationSeverity};
+use crate::validation::{
+    ConstraintCategory, SchemaConstraint, ValidationIssue, ValidationReport, ValidationSeverity,
+};
 use std::collections::HashSet;
 
 /// PDF/A-1b validator implementing ISO 19005-1:2005 Level B requirements
 pub struct PdfA1bValidator {
     strict_mode: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PdfA1bConstraintKind {
+    Version,
+    ColorSpaces,
+    Fonts,
+    Images,
+    Multimedia,
+    JavaScript,
+    Annotations,
+    Forms,
+    Encryption,
+    Metadata,
+    Transparency,
+    FileSpecification,
+    CrossReference,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PdfA1bConstraint {
+    strict_mode: bool,
+    kind: PdfA1bConstraintKind,
+}
+
+impl PdfA1bConstraint {
+    fn new(strict_mode: bool, kind: PdfA1bConstraintKind) -> Self {
+        Self { strict_mode, kind }
+    }
+}
+
+impl SchemaConstraint for PdfA1bConstraint {
+    fn name(&self) -> &str {
+        match self.kind {
+            PdfA1bConstraintKind::Version => "pdfa-1b-version",
+            PdfA1bConstraintKind::ColorSpaces => "pdfa-1b-color-spaces",
+            PdfA1bConstraintKind::Fonts => "pdfa-1b-fonts",
+            PdfA1bConstraintKind::Images => "pdfa-1b-images",
+            PdfA1bConstraintKind::Multimedia => "pdfa-1b-multimedia",
+            PdfA1bConstraintKind::JavaScript => "pdfa-1b-javascript",
+            PdfA1bConstraintKind::Annotations => "pdfa-1b-annotations",
+            PdfA1bConstraintKind::Forms => "pdfa-1b-forms",
+            PdfA1bConstraintKind::Encryption => "pdfa-1b-encryption",
+            PdfA1bConstraintKind::Metadata => "pdfa-1b-metadata",
+            PdfA1bConstraintKind::Transparency => "pdfa-1b-transparency",
+            PdfA1bConstraintKind::FileSpecification => "pdfa-1b-file-specification",
+            PdfA1bConstraintKind::CrossReference => "pdfa-1b-cross-reference",
+        }
+    }
+
+    fn description(&self) -> &str {
+        "Selected PDF/A-1b preflight constraint"
+    }
+
+    fn category(&self) -> ConstraintCategory {
+        match self.kind {
+            PdfA1bConstraintKind::Version
+            | PdfA1bConstraintKind::CrossReference
+            | PdfA1bConstraintKind::FileSpecification => ConstraintCategory::Structure,
+            PdfA1bConstraintKind::ColorSpaces
+            | PdfA1bConstraintKind::Images
+            | PdfA1bConstraintKind::Transparency => ConstraintCategory::Graphics,
+            PdfA1bConstraintKind::Fonts => ConstraintCategory::Fonts,
+            PdfA1bConstraintKind::Multimedia | PdfA1bConstraintKind::Annotations => {
+                ConstraintCategory::Annotations
+            }
+            PdfA1bConstraintKind::JavaScript => ConstraintCategory::JavaScript,
+            PdfA1bConstraintKind::Forms => ConstraintCategory::Forms,
+            PdfA1bConstraintKind::Encryption => ConstraintCategory::Security,
+            PdfA1bConstraintKind::Metadata => ConstraintCategory::Metadata,
+        }
+    }
+
+    fn check(&self, document: &PdfDocument, report: &mut ValidationReport) {
+        let validator = PdfA1bValidator {
+            strict_mode: self.strict_mode,
+        };
+        let failed_before = report.statistics.failed_checks;
+
+        match self.kind {
+            PdfA1bConstraintKind::Version => validator.validate_version(report, document),
+            PdfA1bConstraintKind::ColorSpaces => validator.validate_color_spaces(report, document),
+            PdfA1bConstraintKind::Fonts => validator.validate_fonts(report, document),
+            PdfA1bConstraintKind::Images => validator.validate_images(report, document),
+            PdfA1bConstraintKind::Multimedia => {
+                validator.validate_multimedia_content(report, document)
+            }
+            PdfA1bConstraintKind::JavaScript => validator.validate_javascript(report, document),
+            PdfA1bConstraintKind::Annotations => validator.validate_annotations(report, document),
+            PdfA1bConstraintKind::Forms => validator.validate_forms(report, document),
+            PdfA1bConstraintKind::Encryption => validator.validate_encryption(report, document),
+            PdfA1bConstraintKind::Metadata => validator.validate_metadata(report, document),
+            PdfA1bConstraintKind::Transparency => validator.validate_transparency(report, document),
+            PdfA1bConstraintKind::FileSpecification => {
+                validator.validate_file_specification(report, document)
+            }
+            PdfA1bConstraintKind::CrossReference => {
+                validator.validate_cross_reference(report, document)
+            }
+        }
+
+        if report.statistics.failed_checks == failed_before {
+            report.add_passed_check();
+        } else {
+            report.statistics.total_checks += 1;
+        }
+    }
 }
 
 impl PdfA1bValidator {
@@ -18,53 +127,33 @@ impl PdfA1bValidator {
         self
     }
 
+    pub(crate) fn constraints(&self) -> Vec<Box<dyn SchemaConstraint>> {
+        [
+            PdfA1bConstraintKind::Version,
+            PdfA1bConstraintKind::ColorSpaces,
+            PdfA1bConstraintKind::Fonts,
+            PdfA1bConstraintKind::Images,
+            PdfA1bConstraintKind::Multimedia,
+            PdfA1bConstraintKind::JavaScript,
+            PdfA1bConstraintKind::Annotations,
+            PdfA1bConstraintKind::Forms,
+            PdfA1bConstraintKind::Encryption,
+            PdfA1bConstraintKind::Metadata,
+            PdfA1bConstraintKind::Transparency,
+            PdfA1bConstraintKind::FileSpecification,
+            PdfA1bConstraintKind::CrossReference,
+        ]
+        .into_iter()
+        .map(|kind| Box::new(PdfA1bConstraint::new(self.strict_mode, kind)) as _)
+        .collect()
+    }
+
     pub fn validate(&self, document: &PdfDocument) -> ValidationReport {
         let mut report = ValidationReport::new("PDF/A-1b".to_string(), "1.0".to_string());
-
-        self.validate_version(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_color_spaces(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_fonts(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_images(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_multimedia_content(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_javascript(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_annotations(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_forms(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_encryption(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_metadata(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_transparency(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_file_specification(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_cross_reference(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        // Update passed checks based on total - failed
-        report.statistics.passed_checks = report
-            .statistics
-            .total_checks
-            .saturating_sub(report.statistics.failed_checks);
+        for constraint in self.constraints() {
+            constraint.check(document, &mut report);
+        }
+        report.finalize();
 
         report
     }
