@@ -20,6 +20,17 @@ La extraccion de texto resuelve ahora fuentes indirectas, descendientes CID,
 `ToUnicode`, encodings y metricas basicas de glifo dentro de su alcance
 experimental.
 
+Actualizacion posterior: `b410aa5` deduplica referencias repetidas durante la
+resolucion y reutiliza nodos semanticos ya asociados a `ObjectId`; `62adb2a`
+completa el cobro de memoria para objetos indirectos publicos. `da39970` y
+`15cfaa3` corrigen los offsets de los PDFs minimos usados por los smoke tests
+Python y de integracion, y `aaaa828` evita enlazar los tests del crate Python
+en el build nativo release de macOS. El workspace pasa 428 tests, el corpus
+completo local pasa 2.809 fixtures con 2.126 errores controlados, y el
+diferencial completo registra 397 divergencias en 142.311 ms. Los nuevos
+workflows remotos para `aaaa828` siguen pendientes; no se cuentan como verdes
+hasta finalizar.
+
 Actualizacion 2026-08-27: la campana de ClusterFuzzLite encontro y ya tiene
 corregidos dos crashes reproducibles en entradas malformadas, uno en hex
 invalido de CMap y otro en cabeceras JBIG2 truncadas. Las correcciones estan
