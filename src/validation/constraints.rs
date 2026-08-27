@@ -1065,8 +1065,19 @@ impl SchemaConstraint for FontCMapEncodingConstraint {
                     if dict.contains_key("Encoding") {
                         has_encoding = true;
                     }
-                    if dict.contains_key("ToUnicode") {
-                        has_tounicode = true;
+                    if let Some(to_unicode) = dict.get("ToUnicode") {
+                        if resolve_stream_from_value(document, to_unicode).is_some() {
+                            has_tounicode = true;
+                        } else {
+                            report.add_issue(ValidationIssue {
+                                severity: ValidationSeverity::Warning,
+                                code: "TOUNICODE_NOT_STREAM".to_string(),
+                                message: "ToUnicode entry is not a stream".to_string(),
+                                node_id: Some(font_id),
+                                location: Some("Font ToUnicode".to_string()),
+                                suggestion: Some("Ensure ToUnicode points to a stream".to_string()),
+                            });
+                        }
                     }
                     if let Some(PdfValue::Name(subtype)) = dict.get("Subtype") {
                         if subtype.without_slash() == "Type0" && !dict.contains_key("ToUnicode") {
