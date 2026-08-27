@@ -94,6 +94,8 @@ asignaciones de memoria rechazadas.
 Las primitives publicas de `parser::lexer` ofrecen ahora variantes
 `*_with_budget` que cobran el slice de entrada antes de ejecutar nom, para
 evitar asignaciones de tokens fuera de `ResourceBudget`.
+La recuperación de xref cercana queda limitada a modos tolerantes; `Strict`
+rechaza una sección malformada aunque exista otra tabla recuperable próxima.
 
 Pendientes actuales, en orden practico:
 

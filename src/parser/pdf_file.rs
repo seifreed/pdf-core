@@ -423,7 +423,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         };
         let mut recovered = false;
 
-        if !parsed {
+        if !parsed && self.tolerant {
             if let Some((fallback_entries, fallback_trailer)) =
                 self.recover_xref_near_offset(offset)?
             {
@@ -3144,5 +3144,36 @@ mod tests {
             .parse_xref_table_section(malformed)
             .expect("xref parsing should be controlled")
             .is_none());
+    }
+
+    #[test]
+    fn strict_mode_does_not_recover_malformed_xref() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let valid_xref = b"xref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size 1 >>\n";
+        let malformed_xref =
+            b"xref\n0 1\n0000000000 65535 f \n0000000010 00000 n \ntrailer\n<< /Size 1 >>\n";
+        let mut data = b"%PDF-1.7\n".to_vec();
+        data.extend_from_slice(valid_xref);
+        data.resize(100, b'\n');
+        let malformed_offset = data.len() as u64;
+        data.extend_from_slice(malformed_xref);
+
+        let mut strict = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data.clone())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("strict parser should initialize");
+        assert!(strict.parse_single_xref_at(malformed_offset).is_err());
+
+        let mut tolerant = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Tolerant,
+            10,
+            PerformanceLimits::default(),
+        )
+        .expect("tolerant parser should initialize");
+        assert!(tolerant.parse_single_xref_at(malformed_offset).is_ok());
     }
 }
