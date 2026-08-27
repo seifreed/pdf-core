@@ -2090,57 +2090,77 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             }
 
             let pages_value = self.load_object(&obj_id)?;
-            if let PdfValue::Dictionary(ref pages_dict) = pages_value {
-                let own_resources =
-                    self.resolve_resource_dictionary(pages_dict.get("Resources"))?;
-                let effective_resources =
-                    Self::merge_resource_dictionaries(&inherited_resources, &own_resources);
-                let node_type = if let Some(type_name) = pages_dict.get_type() {
-                    match type_name.without_slash() {
-                        "Pages" => NodeType::Pages,
-                        "Page" => NodeType::Page,
-                        _ => NodeType::Unknown,
-                    }
-                } else {
-                    NodeType::Unknown
-                };
+            match pages_value {
+                PdfValue::Dictionary(ref pages_dict) => {
+                    let own_resources =
+                        self.resolve_resource_dictionary(pages_dict.get("Resources"))?;
+                    let effective_resources =
+                        Self::merge_resource_dictionaries(&inherited_resources, &own_resources);
+                    let node_type = if let Some(type_name) = pages_dict.get_type() {
+                        match type_name.without_slash() {
+                            "Pages" => NodeType::Pages,
+                            "Page" => NodeType::Page,
+                            _ => NodeType::Unknown,
+                        }
+                    } else {
+                        NodeType::Unknown
+                    };
 
-                let is_page = node_type == NodeType::Page;
-                let mut node_value = pages_value.clone();
-                if !inherited_resources.is_empty() {
-                    if let PdfValue::Dictionary(node_dict) = &mut node_value {
-                        node_dict.insert(
-                            "Resources",
-                            PdfValue::Dictionary(effective_resources.clone()),
-                        );
-                    }
-                }
-                let pages_id = self.add_to_ast(node_value, node_type)?;
-                self.document.ast.register_object_node(obj_id, pages_id);
-                self.add_edge(current_parent, pages_id, crate::ast::EdgeType::Child)?;
-
-                if !inherited_resources.is_empty() {
-                    if let Some(node) = self.document.ast.get_node_mut(pages_id) {
-                        node.metadata.set_property(
-                            "has_inherited_resources".to_string(),
-                            "true".to_string(),
-                        );
-                    }
-                }
-
-                if let Some(PdfValue::Array(kids)) = pages_dict.get("Kids") {
-                    for kid in kids.iter() {
-                        if let Some(kid_ref) = kid.as_reference() {
-                            stack.push((*kid_ref, pages_id, effective_resources.clone()));
+                    let is_page = node_type == NodeType::Page;
+                    let mut node_value = pages_value.clone();
+                    if !inherited_resources.is_empty() {
+                        if let PdfValue::Dictionary(node_dict) = &mut node_value {
+                            node_dict.insert(
+                                "Resources",
+                                PdfValue::Dictionary(effective_resources.clone()),
+                            );
                         }
                     }
-                }
+                    let pages_id = self.add_to_ast(node_value, node_type)?;
+                    self.document.ast.register_object_node(obj_id, pages_id);
+                    self.add_edge(current_parent, pages_id, crate::ast::EdgeType::Child)?;
 
-                if is_page {
-                    if let Some(aa_value) = pages_dict.get("AA") {
-                        self.parse_additional_actions(aa_value, pages_id)?;
+                    if !inherited_resources.is_empty() {
+                        if let Some(node) = self.document.ast.get_node_mut(pages_id) {
+                            node.metadata.set_property(
+                                "has_inherited_resources".to_string(),
+                                "true".to_string(),
+                            );
+                        }
                     }
-                    self.parse_page_annotations(pages_dict, pages_id)?;
+
+                    if let Some(PdfValue::Array(kids)) = pages_dict.get("Kids") {
+                        for kid in kids.iter() {
+                            if let Some(kid_ref) = kid.as_reference() {
+                                stack.push((*kid_ref, pages_id, effective_resources.clone()));
+                            }
+                        }
+                    }
+
+                    if is_page {
+                        if let Some(aa_value) = pages_dict.get("AA") {
+                            self.parse_additional_actions(aa_value, pages_id)?;
+                        }
+                        self.parse_page_annotations(pages_dict, pages_id)?;
+                    }
+                }
+                invalid => {
+                    let message = format!(
+                        "Page tree node must be a dictionary, got {}",
+                        invalid.type_name()
+                    );
+                    if !self.tolerant {
+                        return Err(AstError::ParseError(message));
+                    }
+                    self.record_diagnostic(
+                        Some(obj_id),
+                        None,
+                        "invalid_page_tree_node",
+                        "skipped_invalid_page_tree_node",
+                        1.0,
+                        0,
+                        &message,
+                    )?;
                 }
             }
         }

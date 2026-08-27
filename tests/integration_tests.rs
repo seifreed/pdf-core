@@ -161,6 +161,26 @@ mod integration_tests {
             .any(|diagnostic| diagnostic.error_code == "invalid_resources"));
     }
 
+    #[test]
+    fn invalid_page_tree_node_is_strict_error_or_tolerant_diagnostic() {
+        let pdf = create_pdf_with_invalid_page_tree_node();
+
+        let error = PdfParser::strict()
+            .parse_bytes(&pdf)
+            .expect_err("strict mode must reject a non-dictionary page tree node");
+        assert!(error
+            .to_string()
+            .contains("Page tree node must be a dictionary"));
+
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant mode should retain a diagnostic");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "invalid_page_tree_node"));
+    }
+
     /// Test filter decoding
     #[test]
     fn test_filter_decoding() {
@@ -411,6 +431,30 @@ startxref
         }
         pdf.extend_from_slice(
             format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_invalid_page_tree_node() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".as_slice(),
+            b"3 0 obj\n123\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 4\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
                 .as_bytes(),
         );
         pdf
