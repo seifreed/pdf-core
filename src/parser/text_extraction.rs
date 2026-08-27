@@ -235,7 +235,7 @@ impl<'a> TextExtractor<'a> {
         let mut width_map = HashMap::new();
         Self::parse_simple_widths(&top_dict, &mut width_map);
         if !descendant_dict.is_empty() {
-            Self::parse_cid_widths(&descendant_dict, &mut width_map);
+            self.parse_cid_widths(&descendant_dict, &mut width_map);
         }
         let default_width =
             Self::number_value(Self::effective_value(&top_dict, effective_dict, "DW"))
@@ -300,8 +300,8 @@ impl<'a> TextExtractor<'a> {
         }
     }
 
-    fn parse_cid_widths(dict: &PdfDictionary, width_map: &mut HashMap<u32, f64>) {
-        let Some(PdfValue::Array(widths)) = dict.get("W") else {
+    fn parse_cid_widths(&self, dict: &PdfDictionary, width_map: &mut HashMap<u32, f64>) {
+        let Some(widths) = dict.get("W").and_then(|value| self.resolve_array(value)) else {
             return;
         };
         let mut index = 0;
@@ -903,11 +903,16 @@ mod tests {
         descendant.insert("DW", PdfValue::Integer(500));
         descendant.insert(
             "W",
+            PdfValue::Reference(crate::types::PdfReference::new(5, 0)),
+        );
+        ast.add_node(AstNode::new(
+            NodeId::new(5),
+            NodeType::Object(ObjectId::new(5, 0)),
             PdfValue::Array(PdfArray::from(vec![
                 PdfValue::Integer(65),
                 PdfValue::Array(PdfArray::from(vec![PdfValue::Integer(600)])),
             ])),
-        );
+        ));
         ast.add_node(AstNode::new(
             NodeId::new(3),
             NodeType::Object(ObjectId::new(3, 0)),
