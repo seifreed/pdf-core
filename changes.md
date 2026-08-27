@@ -110,6 +110,8 @@ pasa `5/5` en text extraction y Clippy estricto.
 `304f17d` comprueba el tamano real devuelto por la decodificacion JPX antes de
 retornar la imagen, evitando superar el limite aunque difiera del calculo de
 cabecera; la suite pasa `4/4` y Clippy estricto.
+`3c4892d` rechaza tambien valores `/Lang` vacios o compuestos solo por
+espacios; la suite PDF/UA pasa `25/25` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
