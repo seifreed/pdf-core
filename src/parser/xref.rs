@@ -1,7 +1,7 @@
 use crate::ast::document::XRefEntry;
 use crate::ast::linearization::LinearizationInfo;
 use crate::filters::decode_stream_with_budget;
-use crate::performance::PerformanceLimits;
+use crate::performance::{PerformanceLimits, ResourceBudget};
 use crate::types::{ObjectId, PdfStream, PdfValue};
 use nom::{
     branch::alt,
@@ -402,24 +402,35 @@ pub fn parse_linearization_dict(stream: &PdfStream) -> Result<LinearizationInfo,
 /// Parse hybrid XRef table/stream
 /// Some PDFs use both traditional xref tables and xref streams
 pub fn parse_hybrid_xref(input: &[u8]) -> XRefParseResult<'_> {
+    parse_hybrid_xref_with_budget(input, &ResourceBudget::default())
+}
+
+pub fn parse_hybrid_xref_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> XRefParseResult<'a> {
     // Try to parse traditional xref table first
     if let Ok((remaining, table_entries)) = parse_xref_table(input) {
         // Check if there's an xref stream following
-        let (remaining, xref_stream) = opt(parse_xref_stream_object)(remaining)?;
+        let (remaining, xref_stream) =
+            opt(|input| parse_xref_stream_object(input, budget))(remaining)?;
         return Ok((remaining, (table_entries, xref_stream)));
     }
 
     // If no traditional table, try xref stream
-    let (remaining, xref_stream) = parse_xref_stream_object(input)?;
+    let (remaining, xref_stream) = parse_xref_stream_object(input, budget)?;
     Ok((remaining, (Vec::new(), Some(xref_stream))))
 }
 
 /// Parse an XRef stream object
-fn parse_xref_stream_object(input: &[u8]) -> IResult<&[u8], PdfStream> {
+fn parse_xref_stream_object<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], PdfStream> {
     // This is a simplified implementation - in practice, you'd use the full object parser
-    use crate::parser::object_parser::parse_indirect_object;
+    use crate::parser::object_parser::parse_indirect_object_with_budget;
 
-    let (input, (_obj_id, value)) = parse_indirect_object(input)?;
+    let (input, (_obj_id, value)) = parse_indirect_object_with_budget(input, budget)?;
 
     if let PdfValue::Stream(stream) = value {
         // Verify it's an XRef stream by checking for required entries

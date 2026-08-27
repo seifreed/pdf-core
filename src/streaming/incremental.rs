@@ -185,7 +185,10 @@ impl IncrementalProcessor {
     fn process_parse_object(&mut self, task: ProcessingTask) -> AstResult<ProcessingResult> {
         // Parse indirect object if present
         if let Ok((rest, (obj_id, pdf_value))) =
-            crate::parser::object_parser::parse_indirect_object(&task.data)
+            crate::parser::object_parser::parse_indirect_object_with_budget(
+                &task.data,
+                &self.document.budget,
+            )
         {
             let node_type = determine_node_type(&pdf_value, obj_id);
             let node_id = self
@@ -425,7 +428,10 @@ impl IncrementalProcessor {
         while let Some(pos) = find_next_object(data, cursor) {
             let slice = &data[pos..];
             if let Ok((rest, (_obj_id, _value))) =
-                crate::parser::object_parser::parse_indirect_object(slice)
+                crate::parser::object_parser::parse_indirect_object_with_budget(
+                    slice,
+                    &self.document.budget,
+                )
             {
                 let consumed = slice.len().saturating_sub(rest.len());
                 let obj_bytes = slice[..consumed].to_vec();

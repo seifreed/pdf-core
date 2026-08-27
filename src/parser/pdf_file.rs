@@ -11,7 +11,7 @@ use crate::parser::lexer::*;
 use crate::parser::object_parser;
 use crate::parser::xref::parse_xref_table;
 use crate::parser::ParseMode;
-use crate::performance::PerformanceLimits;
+use crate::performance::{PerformanceLimits, ResourceBudget};
 use crate::security::ltv::extract_ltv_info;
 use crate::types::*;
 use std::collections::HashMap;
@@ -145,7 +145,9 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         let pos = Self::skip_pdf_header(&buffer);
 
-        if let Some(linearization) = Self::try_parse_linearization_dict(&buffer[pos..]) {
+        if let Some(linearization) =
+            Self::try_parse_linearization_dict_with_budget(&buffer[pos..], &self.limits.budget)
+        {
             self.document.set_linearization(linearization);
         }
 
@@ -166,7 +168,15 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     fn try_parse_linearization_dict(
         data: &[u8],
     ) -> Option<crate::ast::linearization::LinearizationInfo> {
-        let (_, (obj_id, value)) = object_parser::parse_indirect_object(data).ok()?;
+        Self::try_parse_linearization_dict_with_budget(data, &ResourceBudget::default())
+    }
+
+    fn try_parse_linearization_dict_with_budget(
+        data: &[u8],
+        budget: &ResourceBudget,
+    ) -> Option<crate::ast::linearization::LinearizationInfo> {
+        let (_, (obj_id, value)) =
+            object_parser::parse_indirect_object_with_budget(data, budget).ok()?;
 
         if obj_id != ObjectId::new(1, 0) {
             return None;
@@ -909,10 +919,13 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 let absolute_pos = pos + obj_pos;
                 self.record_forensic_residual(covered_end, absolute_pos);
                 if let Ok((_, obj_id)) = Self::parse_object_header(&content[absolute_pos..]) {
-                    let object_end = object_parser::parse_indirect_object(&content[absolute_pos..])
-                        .ok()
-                        .map(|(remaining, _)| content.len() - remaining.len())
-                        .unwrap_or_else(|| absolute_pos.saturating_add(1));
+                    let object_end = object_parser::parse_indirect_object_with_budget(
+                        &content[absolute_pos..],
+                        &self.limits.budget,
+                    )
+                    .ok()
+                    .map(|(remaining, _)| content.len() - remaining.len())
+                    .unwrap_or_else(|| absolute_pos.saturating_add(1));
                     let entry = XRefEntry::InUse {
                         offset: absolute_pos as u64,
                         generation: obj_id.generation,
