@@ -38,9 +38,9 @@ en modo `Strict`; `d3cbb31` rechaza bytes XMP que no sean UTF-8; y `a3401e0`
 mas `e3f0d83` protegen la aritmetica de rangos y la entrada UTF-8 de CMap.
 `bb624f1` completa la preservacion del mapeo `ObjectId` en el round-trip de
 serializacion tambien para nodos semanticos, no solo para `NodeType::Object`.
-El ultimo SHA publicado es `b52da72`; su corpus externo termino en verde
-(run `33059191326`), mientras que el diferencial, ClusterFuzzLite y API
-Stability siguen en ejecucion y CI, bindings y fuzzing siguen en cola.
+El push de `b52da72` tuvo el corpus externo en verde (run `33059191326`),
+mientras que el diferencial, ClusterFuzzLite y API Stability seguian en
+ejecucion y CI, bindings y fuzzing seguian en cola.
 Hasta que termine todo el conjunto no se debe contar la evidencia remota como
 verde.
 
@@ -53,8 +53,9 @@ streams filtrados; `e79ee6e` y `ae2eafc` acotan cifrado/descifrado, incluido el
 peor caso de expansión AES; `6a18db2` cobra la materialización de XML XMP;
 `77ddaf4` añade importación del grafo AST con presupuesto; y `d5f1df7` más
 `99a0571` hacen que las migraciones de esquema alcancen el target exacto y
-terminen ciclos sin progreso. El ultimo SHA publicado es `ae2eafc`; sus
-workflows aun estan pendientes o en cola.
+terminen ciclos sin progreso. `d8d9d36` corrige el sentinel de la regresion
+FFI para mantener Clippy estricto en verde. El ultimo SHA publicado es
+`d8d9d36`; sus workflows aun estan pendientes o en cola.
 
 Avance publicado en `f2e8a5f`: el smoke test de instalación JavaScript ejecuta
 la carga del addon nativo en un proceso hijo, evitando el bloqueo `EPERM` de
