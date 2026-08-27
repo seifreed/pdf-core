@@ -201,6 +201,11 @@ impl PdfParser {
     /// # Errors
     /// Returns `AstError::ParseError` if the value cannot be parsed
     pub fn parse_value(&self, input: &[u8]) -> AstResult<PdfValue> {
+        self.consume_input(input)?;
+        self.parse_value_unbudgeted(input)
+    }
+
+    fn parse_value_unbudgeted(&self, input: &[u8]) -> AstResult<PdfValue> {
         let (remaining, value) =
             object_parser::parse_value_with_max_depth(input, self.limits.max_depth)
                 .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
@@ -219,6 +224,7 @@ impl PdfParser {
     /// # Errors
     /// Returns `AstError::ParseError` if the object cannot be parsed
     pub fn parse_object(&self, input: &[u8]) -> AstResult<PdfValue> {
+        self.consume_input(input)?;
         let object_input = crate::parser::lexer::skip_whitespace_and_comments(input)
             .map(|(remaining, _)| remaining)
             .unwrap_or(input);
@@ -238,7 +244,14 @@ impl PdfParser {
         {
             return Ok(value);
         }
-        self.parse_value(input)
+        self.parse_value_unbudgeted(input)
+    }
+
+    fn consume_input(&self, input: &[u8]) -> AstResult<()> {
+        self.limits
+            .budget
+            .consume_input(input.len() as u64)
+            .map_err(|error| AstError::ParseError(error.to_string()))
     }
 
     fn ensure_strictly_consumed(&self, remaining: &[u8]) -> AstResult<()> {
@@ -276,6 +289,7 @@ impl PdfParser {
         &self,
         input: &[u8],
     ) -> AstResult<(Vec<PdfValue>, Vec<ParseDiagnostic>)> {
+        self.consume_input(input)?;
         let mut objects = Vec::new();
         let mut diagnostics = Vec::new();
         let mut remaining = input;

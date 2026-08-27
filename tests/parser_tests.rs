@@ -2,6 +2,7 @@
 ///
 /// These tests verify individual parsing functions and components
 use pdf_ast::parser::*;
+use pdf_ast::performance::PerformanceLimits;
 use pdf_ast::types::*;
 use std::io::Cursor;
 
@@ -451,6 +452,19 @@ mod parser_tests {
             .parse_object(b"7 0 obj\n42\n")
             .expect_err("strict mode must reject a truncated indirect object");
         assert!(!error.to_string().is_empty());
+    }
+
+    #[test]
+    fn public_parser_apis_respect_input_budget() {
+        let limits = PerformanceLimits {
+            max_file_size_mb: 0,
+            ..PerformanceLimits::default()
+        };
+        let parser = PdfParser::strict().with_limits(limits);
+
+        assert!(parser.parse_value(b"1").is_err());
+        assert!(parser.parse_object(b"1").is_err());
+        assert!(parser.parse_objects(b"1").is_err());
     }
 
     #[test]
