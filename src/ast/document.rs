@@ -269,6 +269,15 @@ impl PdfDocument {
         self.ast.find_nodes_by_type(NodeType::Page)
     }
 
+    /// Returns all page nodes while charging the result allocation to a budget.
+    pub fn get_pages_with_budget(
+        &self,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<NodeId>, crate::performance::ResourceBudgetError> {
+        self.ast
+            .find_nodes_by_type_with_budget(NodeType::Page, budget)
+    }
+
     /// Returns a specific page by zero-based index.
     ///
     /// # Arguments
@@ -278,6 +287,15 @@ impl PdfDocument {
     /// `Some(NodeId)` if the page exists, `None` otherwise
     pub fn get_page(&self, index: usize) -> Option<NodeId> {
         self.get_pages().get(index).copied()
+    }
+
+    /// Returns a specific page while charging the page scan to a budget.
+    pub fn get_page_with_budget(
+        &self,
+        index: usize,
+        budget: &ResourceBudget,
+    ) -> Result<Option<NodeId>, crate::performance::ResourceBudgetError> {
+        Ok(self.get_pages_with_budget(budget)?.get(index).copied())
     }
 
     /// Analyzes and populates document metadata by scanning the AST.

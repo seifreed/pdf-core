@@ -51,6 +51,30 @@ mod integration_tests {
         assert!(error.to_string().contains("DecodedBytes"));
     }
 
+    #[test]
+    fn document_page_queries_respect_node_budget() {
+        let document = PdfParser::new()
+            .parse_bytes(&create_minimal_pdf())
+            .expect("minimal PDF should parse");
+        let budget = pdf_ast::performance::ResourceBudget::new(
+            1024 * 1024,
+            1024 * 1024,
+            1024 * 1024,
+            100,
+            100,
+            0,
+            100,
+            100,
+        );
+
+        assert_eq!(
+            document
+                .get_pages_with_budget(&budget)
+                .expect_err("page collection must charge nodes"),
+            pdf_ast::performance::ResourceBudgetError::Nodes
+        );
+    }
+
     /// Test PDF with JavaScript content
     #[test]
     fn test_javascript_detection() {
