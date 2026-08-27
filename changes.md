@@ -58,6 +58,18 @@ verde.
 El chequeo local de `cargo-semver-checks` sigue pasando contra `pdf-ast`
 `0.1.0` (254 checks omitidos por tratarse de un salto mayor alpha).
 
+Actualizacion de evidencia para `6a63d85`: CI completo verde (`33075200727`),
+corpus externo con veraPDF (`33075200739`), diferencial (`33075201013`),
+fuzzing de los 16 targets (`33075200762`), ClusterFuzzLite (`33075200736`)
+y API Stability (`33075200729`). Los smoke tests de bindings de Linux y macOS
+tambien estan verdes dentro de `33075200753`; los dos jobs de Windows seguian
+en curso al redactar esta entrada. El test local aislado de validacion pasa
+20/20; el timeout observado en la ejecucion global fue de compilacion
+acumulada antes de esa suite, no un fallo funcional. Los commits
+`d915906`, `ea0dd28`, `b69ea73`, `7dfbcb9` y `6a63d85` endurecen la validacion
+strict del arbol de paginas, recursos y catalogo; `fc25e84` corrige la
+semantica de streams ya decodificados sin reaplicar filtros.
+
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
 streams filtrados; `e79ee6e` y `ae2eafc` acotan cifrado/descifrado, incluido el
@@ -264,11 +276,14 @@ construye y prepara, pero la publicación en registros sigue deshabilitada.
 
 Pendientes actuales, en orden practico:
 
-* **Evidencia remota:** faltan ejecuciones verdes y repetidas del CI completo,
-  corpus/differential, ClusterFuzzLite y los seis smoke tests de bindings. Los
-  workflows ya no cancelan runs anteriores del mismo ref, porque esa politica
-  impedía obtener evidencia completa tras cada push; los IDs y estados se
-  consultan con `gh run list` para evitar referencias obsoletas.
+* **Evidencia remota:** ya existe una ejecucion verde completa del CI,
+  corpus/differential, fuzzing, ClusterFuzzLite y API Stability en `6a63d85`,
+  y cuatro de seis smoke tests de bindings. Faltan los dos jobs Windows de
+  `33075200753` y ejecuciones verdes repetidas para considerar la evidencia
+  sostenida. Los workflows ya no cancelan runs anteriores del mismo ref,
+  porque esa politica impedia obtener evidencia completa tras cada push; los
+  IDs y estados se consultan con `gh run list` para evitar referencias
+  obsoletas.
 * **Parser endurecido:** strict y varios recorridos ya tienen guardas, y los
   streams conservan ahora estado lossless explícito. Las APIs públicas de
   valores/objetos cobran también la memoria retenida, y la resolución usa el
