@@ -26,7 +26,9 @@ Avance local adicional: el parser `Strict` rechaza tokens no consumidos en
 `parse_value` y `parse_object`; `PdfAstGraph` y `NameTreeParser` terminan sus
 recorridos aunque el grafo tenga ciclos; y los helpers publicos legacy de
 `PageTreeParser` y `OutputIntentsParser` usan el mismo `ResourceBudget` para
-decodificar perfiles ICC. Cada punto tiene regresion y pasa Clippy estricto.
+decodificar perfiles ICC. `StructTreeParser` y `OutlineParser` tambien limitan
+profundidad y ciclos durante la construccion y la consulta de sus arboles.
+Cada punto tiene regresion y pasa Clippy estricto.
 
 Pendientes actuales, en orden practico:
 
