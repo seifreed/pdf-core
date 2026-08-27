@@ -102,7 +102,8 @@ La decodificación pública de `PdfStream` ya no trata filtros desconocidos o
 malformados como datos sin filtrar, y los errores de `JBIG2Globals` se
 propagan en `Strict` en lugar de descartarse silenciosamente; el resolver usa
 la misma validación al cargar object streams, content streams, xref streams y
-perfiles ICC.
+perfiles ICC. `DecodeParms` con tipos inválidos también se rechaza en lugar de
+convertirse silenciosamente en parámetros por defecto.
 
 Pendientes actuales, en orden practico:
 

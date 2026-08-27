@@ -311,9 +311,17 @@ impl PdfStream {
 
         let mut decode_params = match self.dict.get("DecodeParms") {
             Some(PdfValue::Dictionary(dict)) => vec![Some(dict)],
-            Some(PdfValue::Array(array)) => array.iter().map(|v| v.as_dict()).collect(),
+            Some(PdfValue::Array(array)) => array
+                .iter()
+                .map(|value| match value {
+                    PdfValue::Dictionary(dict) => Ok(Some(dict)),
+                    PdfValue::Null => Ok(None),
+                    _ => Err("DecodeParms array contains a non-dictionary value".to_string()),
+                })
+                .collect::<Result<Vec<_>, _>>()?,
             Some(PdfValue::Null) => vec![None],
-            _ => Vec::new(),
+            None => Vec::new(),
+            Some(_) => return Err("DecodeParms must be a dictionary or an array".to_string()),
         };
 
         if decode_params.len() < filter_names.len() {
@@ -557,5 +565,18 @@ mod tests {
             .expect_err("unknown filters must not be silently discarded");
         assert!(error.contains("Unsupported stream filter"));
         assert!(stream.get_filters_with_params_checked().is_err());
+    }
+
+    #[test]
+    fn malformed_decode_params_are_not_replaced_with_defaults() {
+        let mut dict = PdfDictionary::new();
+        dict.insert("Filter", PdfValue::Name(PdfName::new("FlateDecode")));
+        dict.insert("DecodeParms", PdfValue::Boolean(true));
+        let stream = PdfStream::new(dict, Vec::new());
+
+        let error = stream
+            .get_filters_with_params_checked()
+            .expect_err("malformed decode parameters must be rejected");
+        assert!(error.contains("DecodeParms"));
     }
 }
