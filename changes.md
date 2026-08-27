@@ -107,6 +107,9 @@ Clippy estricto.
 `1e2fedb` hace que la extraccion de texto resuelva tambien el array indirecto
 `DescendantFonts`, manteniendo la resolucion de sus fuentes CID; la regresion
 pasa `5/5` en text extraction y Clippy estricto.
+`304f17d` comprueba el tamano real devuelto por la decodificacion JPX antes de
+retornar la imagen, evitando superar el limite aunque difiera del calculo de
+cabecera; la suite pasa `4/4` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
