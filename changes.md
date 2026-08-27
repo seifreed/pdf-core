@@ -30,7 +30,8 @@ decodificar perfiles ICC. `StructTreeParser` y `OutlineParser` tambien limitan
 profundidad y ciclos durante la construccion y la consulta de sus arboles, y
 presupuestan sus aristas. `NameTreeParser`, `ExtGStateParser` y
 `OutputIntentsParser` tambien acotan las creaciones de nodos y aristas bajo el
-mismo presupuesto. La resolucion de `/Length` indirecto conserva ahora
+mismo presupuesto, y `FunctionParser` acota tambien la creacion de funciones
+anidadas. La resolucion de `/Length` indirecto conserva ahora
 el diccionario declarado y todos los bytes observados, registrando la longitud
 resuelta como metadato separado. Cada punto tiene regresion y pasa Clippy
 estricto.
