@@ -287,6 +287,7 @@ impl<'a> CMapParser<'a> {
                 let count = self.extract_count(line).unwrap_or(0);
                 i += 1;
                 for _ in 0..count {
+                    self.budget.consume_node().ok()?;
                     if i >= lines.len() {
                         break;
                     }
@@ -302,6 +303,7 @@ impl<'a> CMapParser<'a> {
                 let count = self.extract_count(line).unwrap_or(0);
                 i += 1;
                 for _ in 0..count {
+                    self.budget.consume_node().ok()?;
                     if i >= lines.len() {
                         break;
                     }
@@ -317,6 +319,7 @@ impl<'a> CMapParser<'a> {
                 let count = self.extract_count(line).unwrap_or(0);
                 i += 1;
                 for _ in 0..count {
+                    self.budget.consume_node().ok()?;
                     if i >= lines.len() {
                         break;
                     }
@@ -332,6 +335,7 @@ impl<'a> CMapParser<'a> {
                 let count = self.extract_count(line).unwrap_or(0);
                 i += 1;
                 for _ in 0..count {
+                    self.budget.consume_node().ok()?;
                     if i >= lines.len() {
                         break;
                     }
@@ -347,6 +351,7 @@ impl<'a> CMapParser<'a> {
                 let count = self.extract_count(line).unwrap_or(0);
                 i += 1;
                 for _ in 0..count {
+                    self.budget.consume_node().ok()?;
                     if i >= lines.len() {
                         break;
                     }
@@ -748,5 +753,16 @@ mod tests {
 
         assert_eq!(parser.decode_bytes(&cmap, b"\x01\x02"), "AB");
         assert!(matches!(cmap.mappings, CMapMappings::Mixed { .. }));
+    }
+
+    #[test]
+    fn rejects_cmap_mapping_count_over_budget() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let budget = crate::performance::ResourceBudget::new(1024, 1024, 1024, 100, 10, 1, 10, 10);
+        let parser = CMapParser::new_with_budget(&mut ast, &resolver, &budget);
+        let data = b"2 beginbfchar\n<01> <0041>\n<02> <0042>\nendbfchar";
+
+        assert!(parser.parse_cmap_data(data).is_none());
     }
 }
