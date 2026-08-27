@@ -172,6 +172,26 @@ pub fn parse_content_stream_with_offsets_strict_with_budget(
             break;
         }
 
+        if remaining.starts_with(b"BI")
+            && remaining
+                .get(2)
+                .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            let offset = base_len.saturating_sub(remaining.len());
+            let (rest, image) = parse_inline_image_after_input_budget(remaining, budget)
+                .map_err(|error| format!("Invalid inline image: {error:?}"))?;
+            for operator in [
+                ContentOperator::BeginInlineImage,
+                ContentOperator::InlineImageData(image.clone()),
+                ContentOperator::EndInlineImage,
+            ] {
+                budget.consume_node().map_err(|error| error.to_string())?;
+                operators.push(ContentOperatorWithOffset { operator, offset });
+            }
+            remaining = rest;
+            continue;
+        }
+
         if let Ok((rest, operand)) = parse_operand(remaining) {
             operand_stack.push(operand);
             remaining = rest;
@@ -889,6 +909,20 @@ pub fn parse_inline_image_with_budget<'a>(
         )));
     }
 
+    parse_inline_image_impl(input, budget)
+}
+
+pub(crate) fn parse_inline_image_after_input_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], InlineImageInfo> {
+    parse_inline_image_impl(input, budget)
+}
+
+fn parse_inline_image_impl<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], InlineImageInfo> {
     // Skip BI
     let (input, _) = tag(b"BI")(input)?;
     let (input, _) = multispace0(input)?;
@@ -941,6 +975,12 @@ pub fn parse_inline_image_with_budget<'a>(
         }
     }
 
+    if budget.consume_decoded(data_end as u64).is_err() {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::TooLarge,
+        )));
+    }
     let data = remaining[..data_end].to_vec();
     let remaining = &remaining[data_end..];
 
@@ -1090,5 +1130,10 @@ mod tests {
         assert!(parse_content_stream_strict_with_budget(b"1 0 m", &budget).is_ok());
         assert!(parse_content_stream_strict_with_budget(b"1", &budget).is_err());
         assert!(parse_content_stream_strict_with_budget(b"q @", &budget).is_err());
+        assert!(parse_content_stream_strict_with_budget(
+            b"BI /W 1 /H 1 /BPC 8 /CS /G ID 00 EI",
+            &budget
+        )
+        .is_ok());
     }
 }

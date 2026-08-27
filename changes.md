@@ -203,6 +203,8 @@ restante antes de asignar buffers; una configuración `chunk_size = 0` se
 normaliza para mantener progreso y el agotamiento del presupuesto se propaga.
 La ruta strict de content streams rechaza bytes residuales y operandos sin
 operador, mientras que `Tolerant` conserva el escaneo recuperable anterior.
+La misma ruta reconoce imágenes inline `BI`/`EI` y cobra sus datos antes de
+crear los operadores de imagen, evitando falsos rechazos por bytes binarios.
 El workflow de release verifica el tag firmado también antes de construir
 bindings y attesta los binarios, paquetes, SBOM y checksums generados.
 
