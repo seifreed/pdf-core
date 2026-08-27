@@ -1421,14 +1421,35 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 // Parse catalog sub-structures
                 self.parse_catalog_references(catalog_id)?;
                 // Parse page tree
-                let pages_ref = if let Some(catalog_node) = self.document.ast.get_node(catalog_id) {
-                    catalog_node
-                        .as_dict()
-                        .and_then(|dict| dict.get("Pages"))
-                        .and_then(|v| v.as_reference())
-                        .cloned()
-                } else {
-                    None
+                let pages_value = self
+                    .document
+                    .ast
+                    .get_node(catalog_id)
+                    .and_then(|node| node.as_dict())
+                    .and_then(|dict| dict.get("Pages"))
+                    .cloned();
+                let pages_ref = match pages_value {
+                    Some(PdfValue::Reference(pages_ref)) => Some(pages_ref),
+                    Some(invalid) => {
+                        let message = format!(
+                            "Catalog /Pages must be an indirect reference, got {}",
+                            invalid.type_name()
+                        );
+                        if !self.tolerant {
+                            return Err(AstError::ParseError(message));
+                        }
+                        self.record_diagnostic(
+                            None,
+                            None,
+                            "invalid_pages_root",
+                            "skipped_page_tree",
+                            1.0,
+                            0,
+                            &message,
+                        )?;
+                        None
+                    }
+                    None => None,
                 };
 
                 if let Some(pages_ref) = pages_ref {
