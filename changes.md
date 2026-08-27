@@ -35,8 +35,9 @@ anidadas. `ContentStreamParser` y sus funciones de operandos acotan bytes de
 entrada y numero de operadores bajo `ResourceBudget`. La resolucion de
 `/Length` indirecto conserva ahora
 el diccionario declarado y todos los bytes observados, registrando la longitud
-resuelta como metadato separado. Cada punto tiene regresion y pasa Clippy
-estricto.
+resuelta como metadato separado. `PageTreeParser` acota tambien los nodos de
+color space y perfiles ICC inline, ademas de sus aristas de recursos. Cada
+punto tiene regresion y pasa Clippy estricto.
 
 Pendientes actuales, en orden practico:
 
