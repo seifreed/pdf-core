@@ -267,6 +267,8 @@ impl PdfParser {
             object_input,
             self.limits.max_depth,
         ) {
+            object_parser::charge_value_memory(&value, &self.limits.budget, object_input)
+                .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
             return Ok(value);
         }
         self.parse_value_unbudgeted(input)
@@ -424,6 +426,16 @@ mod tests {
             .with_resource_budget(budget)
             .parse_value(b"(three)")
             .expect_err("retained strings must consume the memory budget");
+        assert!(error.to_string().contains("TooLarge"));
+    }
+
+    #[test]
+    fn public_indirect_object_parsing_charges_retained_memory() {
+        let budget = ResourceBudget::new(1024, 2, 1024, 100, 10, 10, 10, 10);
+        let error = PdfParser::new()
+            .with_resource_budget(budget)
+            .parse_object(b"1 0 obj (three) endobj")
+            .expect_err("indirect objects must charge retained memory");
         assert!(error.to_string().contains("TooLarge"));
     }
 }
