@@ -10,6 +10,9 @@ restaura el estado documental lossless disponible. Tambien existe un corpus
 reproducible de 2.806 fixtures upstream mas tres regresiones, metricas
 diferenciales, una campana fuzz local de 16.000 ejecuciones sin crashes y un
 chequeo completo de 205 mapeos contra veraPDF 1.30.2.
+La extraccion de texto resuelve ahora fuentes indirectas, descendientes CID,
+`ToUnicode`, encodings y metricas basicas de glifo dentro de su alcance
+experimental.
 
 Actualizacion 2026-08-27: la campana de ClusterFuzzLite encontro y ya tiene
 corregidos dos crashes reproducibles en entradas malformadas, uno en hex
@@ -19,7 +22,7 @@ El validador PDF/A ahora sigue recursos heredados desde `Pages`, incluyendo
 referencias indirectas y ciclos controlados, con regresion dedicada.
 La matriz de CI tambien instala qpdf/MuPDF para el diferencial, conserva el
 log y las metricas de memoria como artefacto, y ejecuta el corpus externo
-completo. Los workflows del último push siguen en cola; hasta que terminen no
+completo. Los workflows del ultimo push siguen en cola; hasta que terminen no
 se debe contar esta evidencia como verde.
 
 Avance publicado en `f2e8a5f`: el smoke test de instalación JavaScript ejecuta
@@ -73,9 +76,9 @@ Pendientes actuales, en orden practico:
 
 * **Evidencia remota:** faltan ejecuciones verdes y repetidas del CI completo,
   corpus/differential, ClusterFuzzLite y los seis smoke tests de bindings. Los
-  runs generados por el último push (`b1f1ae8`) siguen pendientes/en cola en
-  Actions al actualizar este documento; los IDs se consultan con
-  `gh run list` para evitar referencias obsoletas tras cada push.
+  runs generados por el ultimo push siguen pendientes/en cola en Actions al
+  actualizar este documento; los IDs y estados se consultan con `gh run list`
+  para evitar referencias obsoletas tras cada push.
 * **Parser endurecido:** strict y varios recorridos ya tienen guardas, y los
   streams conservan ahora estado lossless explícito, pero falta hacer
   completamente estrictos los modos de error/recuperacion y demostrar que
@@ -89,9 +92,10 @@ Pendientes actuales, en orden practico:
   convertirlo en cobertura normativa completa, fusionar las validaciones y
   dejar PDF/A/PDF/UA fuera de estado experimental.
 * **Caracteristicas parciales:** CMap, `ToUnicode`, fuentes, herencia de
-  recursos, revisiones hibridas e incrementalmente complejas y codecs aún
-  necesitan cobertura; JBIG2 sigue sin soporte completo y JPX es solo
-  inspeccion de contenedor.
+  recursos, revisiones hibridas e incrementalmente complejas y codecs aun
+  necesitan cobertura de casos limite. JBIG2 tiene decodificacion acotada,
+  incluida la resolucion de `JBIG2Globals`, y JPX tiene decodificacion de
+  pixeles acotada; ninguno constituye soporte completo del estandar.
 * **API y distribucion:** el esquema 1.1.0, visitors, C ABI y chequeo local de
   SemVer existen, pero la API/crates no estan estabilizados ni reorganizados
   para beta. No hay publicación firmada en crates.io, PyPI o npm, ni
