@@ -45,6 +45,15 @@ fn resolve_string_from_value<'a>(
     }
 }
 
+fn is_encoding_value(document: &PdfDocument, value: &PdfValue) -> bool {
+    match value {
+        PdfValue::Name(_) | PdfValue::Dictionary(_) => true,
+        PdfValue::Reference(_) => resolve_node_from_value(document, value)
+            .is_some_and(|node| node.value.as_name().is_some() || node.as_dict().is_some()),
+        _ => false,
+    }
+}
+
 fn has_embedded_font_program(
     dict: &PdfDictionary,
     document: &PdfDocument,
@@ -1062,8 +1071,21 @@ impl SchemaConstraint for FontCMapEncodingConstraint {
 
             if let Some(node) = document.ast.get_node(font_id) {
                 if let Some(dict) = node.as_dict() {
-                    if dict.contains_key("Encoding") {
-                        has_encoding = true;
+                    if let Some(encoding) = dict.get("Encoding") {
+                        if is_encoding_value(document, encoding) {
+                            has_encoding = true;
+                        } else {
+                            report.add_issue(ValidationIssue {
+                                severity: ValidationSeverity::Warning,
+                                code: "ENCODING_INVALID".to_string(),
+                                message: "Font Encoding entry has an invalid type".to_string(),
+                                node_id: Some(font_id),
+                                location: Some("Font Encoding".to_string()),
+                                suggestion: Some(
+                                    "Ensure Encoding is a name or dictionary".to_string(),
+                                ),
+                            });
+                        }
                     }
                     if let Some(to_unicode) = dict.get("ToUnicode") {
                         if resolve_stream_from_value(document, to_unicode).is_some() {

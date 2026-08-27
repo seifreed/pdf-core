@@ -76,3 +76,39 @@ fn invalid_tounicode_reference_warns() {
         .iter()
         .any(|issue| issue.code == "TOUNICODE_NOT_STREAM"));
 }
+
+#[test]
+fn invalid_encoding_type_warns() {
+    let mut document = PdfDocument::new(PdfVersion { major: 2, minor: 0 });
+    let font_id = document.ast.create_node(
+        NodeType::Font,
+        PdfValue::Dictionary({
+            let mut dict = PdfDictionary::new();
+            dict.insert("Type", PdfValue::Name(PdfName::new("Font")));
+            dict.insert("Subtype", PdfValue::Name(PdfName::new("Type1")));
+            dict.insert("Encoding", PdfValue::Integer(1));
+            dict
+        }),
+    );
+    let catalog_id = document.ast.create_node(
+        NodeType::Catalog,
+        PdfValue::Dictionary({
+            let mut dict = PdfDictionary::new();
+            dict.insert("Type", PdfValue::Name(PdfName::new("Catalog")));
+            dict.insert("Pages", PdfValue::Reference(PdfReference::new(2, 0)));
+            dict
+        }),
+    );
+    document.set_catalog(catalog_id);
+    document
+        .ast
+        .add_edge(catalog_id, font_id, pdf_ast::ast::EdgeType::Child);
+
+    let report = SchemaRegistry::new()
+        .validate(&document, "PDF-2.0")
+        .expect("report");
+    assert!(report
+        .issues
+        .iter()
+        .any(|issue| issue.code == "ENCODING_INVALID"));
+}
