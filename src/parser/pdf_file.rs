@@ -1311,10 +1311,18 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     AstError::ParseError("XRef object stream index overflow".to_string())
                 })?,
             },
-            _ => XRefEntry::Free {
-                next_free_object: 0,
-                generation: 65535,
-            },
+            entry_type => {
+                if self.tolerant {
+                    XRefEntry::Free {
+                        next_free_object: 0,
+                        generation: 65535,
+                    }
+                } else {
+                    return Err(AstError::ParseError(format!(
+                        "Invalid XRef entry type: {entry_type}"
+                    )));
+                }
+            }
         };
 
         Ok(entry)
@@ -3058,6 +3066,23 @@ mod tests {
         type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
         assert!(Parser::parse_object_header(b"-1 0 obj").is_err());
         assert!(Parser::parse_object_header(b"1 -1 obj").is_err());
+    }
+
+    #[test]
+    fn strict_xref_stream_rejects_unknown_entry_type() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("valid header should construct parser");
+
+        let error = parser
+            .parse_xref_stream_entry(&[3, 0, 0], &[1, 1, 1])
+            .expect_err("strict mode must reject unknown XRef entry types");
+        assert!(error.to_string().contains("Invalid XRef entry type"));
     }
 
     #[test]
