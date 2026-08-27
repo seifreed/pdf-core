@@ -116,6 +116,8 @@ entrada desconocidos en lugar de convertirlos silenciosamente en entradas
 libres; `Tolerant` conserva la recuperación anterior.
 La API pública de xref streams consume también el contador compartido de
 objetos antes de materializar cada entrada, igual que las tablas xref.
+Los fallos de parseo XFA en modo tolerante quedan registrados como
+diagnósticos `xfa_parse` con la acción `skipped_xfa`, además del log.
 El parser incremental de `streaming` acepta ahora un `ResourceBudget` compartido:
 cobra cabecera, chunks y nodos, reutiliza el presupuesto al parsear objetos y
 propaga los excesos en lugar de tratarlos como chunks malformados recuperables.

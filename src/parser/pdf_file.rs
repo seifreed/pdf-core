@@ -1524,6 +1524,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 }
             }
             Err(err) if self.tolerant => {
+                self.record_diagnostic(None, None, "xfa_parse", "skipped_xfa", 0.8, 0, &err)?;
                 log::warn!("Failed to parse XFA data (tolerant): {}", err);
             }
             Err(err) => return Err(AstError::ParseError(err)),
@@ -3083,6 +3084,32 @@ mod tests {
             .parse_xref_stream_entry(&[3, 0, 0], &[1, 1, 1])
             .expect_err("strict mode must reject unknown XRef entry types");
         assert!(error.to_string().contains("Invalid XRef entry type"));
+    }
+
+    #[test]
+    fn tolerant_xfa_parse_records_diagnostic() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Tolerant,
+            10,
+            PerformanceLimits::default(),
+        )
+        .expect("valid header should construct parser");
+        let mut acroform = PdfDictionary::new();
+        acroform.insert(
+            "XFA",
+            PdfValue::Stream(PdfStream::new(PdfDictionary::new(), b"<xfa>".to_vec())),
+        );
+
+        parser
+            .process_xfa_document(&acroform)
+            .expect("tolerant XFA parsing should continue");
+        assert!(parser
+            .document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "xfa_parse"));
     }
 
     #[test]
