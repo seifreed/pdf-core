@@ -142,6 +142,9 @@ estricto.
 `839981d` valida que `/ToUnicode` apunte realmente a un stream, tambien cuando
 la referencia indirecta resuelve a otro tipo; la suite de fuentes pasa `2/2`
 y Clippy estricto.
+`da55ad4` valida que `/Encoding` sea un nombre o diccionario real, incluidos
+valores indirectos, y diagnostica tipos invalidos; las suites de fuentes y
+PDF/UA pasan `28/28` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
