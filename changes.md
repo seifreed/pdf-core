@@ -39,6 +39,8 @@ resuelta como metadato separado. `PageTreeParser` acota tambien los nodos de
 color space y perfiles ICC inline, ademas de sus aristas de recursos. Cada
 punto tiene regresion y pasa Clippy estricto. Las APIs publicas de XMP aceptan
 ahora un `ResourceBudget`, y el parser PDF lo propaga al parseo del paquete.
+Las APIs publicas de `PdfParser` para valores, objetos y secuencias tambien
+consumen la entrada del presupuesto antes de analizarla, con regresion.
 
 Pendientes actuales, en orden practico:
 
