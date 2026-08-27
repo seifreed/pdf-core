@@ -387,16 +387,54 @@ impl SerializableGraph {
         serde_json::to_string_pretty(self)
     }
 
+    pub fn to_json_with_budget(&self, budget: &ResourceBudget) -> Result<String, String> {
+        check_serializable_graph_budget(self, budget).map_err(|error| error.to_string())?;
+        let output = self.to_json().map_err(|error| error.to_string())?;
+        budget
+            .consume_decoded(output.len() as u64)
+            .map_err(|error| error.to_string())?;
+        Ok(output)
+    }
+
     pub fn to_cbor(&self) -> serde_cbor::Result<Vec<u8>> {
         serde_cbor::to_vec(self)
+    }
+
+    pub fn to_cbor_with_budget(&self, budget: &ResourceBudget) -> Result<Vec<u8>, String> {
+        check_serializable_graph_budget(self, budget).map_err(|error| error.to_string())?;
+        let output = self.to_cbor().map_err(|error| error.to_string())?;
+        budget
+            .consume_decoded(output.len() as u64)
+            .map_err(|error| error.to_string())?;
+        Ok(output)
     }
 
     pub fn from_json(json: &str) -> serde_json::Result<Self> {
         serde_json::from_str(json)
     }
 
+    pub fn from_json_with_budget(json: &str, budget: &ResourceBudget) -> Result<Self, String> {
+        budget.check().map_err(|error| error.to_string())?;
+        if json.len() as u64 > budget.max_input_bytes {
+            return Err(ResourceBudgetError::InputBytes.to_string());
+        }
+        let graph = Self::from_json(json).map_err(|error| error.to_string())?;
+        check_serializable_graph_budget(&graph, budget).map_err(|error| error.to_string())?;
+        Ok(graph)
+    }
+
     pub fn from_cbor(data: &[u8]) -> serde_cbor::Result<Self> {
         serde_cbor::from_slice(data)
+    }
+
+    pub fn from_cbor_with_budget(data: &[u8], budget: &ResourceBudget) -> Result<Self, String> {
+        budget.check().map_err(|error| error.to_string())?;
+        if data.len() as u64 > budget.max_input_bytes {
+            return Err(ResourceBudgetError::InputBytes.to_string());
+        }
+        let graph = Self::from_cbor(data).map_err(|error| error.to_string())?;
+        check_serializable_graph_budget(&graph, budget).map_err(|error| error.to_string())?;
+        Ok(graph)
     }
 
     /// Deserializes an AST after charging its nodes, edges, and byte payloads
@@ -1064,16 +1102,54 @@ impl SerializableDocument {
         serde_json::to_string_pretty(self)
     }
 
+    pub fn to_json_with_budget(&self, budget: &ResourceBudget) -> Result<String, String> {
+        check_serializable_document_budget(self, budget).map_err(|error| error.to_string())?;
+        let output = self.to_json().map_err(|error| error.to_string())?;
+        budget
+            .consume_decoded(output.len() as u64)
+            .map_err(|error| error.to_string())?;
+        Ok(output)
+    }
+
     pub fn to_cbor(&self) -> serde_cbor::Result<Vec<u8>> {
         serde_cbor::to_vec(self)
+    }
+
+    pub fn to_cbor_with_budget(&self, budget: &ResourceBudget) -> Result<Vec<u8>, String> {
+        check_serializable_document_budget(self, budget).map_err(|error| error.to_string())?;
+        let output = self.to_cbor().map_err(|error| error.to_string())?;
+        budget
+            .consume_decoded(output.len() as u64)
+            .map_err(|error| error.to_string())?;
+        Ok(output)
     }
 
     pub fn from_json(json: &str) -> serde_json::Result<Self> {
         serde_json::from_str(json)
     }
 
+    pub fn from_json_with_budget(json: &str, budget: &ResourceBudget) -> Result<Self, String> {
+        budget.check().map_err(|error| error.to_string())?;
+        if json.len() as u64 > budget.max_input_bytes {
+            return Err(ResourceBudgetError::InputBytes.to_string());
+        }
+        let document = Self::from_json(json).map_err(|error| error.to_string())?;
+        check_serializable_document_budget(&document, budget).map_err(|error| error.to_string())?;
+        Ok(document)
+    }
+
     pub fn from_cbor(data: &[u8]) -> serde_cbor::Result<Self> {
         serde_cbor::from_slice(data)
+    }
+
+    pub fn from_cbor_with_budget(data: &[u8], budget: &ResourceBudget) -> Result<Self, String> {
+        budget.check().map_err(|error| error.to_string())?;
+        if data.len() as u64 > budget.max_input_bytes {
+            return Err(ResourceBudgetError::InputBytes.to_string());
+        }
+        let document = Self::from_cbor(data).map_err(|error| error.to_string())?;
+        check_serializable_document_budget(&document, budget).map_err(|error| error.to_string())?;
+        Ok(document)
     }
 
     pub fn deserialize_ast(&self) -> Result<PdfAstGraph, String> {
@@ -1405,6 +1481,34 @@ mod tests {
         XRefEntry,
     };
     use crate::types::{ObjectId, PdfDictionary, PdfValue};
+
+    #[test]
+    fn budgeted_serialization_checks_structure_input_and_output() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.create_node(NodeType::Root, PdfValue::Null);
+        ast.set_root(root_id);
+        let serialized = SerializableGraph::from_ast(&ast);
+
+        let node_budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 0, 10, 10);
+        assert!(serialized
+            .to_json_with_budget(&node_budget)
+            .expect_err("serialization must consume node budget")
+            .contains("Nodes"));
+
+        let output_budget = ResourceBudget::new(1024, 0, 1024, 100, 10, 10, 10, 10);
+        assert!(serialized
+            .to_cbor_with_budget(&output_budget)
+            .expect_err("serialization output must consume decoded budget")
+            .contains("DecodedBytes"));
+
+        let json = serialized.to_json().unwrap();
+        let input_budget = ResourceBudget::new(0, 1024, 1024, 100, 10, 10, 10, 10);
+        assert!(
+            SerializableGraph::from_json_with_budget(&json, &input_budget)
+                .expect_err("serialized input must respect the budget")
+                .contains("InputBytes")
+        );
+    }
 
     #[test]
     fn test_graph_serialization() {

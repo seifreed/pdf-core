@@ -132,6 +132,9 @@ devolverla; las APIs legacy conservan límites por defecto.
 el límite configurado del decoder y cobra la entrada y la imagen resultante.
 `PredictorDecoder::decode_with_budget` cobra la entrada y la salida TIFF/PNG y
 rechaza antes de decodificar cuando la salida máxima posible no cabe.
+`SerializableGraph` y `SerializableDocument` exponen ahora variantes
+presupuestadas para JSON y CBOR, y sus entradas JSON/CBOR comprueban el tamaño
+antes de parsear y la estructura materializada después.
 El parser documental de xref streams rechaza ahora en `Strict` tipos de
 entrada desconocidos en lugar de convertirlos silenciosamente en entradas
 libres; `Tolerant` conserva la recuperación anterior.
