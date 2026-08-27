@@ -10,6 +10,7 @@ use crate::performance::ResourceBudget;
 use crate::types::PdfValue;
 use std::collections::HashMap;
 use std::io::Cursor;
+use std::time::{Duration, Instant};
 
 pub mod diagnostics;
 pub mod reconstruction;
@@ -180,6 +181,7 @@ impl RecoveryParser {
                 if is_resource_limit_error(&initial_error) {
                     return Err(initial_error);
                 }
+                self.check_timeout(start_time)?;
                 // Normal parsing failed, begin recovery
                 self.log_error(RecoveryError {
                     error_type: RecoveryErrorType::ParseError,
@@ -203,7 +205,7 @@ impl RecoveryParser {
         }
 
         // Begin recovery process
-        let recovery_result = self.attempt_recovery(data)?;
+        let recovery_result = self.attempt_recovery(data, start_time)?;
         let elapsed = start_time.elapsed().as_millis() as u64;
         self.statistics.recovery_time_ms = elapsed;
 
@@ -217,13 +219,18 @@ impl RecoveryParser {
     }
 
     /// Attempt recovery using all available strategies
-    fn attempt_recovery(&mut self, data: &[u8]) -> AstResult<(PdfDocument, RecoveryReport)> {
+    fn attempt_recovery(
+        &mut self,
+        data: &[u8],
+        start_time: Instant,
+    ) -> AstResult<(PdfDocument, RecoveryReport)> {
         let mut document = PdfDocument::new(crate::ast::PdfVersion { major: 1, minor: 4 });
         let mut recovery_actions = Vec::new();
         let mut current_data = data.to_vec();
 
         // Apply recovery strategies in order of preference
         for strategy in &self.recovery_strategies {
+            self.check_timeout(start_time)?;
             let context = RecoveryContext {
                 original_data: data,
                 current_data: &current_data,
@@ -267,6 +274,7 @@ impl RecoveryParser {
         }
 
         // Final parsing attempt with recovered data
+        self.check_timeout(start_time)?;
         let final_document = match self.base_parser.parse(&mut Cursor::new(&current_data)) {
             Ok(doc) => doc,
             Err(error) if is_resource_limit_error(&error) => return Err(error),
@@ -287,6 +295,15 @@ impl RecoveryParser {
         };
 
         Ok((final_document, report))
+    }
+
+    fn check_timeout(&self, start_time: Instant) -> AstResult<()> {
+        if start_time.elapsed() >= Duration::from_millis(self.recovery_config.timeout_ms) {
+            return Err(AstError::ParseError(
+                "recovery timeout exceeded".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     /// Initialize recovery strategies based on configuration
@@ -587,5 +604,17 @@ mod tests {
             .parse_with_recovery(b"%PDF-1.7\n")
             .expect_err("oversized input must not enter best-effort recovery");
         assert!(error.to_string().contains("InputBytes"));
+    }
+
+    #[test]
+    fn recovery_honors_configured_timeout() {
+        let config = RecoveryConfig {
+            timeout_ms: 0,
+            ..RecoveryConfig::default()
+        };
+        let error = RecoveryParser::new(config)
+            .parse_with_recovery(b"not a pdf")
+            .expect_err("zero timeout must stop recovery");
+        assert!(error.to_string().contains("timeout"));
     }
 }
