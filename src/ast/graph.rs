@@ -787,6 +787,16 @@ impl PdfAstGraph {
     }
 
     pub fn get_page_number(&self, node_id: NodeId) -> Option<usize> {
+        self.get_page_number_with_budget(node_id, &ResourceBudget::default())
+            .ok()
+            .flatten()
+    }
+
+    pub fn get_page_number_with_budget(
+        &self,
+        node_id: NodeId,
+        budget: &ResourceBudget,
+    ) -> Result<Option<usize>, ResourceBudgetError> {
         // Find the page node or its parent page
         let mut current = node_id;
         let mut page_node = None;
@@ -794,6 +804,7 @@ impl PdfAstGraph {
 
         // Walk up the tree to find a Page node
         while visited.insert(current) {
+            budget.consume_node()?;
             if let Some(node) = self.get_node(current) {
                 if matches!(node.node_type, NodeType::Page) {
                     page_node = Some(current);
@@ -812,16 +823,16 @@ impl PdfAstGraph {
         if let Some(page_id) = page_node {
             // Find the Pages parent
             if let Some(parent_id) = self.get_parent(page_id) {
-                let siblings = self.get_children(parent_id);
+                let siblings = self.get_children_with_budget(parent_id, budget)?;
                 for (index, sibling) in siblings.iter().enumerate() {
                     if *sibling == page_id {
-                        return Some(index + 1); // Page numbers are 1-indexed
+                        return Ok(Some(index + 1)); // Page numbers are 1-indexed
                     }
                 }
             }
         }
 
-        None
+        Ok(None)
     }
 
     pub fn raw_edges(&self) -> Vec<EdgeInfo> {
@@ -841,33 +852,51 @@ impl PdfAstGraph {
     /// # Returns
     /// The longest path from root to any leaf node, or 0 if no root is set
     pub fn get_max_depth(&self) -> usize {
-        self.root
-            .map(|root_id| self.calculate_depth(root_id, 0, &mut HashSet::new()))
-            .unwrap_or(0)
+        self.get_max_depth_with_budget(&ResourceBudget::default())
+            .unwrap_or_default()
     }
 
-    fn calculate_depth(
+    pub fn get_max_depth_with_budget(
+        &self,
+        budget: &ResourceBudget,
+    ) -> Result<usize, ResourceBudgetError> {
+        self.root
+            .map(|root_id| {
+                self.calculate_depth_with_budget(root_id, 0, &mut HashSet::new(), budget)
+            })
+            .transpose()
+            .map(|depth| depth.unwrap_or(0))
+    }
+
+    fn calculate_depth_with_budget(
         &self,
         node_id: NodeId,
         current_depth: usize,
         active: &mut HashSet<NodeId>,
-    ) -> usize {
+        budget: &ResourceBudget,
+    ) -> Result<usize, ResourceBudgetError> {
+        budget.consume_node()?;
         if !active.insert(node_id) {
-            return current_depth;
+            return Ok(current_depth);
         }
 
-        let children = self.get_children(node_id);
+        let children = self.get_children_with_budget(node_id, budget)?;
         let depth = if children.is_empty() {
             current_depth
         } else {
-            children
-                .iter()
-                .map(|&child| self.calculate_depth(child, current_depth + 1, active))
-                .max()
-                .unwrap_or(current_depth)
+            let mut max_depth = current_depth;
+            for child in children {
+                max_depth = max_depth.max(self.calculate_depth_with_budget(
+                    child,
+                    current_depth + 1,
+                    active,
+                    budget,
+                )?);
+            }
+            max_depth
         };
         active.remove(&node_id);
-        depth
+        Ok(depth)
     }
 
     pub fn next_node_id(&mut self) -> NodeId {
@@ -957,6 +986,27 @@ mod tests {
             graph
                 .get_all_nodes_with_budget(&budget)
                 .expect_err("graph node collection must respect the node budget"),
+            ResourceBudgetError::Nodes
+        );
+    }
+
+    #[test]
+    fn graph_depth_queries_report_budget_exhaustion() {
+        let mut graph = PdfAstGraph::new();
+        let root = graph.add_node(AstNode::new(NodeId(0), NodeType::Page, PdfValue::Null));
+        graph.set_root(root);
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 0, 10, 10);
+
+        assert_eq!(
+            graph
+                .get_max_depth_with_budget(&budget)
+                .expect_err("depth traversal must respect the node budget"),
+            ResourceBudgetError::Nodes
+        );
+        assert_eq!(
+            graph
+                .get_page_number_with_budget(root, &budget)
+                .expect_err("page traversal must respect the node budget"),
             ResourceBudgetError::Nodes
         );
     }

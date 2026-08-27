@@ -95,6 +95,9 @@ MCID cobran objetos y bytes antes de materializar resultados o metadatos.
 Las colecciones y recorridos públicos de `PdfAstGraph` ofrecen variantes con
 presupuesto para nodos, aristas, rutas, BFS/DFS y walkers; las APIs legacy
 mantienen wrappers acotados con los límites por defecto.
+Las consultas de profundidad y numeración de páginas del grafo comparten ahora
+el mismo límite de nodos y terminan con error explícito en sus variantes
+presupuestadas.
 El parseo de cabeceras de object streams limita tambien el numero de entradas
 con el mismo presupuesto en sus rutas publicas e internas.
 El parser publico de imagenes inline tambien rechaza entradas que exceden el
