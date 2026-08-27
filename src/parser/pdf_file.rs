@@ -2106,6 +2106,26 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                         NodeType::Unknown
                     };
 
+                    if node_type == NodeType::Unknown {
+                        let message = format!(
+                            "Page tree node {} {} has missing or unknown /Type",
+                            obj_id.number, obj_id.generation
+                        );
+                        if !self.tolerant {
+                            return Err(AstError::ParseError(message));
+                        }
+                        self.record_diagnostic(
+                            Some(obj_id),
+                            None,
+                            "invalid_page_tree_type",
+                            "skipped_invalid_page_tree_node",
+                            1.0,
+                            0,
+                            &message,
+                        )?;
+                        continue;
+                    }
+
                     let is_page = node_type == NodeType::Page;
                     let mut node_value = pages_value.clone();
                     if !inherited_resources.is_empty() {
@@ -2129,10 +2149,53 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                         }
                     }
 
-                    if let Some(PdfValue::Array(kids)) = pages_dict.get("Kids") {
-                        for kid in kids.iter() {
-                            if let Some(kid_ref) = kid.as_reference() {
-                                stack.push((*kid_ref, pages_id, effective_resources.clone()));
+                    if let Some(kids_value) = pages_dict.get("Kids") {
+                        match kids_value {
+                            PdfValue::Array(kids) => {
+                                for kid in kids.iter() {
+                                    if let Some(kid_ref) = kid.as_reference() {
+                                        stack.push((
+                                            *kid_ref,
+                                            pages_id,
+                                            effective_resources.clone(),
+                                        ));
+                                    } else {
+                                        let message = format!(
+                                            "Page tree /Kids entry must be a reference, got {}",
+                                            kid.type_name()
+                                        );
+                                        if !self.tolerant {
+                                            return Err(AstError::ParseError(message));
+                                        }
+                                        self.record_diagnostic(
+                                            Some(obj_id),
+                                            None,
+                                            "invalid_page_tree_kid",
+                                            "skipped_invalid_page_tree_kid",
+                                            1.0,
+                                            0,
+                                            &message,
+                                        )?;
+                                    }
+                                }
+                            }
+                            invalid => {
+                                let message = format!(
+                                    "Page tree /Kids must be an array, got {}",
+                                    invalid.type_name()
+                                );
+                                if !self.tolerant {
+                                    return Err(AstError::ParseError(message));
+                                }
+                                self.record_diagnostic(
+                                    Some(obj_id),
+                                    None,
+                                    "invalid_page_tree_kids",
+                                    "skipped_invalid_page_tree_kids",
+                                    1.0,
+                                    0,
+                                    &message,
+                                )?;
                             }
                         }
                     }
