@@ -1,4 +1,5 @@
 use crate::ast::{AstNode, PdfAstGraph, PdfDocument};
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::visitor::{AstWalker as VisitorAstWalker, Visitor};
 
 /// Trait for walking AST nodes in a document graph.
@@ -10,6 +11,12 @@ pub trait AstWalker {
     fn walk_nodes_with<F>(&self, f: F)
     where
         F: FnMut(&AstNode);
+
+    fn walk_nodes_with_budget<V: Visitor>(
+        &self,
+        visitor: &mut V,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError>;
 }
 
 /// Trait for walking the graph structure (nodes + edges).
@@ -23,12 +30,36 @@ pub trait GraphWalker {
     fn walk_edges<F>(&self, f: F)
     where
         F: FnMut(&crate::ast::EdgeInfo);
+
+    fn walk_all_nodes_with_budget<F>(
+        &self,
+        f: F,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError>
+    where
+        F: FnMut(&AstNode);
+
+    fn walk_edges_with_budget<F>(
+        &self,
+        f: F,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError>
+    where
+        F: FnMut(&crate::ast::EdgeInfo);
 }
 
 /// Trait for iterating incremental timeline steps.
 pub trait TimelineWalker {
     /// Walk document revisions in order.
     fn walk_revisions<F>(&self, f: F)
+    where
+        F: FnMut(&crate::ast::DocumentRevision);
+
+    fn walk_revisions_with_budget<F>(
+        &self,
+        f: F,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError>
     where
         F: FnMut(&crate::ast::DocumentRevision);
 }
@@ -44,6 +75,15 @@ impl AstWalker for PdfAstGraph {
         F: FnMut(&AstNode),
     {
         self.walk_nodes(&mut CallbackVisitor { callback: &mut f });
+    }
+
+    fn walk_nodes_with_budget<V: Visitor>(
+        &self,
+        visitor: &mut V,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError> {
+        let mut walker = VisitorAstWalker::new(self);
+        walker.walk_with_budget(visitor, budget)
     }
 }
 
@@ -65,6 +105,36 @@ impl GraphWalker for PdfAstGraph {
             f(&edge);
         }
     }
+
+    fn walk_all_nodes_with_budget<F>(
+        &self,
+        mut f: F,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError>
+    where
+        F: FnMut(&AstNode),
+    {
+        for node in self.get_all_nodes() {
+            budget.consume_node()?;
+            f(node);
+        }
+        Ok(())
+    }
+
+    fn walk_edges_with_budget<F>(
+        &self,
+        mut f: F,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError>
+    where
+        F: FnMut(&crate::ast::EdgeInfo),
+    {
+        for edge in self.get_all_edges() {
+            budget.consume_edge()?;
+            f(&edge);
+        }
+        Ok(())
+    }
 }
 
 impl TimelineWalker for PdfDocument {
@@ -75,6 +145,21 @@ impl TimelineWalker for PdfDocument {
         for revision in &self.revisions {
             f(revision);
         }
+    }
+
+    fn walk_revisions_with_budget<F>(
+        &self,
+        mut f: F,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError>
+    where
+        F: FnMut(&crate::ast::DocumentRevision),
+    {
+        for revision in &self.revisions {
+            budget.consume_object()?;
+            f(revision);
+        }
+        Ok(())
     }
 }
 

@@ -1,4 +1,5 @@
 use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::types::PdfDictionary;
 use std::collections::HashSet;
 
@@ -122,6 +123,17 @@ impl<'a> AstWalker<'a> {
         }
     }
 
+    pub fn walk_with_budget<V: Visitor>(
+        &mut self,
+        visitor: &mut V,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError> {
+        if let Some(root_id) = self.graph.get_root() {
+            self.walk_node_with_budget(root_id, visitor, budget)?;
+        }
+        Ok(())
+    }
+
     fn walk_node<V: Visitor>(&mut self, node_id: NodeId, visitor: &mut V) -> VisitorAction {
         self.walk_node_with_depth(node_id, visitor, 0)
     }
@@ -155,6 +167,37 @@ impl<'a> AstWalker<'a> {
         }
 
         VisitorAction::Continue
+    }
+
+    fn walk_node_with_budget<V: Visitor>(
+        &mut self,
+        node_id: NodeId,
+        visitor: &mut V,
+        budget: &ResourceBudget,
+    ) -> Result<VisitorAction, ResourceBudgetError> {
+        if self.visited.contains(&node_id) {
+            return Ok(VisitorAction::SkipChildren);
+        }
+        self.visited.insert(node_id);
+        budget.consume_node()?;
+
+        let node = match self.graph.get_node(node_id) {
+            Some(n) => n,
+            None => return Ok(VisitorAction::Continue),
+        };
+
+        match dispatch_visitor(visitor, node) {
+            VisitorAction::Stop => return Ok(VisitorAction::Stop),
+            VisitorAction::SkipChildren => return Ok(VisitorAction::Continue),
+            VisitorAction::Continue => {}
+        }
+
+        for child_id in node.children.clone() {
+            if self.walk_node_with_budget(child_id, visitor, budget)? == VisitorAction::Stop {
+                return Ok(VisitorAction::Stop);
+            }
+        }
+        Ok(VisitorAction::Continue)
     }
 }
 
@@ -206,6 +249,21 @@ impl QueryBuilder {
         walker.walk(&mut collector);
 
         results
+    }
+
+    pub fn execute_with_budget(
+        &self,
+        graph: &PdfAstGraph,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<NodeId>, ResourceBudgetError> {
+        let mut results = Vec::new();
+        let mut collector = QueryCollector {
+            query: self,
+            results: &mut results,
+        };
+        let mut walker = DepthAwareWalker::new(graph, self.max_depth);
+        walker.walk_with_budget(&mut collector, budget)?;
+        Ok(results)
     }
 }
 
@@ -263,6 +321,17 @@ impl<'a> DepthAwareWalker<'a> {
         }
     }
 
+    fn walk_with_budget<V: Visitor>(
+        &mut self,
+        visitor: &mut V,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError> {
+        if let Some(root_id) = self.graph.get_root() {
+            self.walk_node_with_depth_and_budget(root_id, visitor, 0, budget)?;
+        }
+        Ok(())
+    }
+
     fn walk_node_with_depth<V: Visitor>(
         &mut self,
         node_id: NodeId,
@@ -299,5 +368,80 @@ impl<'a> DepthAwareWalker<'a> {
         }
 
         VisitorAction::Continue
+    }
+
+    fn walk_node_with_depth_and_budget<V: Visitor>(
+        &mut self,
+        node_id: NodeId,
+        visitor: &mut V,
+        depth: usize,
+        budget: &ResourceBudget,
+    ) -> Result<VisitorAction, ResourceBudgetError> {
+        if let Some(max_depth) = self.max_depth {
+            if depth > max_depth {
+                return Ok(VisitorAction::SkipChildren);
+            }
+        }
+        if self.visited.contains(&node_id) {
+            return Ok(VisitorAction::SkipChildren);
+        }
+        self.visited.insert(node_id);
+        budget.consume_node()?;
+
+        let node = match self.graph.get_node(node_id) {
+            Some(n) => n,
+            None => return Ok(VisitorAction::Continue),
+        };
+        match dispatch_visitor(visitor, node) {
+            VisitorAction::Stop => return Ok(VisitorAction::Stop),
+            VisitorAction::SkipChildren => return Ok(VisitorAction::Continue),
+            VisitorAction::Continue => {}
+        }
+        for child_id in &node.children {
+            if self.walk_node_with_depth_and_budget(*child_id, visitor, depth + 1, budget)?
+                == VisitorAction::Stop
+            {
+                return Ok(VisitorAction::Stop);
+            }
+        }
+        Ok(VisitorAction::Continue)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct CountingVisitor;
+
+    impl Visitor for CountingVisitor {}
+
+    #[test]
+    fn budgeted_visitor_walk_rejects_excess_nodes() {
+        let mut graph = PdfAstGraph::new();
+        let root = graph.create_node(NodeType::Root, crate::types::PdfValue::Null);
+        let child = graph.create_node(NodeType::Page, crate::types::PdfValue::Null);
+        graph.add_edge(root, child, crate::ast::EdgeType::Child);
+        graph.set_root(root);
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 1, 10, 10);
+
+        let mut visitor = CountingVisitor;
+        let error = AstWalker::new(&graph)
+            .walk_with_budget(&mut visitor, &budget)
+            .expect_err("visitor traversal must consume node budget");
+        assert_eq!(error, ResourceBudgetError::Nodes);
+    }
+
+    #[test]
+    fn budgeted_query_walk_accepts_graph_within_limits() {
+        let mut graph = PdfAstGraph::new();
+        let root = graph.create_node(NodeType::Root, crate::types::PdfValue::Null);
+        graph.set_root(root);
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 1, 10, 10);
+
+        let result = QueryBuilder::new()
+            .execute_with_budget(&graph, &budget)
+            .expect("query should fit budget");
+        assert_eq!(result, vec![root]);
     }
 }
