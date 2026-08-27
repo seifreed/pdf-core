@@ -66,6 +66,7 @@ pub struct ReferenceResolver<R: BufRead + Seek> {
     object_to_node: HashMap<ObjectId, NodeId>, // Maps ObjectId to NodeId
     resolved_objects: HashSet<ObjectId>,
     pending_references: VecDeque<(NodeId, PdfReference)>, // (source_node, reference)
+    queued_references: HashSet<(NodeId, ObjectId)>,
     tolerant: bool,
     limits: PerformanceLimits,
 }
@@ -81,6 +82,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             object_to_node: HashMap::new(),
             resolved_objects: HashSet::new(),
             pending_references: VecDeque::new(),
+            queued_references: HashSet::new(),
             tolerant,
             limits,
         })
@@ -126,6 +128,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             object_to_node: HashMap::new(),
             resolved_objects: HashSet::new(),
             pending_references: VecDeque::new(),
+            queued_references: HashSet::new(),
             tolerant,
             limits,
         }
@@ -358,6 +361,11 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         let nodes = ast
             .get_all_nodes_with_budget(&self.limits.budget)
             .map_err(|err| err.to_string())?;
+        for obj_id in self.xref_table.keys().copied() {
+            if let Some(node) = ast.get_node_by_object(obj_id) {
+                self.object_to_node.insert(obj_id, node.id);
+            }
+        }
         for node in &nodes {
             self.collect_references_from_node(node.id, &node.value);
         }
@@ -407,7 +415,6 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 source_node, target_node, obj_id
             );
         }
-
         // Third pass: resolve indirect Length references in streams
         self.resolve_stream_lengths(ast)?;
 
@@ -488,7 +495,9 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         while let Some(current) = stack.pop() {
             match current {
                 PdfValue::Reference(pdf_ref) => {
-                    self.pending_references.push_back((node_id, *pdf_ref));
+                    if self.queued_references.insert((node_id, pdf_ref.id())) {
+                        self.pending_references.push_back((node_id, *pdf_ref));
+                    }
                 }
                 PdfValue::Array(array) => {
                     for item in array.iter() {
@@ -1632,6 +1641,26 @@ mod tests {
         if let Some(node) = ast.get_node(node_id) {
             resolver.collect_references_from_node(node_id, &node.value);
         }
+
+        assert_eq!(resolver.pending_references.len(), 1);
+    }
+
+    #[test]
+    fn reference_collection_deduplicates_repeated_object_references() {
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(Vec::new()),
+            &PdfDocument::new(crate::ast::PdfVersion::new(1, 7)),
+            true,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut dict = PdfDictionary::new();
+        let reference = PdfValue::Reference(PdfReference::new(5, 0));
+        dict.insert("First", reference.clone());
+        dict.insert("Second", reference);
+        let mut ast = PdfAstGraph::new();
+        let node_id = ast.create_node(NodeType::Root, PdfValue::Dictionary(dict));
+
+        resolver.collect_references_from_node(node_id, &ast.get_node(node_id).unwrap().value);
 
         assert_eq!(resolver.pending_references.len(), 1);
     }

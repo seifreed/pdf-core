@@ -48,6 +48,7 @@ pub struct PdfFileParser<R: Read + Seek + BufRead> {
     document: PdfDocument,
     object_cache: HashMap<ObjectId, PdfValue>,
     xref_offset: Option<u64>,
+    object_offsets: Vec<u64>,
     limits: PerformanceLimits,
     object_load_depth: usize,
 }
@@ -94,6 +95,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             document,
             object_cache: HashMap::new(),
             xref_offset: None,
+            object_offsets: Vec::new(),
             limits,
             object_load_depth: 0,
         })
@@ -121,6 +123,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         } else {
             self.parse_xref_chain()?;
         }
+        self.refresh_object_offsets()?;
 
         // Parse document structure
         log::debug!("Parsing: document structure");
@@ -1390,6 +1393,9 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 PdfValue::Dictionary(_) => {
                     let catalog_id = self.add_to_ast(catalog_value, NodeType::Catalog)?;
                     self.document.set_catalog(catalog_id);
+                    self.document
+                        .ast
+                        .register_object_node(root_ref.id(), catalog_id);
                     Some(catalog_id)
                 }
                 _ if self.tolerant => {
@@ -1414,7 +1420,6 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             if let Some(catalog_id) = catalog_id {
                 // Parse catalog sub-structures
                 self.parse_catalog_references(catalog_id)?;
-
                 // Parse page tree
                 let pages_ref = if let Some(catalog_node) = self.document.ast.get_node(catalog_id) {
                     catalog_node
@@ -1438,10 +1443,14 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             .trailer
             .get("Info")
             .and_then(|v| v.as_reference())
+            .cloned()
         {
             let info_value = self.load_object(&info_ref.id())?;
             let info_id = self.add_to_ast(info_value, NodeType::Metadata)?;
             self.document.set_info(info_id);
+            self.document
+                .ast
+                .register_object_node(info_ref.id(), info_id);
         }
 
         // Parse encryption dictionary
@@ -1450,9 +1459,13 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             .trailer
             .get("Encrypt")
             .and_then(|v| v.as_reference())
+            .cloned()
         {
             let encrypt_value = self.load_object(&encrypt_ref.id())?;
-            let _encrypt_id = self.add_to_ast(encrypt_value, NodeType::Encrypt)?;
+            let encrypt_id = self.add_to_ast(encrypt_value, NodeType::Encrypt)?;
+            self.document
+                .ast
+                .register_object_node(encrypt_ref.id(), encrypt_id);
         }
 
         Ok(())
@@ -2103,6 +2116,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     }
                 }
                 let pages_id = self.add_to_ast(node_value, node_type)?;
+                self.document.ast.register_object_node(obj_id, pages_id);
                 self.add_edge(current_parent, pages_id, crate::ast::EdgeType::Child)?;
 
                 if !inherited_resources.is_empty() {
@@ -2431,17 +2445,16 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             .checked_mul(1024 * 1024)
             .ok_or_else(|| AstError::ParseError("Object size limit overflow".to_string()))?
             as u64;
+        if self.object_offsets.is_empty() {
+            self.refresh_object_offsets()?;
+        }
         let next_offset = self
-            .document
-            .xref
-            .entries
-            .values()
-            .filter_map(|entry| match entry {
-                XRefEntry::InUse { offset, .. } => Some(*offset),
-                _ => None,
-            })
-            .filter(|candidate| *candidate > offset)
-            .min()
+            .object_offsets
+            .get(
+                self.object_offsets
+                    .partition_point(|candidate| *candidate <= offset),
+            )
+            .copied()
             .unwrap_or(file_size);
         let bound = next_offset
             .saturating_sub(offset)
@@ -2456,6 +2469,31 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let mut buffer = Vec::new();
         self.reader.by_ref().take(bound).read_to_end(&mut buffer)?;
         Ok(buffer)
+    }
+
+    fn refresh_object_offsets(&mut self) -> AstResult<()> {
+        let mut offsets: Vec<u64> = self
+            .document
+            .xref
+            .entries
+            .values()
+            .filter_map(|entry| match entry {
+                XRefEntry::InUse { offset, .. } => Some(*offset),
+                _ => None,
+            })
+            .collect();
+        offsets.sort_unstable();
+        offsets.dedup();
+        let bytes = offsets
+            .len()
+            .checked_mul(std::mem::size_of::<u64>())
+            .ok_or_else(|| AstError::ParseError("Object offset index is too large".to_string()))?;
+        self.limits
+            .budget
+            .consume_memory(bytes as u64)
+            .map_err(|error| AstError::ParseError(error.to_string()))?;
+        self.object_offsets = offsets;
+        Ok(())
     }
 
     fn read_limited_input(&mut self) -> AstResult<Vec<u8>> {
@@ -3191,7 +3229,6 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 return Err(AstError::ParseError(err));
             }
         }
-
         Ok(())
     }
 }
