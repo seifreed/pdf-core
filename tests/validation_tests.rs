@@ -534,6 +534,59 @@ mod validation_tests {
         assert!(!has_issue(&report, "PDF_A_XMP_METADATA"));
     }
 
+    #[test]
+    fn pdfa_output_intent_requires_profile_fields() {
+        let mut invalid = create_test_document();
+        let catalog_id = invalid.catalog.expect("catalog should exist");
+        let catalog = invalid
+            .ast
+            .get_node_mut(catalog_id)
+            .expect("catalog node should exist");
+        if let PdfValue::Dictionary(dict) = &mut catalog.value {
+            dict.insert(
+                "OutputIntents",
+                PdfValue::Array(PdfArray::from(vec![PdfValue::Dictionary({
+                    let mut intent = PdfDictionary::new();
+                    intent.insert("S", PdfValue::Name(PdfName::new("GTS_PDFX")));
+                    intent
+                })])),
+            );
+        }
+        let invalid_report = PdfA1bValidator::new()
+            .with_strict_mode(false)
+            .validate(&invalid);
+        assert!(has_issue(&invalid_report, "PDF_A_OUTPUT_INTENT"));
+
+        let mut valid = create_test_document();
+        let catalog_id = valid.catalog.expect("catalog should exist");
+        let catalog = valid
+            .ast
+            .get_node_mut(catalog_id)
+            .expect("catalog node should exist");
+        if let PdfValue::Dictionary(dict) = &mut catalog.value {
+            dict.insert(
+                "OutputIntents",
+                PdfValue::Array(PdfArray::from(vec![PdfValue::Dictionary({
+                    let mut intent = PdfDictionary::new();
+                    intent.insert("S", PdfValue::Name(PdfName::new("GTS_PDFA1")));
+                    intent.insert(
+                        "OutputConditionIdentifier",
+                        PdfValue::String(PdfString::new_literal(b"sRGB")),
+                    );
+                    intent.insert(
+                        "DestOutputProfile",
+                        PdfValue::Stream(PdfStream::new(PdfDictionary::new(), vec![0; 4])),
+                    );
+                    intent
+                })])),
+            );
+        }
+        let valid_report = PdfA1bValidator::new()
+            .with_strict_mode(false)
+            .validate(&valid);
+        assert!(!has_issue(&valid_report, "PDF_A_OUTPUT_INTENT"));
+    }
+
     // Helper functions for creating test scenarios
 
     fn has_issue(report: &pdf_ast::validation::ValidationReport, code: &str) -> bool {

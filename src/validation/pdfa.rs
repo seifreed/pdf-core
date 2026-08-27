@@ -1,5 +1,5 @@
 use crate::ast::{NodeId, NodeType, PdfDocument};
-use crate::types::{PdfDictionary, PdfStream, PdfValue};
+use crate::types::{PdfArray, PdfDictionary, PdfStream, PdfValue};
 use crate::validation::{
     ConstraintCategory, SchemaConstraint, ValidationIssue, ValidationReport, ValidationSeverity,
 };
@@ -179,8 +179,22 @@ impl PdfA1bValidator {
         let mut missing_output_intent = true;
 
         if let Some(catalog_dict) = document.get_catalog() {
-            if catalog_dict.contains_key("OutputIntents") {
-                missing_output_intent = false;
+            if let Some(output_intents) = catalog_dict.get("OutputIntents") {
+                if let Some(intents) = Self::resolve_array(document, output_intents) {
+                    if !intents.is_empty() {
+                        missing_output_intent = false;
+                    }
+                    self.validate_output_intents(report, document, intents);
+                } else {
+                    report.add_issue(ValidationIssue {
+                        severity: ValidationSeverity::Error,
+                        code: "PDF_A_OUTPUT_INTENT".to_string(),
+                        message: "OutputIntents must be an array".to_string(),
+                        node_id: None,
+                        location: Some("Catalog OutputIntents".to_string()),
+                        suggestion: Some("Provide a non-empty OutputIntents array".to_string()),
+                    });
+                }
             }
         }
 
@@ -229,6 +243,55 @@ impl PdfA1bValidator {
                 location: Some("Color management".to_string()),
                 suggestion: None,
             });
+        }
+    }
+
+    fn validate_output_intents(
+        &self,
+        report: &mut ValidationReport,
+        document: &PdfDocument,
+        intents: &PdfArray,
+    ) {
+        if intents.is_empty() {
+            report.add_issue(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "PDF_A_OUTPUT_INTENT".to_string(),
+                message: "PDF/A-1b requires a non-empty OutputIntents array".to_string(),
+                node_id: None,
+                location: Some("Catalog OutputIntents".to_string()),
+                suggestion: None,
+            });
+            return;
+        }
+
+        for intent in intents {
+            let valid = Self::resolve_dictionary(document, intent).is_some_and(|dict| {
+                matches!(
+                    dict.get("S").and_then(PdfValue::as_name),
+                    Some(name) if name.without_slash() == "GTS_PDFA1"
+                ) && matches!(
+                    dict.get("OutputConditionIdentifier")
+                        .and_then(PdfValue::as_string),
+                    Some(identifier) if !identifier.as_bytes().is_empty()
+                ) && dict
+                    .get("DestOutputProfile")
+                    .and_then(|value| Self::resolve_stream(document, value))
+                    .is_some()
+            });
+            if !valid {
+                report.add_issue(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    code: "PDF_A_OUTPUT_INTENT".to_string(),
+                    message: "OutputIntent must define GTS_PDFA1, an identifier, and an ICC profile"
+                        .to_string(),
+                    node_id: None,
+                    location: Some("Catalog OutputIntents".to_string()),
+                    suggestion: Some(
+                        "Add OutputConditionIdentifier and DestOutputProfile to the PDF/A output intent"
+                            .to_string(),
+                    ),
+                });
+            }
         }
     }
 
@@ -762,6 +825,20 @@ impl PdfA1bValidator {
                 .ast
                 .get_node_by_object(reference.id())
                 .and_then(|node| node.as_dict()),
+            _ => None,
+        }
+    }
+
+    fn resolve_array<'a>(document: &'a PdfDocument, value: &'a PdfValue) -> Option<&'a PdfArray> {
+        match value {
+            PdfValue::Array(array) => Some(array),
+            PdfValue::Reference(reference) => document
+                .ast
+                .get_node_by_object(reference.id())
+                .and_then(|node| match &node.value {
+                    PdfValue::Array(array) => Some(array),
+                    _ => None,
+                }),
             _ => None,
         }
     }
