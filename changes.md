@@ -112,6 +112,9 @@ retornar la imagen, evitando superar el limite aunque difiera del calculo de
 cabecera; la suite pasa `4/4` y Clippy estricto.
 `3c4892d` rechaza tambien valores `/Lang` vacios o compuestos solo por
 espacios; la suite PDF/UA pasa `25/25` y Clippy estricto.
+`d122cb4` propaga los errores de entradas CMap malformadas y rechaza bloques
+truncados cuyo contador declara mas lineas; la suite focalizada pasa `12/12`
+y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
