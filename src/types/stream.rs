@@ -233,10 +233,16 @@ impl PdfStream {
 
     pub fn decode_with_budget(&self, budget: &ResourceBudget) -> Result<Vec<u8>, String> {
         match &self.data {
-            StreamData::Raw(data) | StreamData::Decoded(data) => {
+            StreamData::Raw(data) => {
                 let filters = self.get_filters_with_params_checked()?;
                 crate::filters::decode_stream_with_budget(data, &filters, budget)
                     .map_err(|e| e.to_string())
+            }
+            StreamData::Decoded(data) => {
+                budget
+                    .consume_decoded(data.len() as u64)
+                    .map_err(|e| e.to_string())?;
+                Ok(data.clone())
             }
             StreamData::Lazy(_) => Err("Lazy stream decoding not implemented".to_string()),
         }
@@ -248,7 +254,7 @@ impl PdfStream {
         max_ratio: usize,
     ) -> Result<Vec<u8>, String> {
         match &self.data {
-            StreamData::Raw(data) | StreamData::Decoded(data) => {
+            StreamData::Raw(data) => {
                 let filters = self.get_filters_with_params_checked()?;
                 crate::filters::decode_stream_with_limits(
                     data,
@@ -257,6 +263,16 @@ impl PdfStream {
                     max_ratio,
                 )
                 .map_err(|e| e.to_string())
+            }
+            StreamData::Decoded(data) => {
+                if data.len() > max_output_bytes {
+                    return Err(format!(
+                        "Decoded stream exceeds output limit: {} > {}",
+                        data.len(),
+                        max_output_bytes
+                    ));
+                }
+                Ok(data.clone())
             }
             StreamData::Lazy(_) => Err("Lazy stream decoding not implemented".to_string()),
         }
@@ -578,5 +594,22 @@ mod tests {
             .get_filters_with_params_checked()
             .expect_err("malformed decode parameters must be rejected");
         assert!(error.contains("DecodeParms"));
+    }
+
+    #[test]
+    fn decoded_stream_is_not_filtered_again() {
+        let mut dict = PdfDictionary::new();
+        dict.insert("Filter", PdfValue::Name(PdfName::new("ASCIIHexDecode")));
+        let mut stream = PdfStream::new(dict, b"3631>".to_vec());
+        stream.set_decoded(b"61".to_vec());
+
+        assert_eq!(stream.decode().expect("decoded bytes"), b"61");
+        assert_eq!(
+            stream
+                .decode_with_limits(2, 1)
+                .expect("decoded bytes within limit"),
+            b"61"
+        );
+        assert!(stream.decode_with_limits(1, 1).is_err());
     }
 }
