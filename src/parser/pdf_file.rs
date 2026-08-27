@@ -1941,6 +1941,15 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                         obj_id.number, obj_id.generation
                     )));
                 }
+                self.record_diagnostic(
+                    Some(obj_id),
+                    None,
+                    "page_tree_cycle",
+                    "skipped_cyclic_page_tree",
+                    1.0,
+                    0,
+                    "Cycle detected in page tree; branch skipped",
+                )?;
                 continue;
             }
 
@@ -3283,5 +3292,32 @@ mod tests {
             .parse_page_tree(&PdfReference::new(1, 0), root)
             .expect_err("strict page-tree parsing must reject cycles");
         assert!(error.to_string().contains("Cycle detected"));
+
+        let mut tolerant = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data.to_vec())),
+            ParseMode::Tolerant,
+            10,
+            PerformanceLimits::default(),
+        )
+        .expect("tolerant parser should initialize");
+        tolerant.document.xref.entries.insert(
+            ObjectId::new(1, 0),
+            XRefEntry::InUse {
+                offset: 9,
+                generation: 0,
+            },
+        );
+        let tolerant_root = tolerant
+            .document
+            .ast
+            .create_node(crate::ast::NodeType::Root, PdfValue::Null);
+        tolerant
+            .parse_page_tree(&PdfReference::new(1, 0), tolerant_root)
+            .expect("tolerant page-tree parsing should cut cycles");
+        assert!(tolerant
+            .document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "page_tree_cycle"));
     }
 }
