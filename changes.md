@@ -31,6 +31,15 @@ log y las metricas de memoria como artefacto, y ejecuta el corpus externo
 completo. Los workflows del ultimo push siguen en cola; hasta que terminen no
 se debe contar esta evidencia como verde.
 
+Avances publicados posteriormente: `397b8ae` conserva la identidad `ObjectId`
+de los nodos semanticos resueltos y valida que las fuentes PDF/A apunten a
+streams reales; `93dfce8` rechaza bytes residuales en objetos de object streams
+en modo `Strict`; `d3cbb31` rechaza bytes XMP que no sean UTF-8; y `a3401e0`
+mas `e3f0d83` protegen la aritmetica de rangos y la entrada UTF-8 de CMap.
+El ultimo SHA publicado es `e3f0d83`; sus workflows de corpus, diferencial,
+fuzzing, API, bindings y CI aun estan pendientes o en cola y no se deben
+contar como evidencia verde hasta completar.
+
 Avance publicado en `f2e8a5f`: el smoke test de instalación JavaScript ejecuta
 la carga del addon nativo en un proceso hijo, evitando el bloqueo `EPERM` de
 Windows durante la limpieza del directorio temporal. Avance publicado en
