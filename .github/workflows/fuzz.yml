@@ -41,7 +41,7 @@ jobs:
           - streams
           - xref_streams
     steps:
-      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@7b1c307e0dcbda6122208f10795a713336a9b35a # nightly
