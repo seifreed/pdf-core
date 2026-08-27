@@ -604,6 +604,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
                         let node_id =
                             self.create_node(ast, NodeType::Object(obj_id), PdfValue::Null)?;
+                        ast.register_object_node(obj_id, node_id);
                         if let Some(node) = ast.get_node_mut(node_id) {
                             node.metadata.offset = Some(offset);
                             node.metadata.size = Some(buffer.len() - rest.len());
@@ -630,6 +631,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                     // Create node with proper type
                     let node_type = self.determine_node_type(&value, obj_id);
                     let node_id = self.create_node(ast, node_type, value)?;
+                    ast.register_object_node(obj_id, node_id);
 
                     // Add metadata
                     if let Some(node) = ast.get_node_mut(node_id) {
@@ -691,6 +693,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                         if let Some(recovered) = self.parse_object_value_fallback(&buffer) {
                             let node_type = self.determine_node_type(&recovered, obj_id);
                             let node_id = self.create_node(ast, node_type, recovered)?;
+                            ast.register_object_node(obj_id, node_id);
                             if let Some(node) = ast.get_node_mut(node_id) {
                                 node.metadata.offset = Some(offset);
                                 node.metadata.size = Some(buffer.len());
@@ -708,6 +711,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
                         let node_id =
                             self.create_node(ast, NodeType::Object(obj_id), PdfValue::Null)?;
+                        ast.register_object_node(obj_id, node_id);
                         if let Some(node) = ast.get_node_mut(node_id) {
                             node.metadata.offset = Some(offset);
                             node.metadata.size = Some(buffer.len());
@@ -740,6 +744,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 .map_err(|e| format!("Compressed object {} error: {}", obj_id.number, e))?;
             let node_type = self.determine_node_type(&value, obj_id);
             let node_id = self.create_node(ast, node_type, value)?;
+            ast.register_object_node(obj_id, node_id);
 
             if let Some(node) = ast.get_node_mut(node_id) {
                 node.metadata.offset = meta.file_offset;
@@ -777,6 +782,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             Ok(node_id)
         } else if self.tolerant {
             let node_id = self.create_node(ast, NodeType::Object(obj_id), PdfValue::Null)?;
+            ast.register_object_node(obj_id, node_id);
             if let Some(node) = ast.get_node_mut(node_id) {
                 node.metadata.errors.push(crate::ast::node::ParseError {
                     code: crate::ast::node::ErrorCode::MissingObject,
@@ -1540,7 +1546,43 @@ struct CompressedObjectMeta {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::PdfName;
     use std::io::Cursor;
+
+    #[test]
+    fn resolved_semantic_nodes_keep_their_object_identity() {
+        let data = b"2 0 obj\n<< /Type /Page >>\nendobj\n".to_vec();
+        let mut document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        document.xref.entries.insert(
+            ObjectId::new(2, 0),
+            XRefEntry::InUse {
+                offset: 0,
+                generation: 0,
+            },
+        );
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(data),
+            &document,
+            false,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut ast = PdfAstGraph::new();
+
+        let node_id = resolver
+            .resolve_object(ObjectId::new(2, 0), &mut ast)
+            .expect("object should resolve");
+
+        assert_eq!(
+            ast.get_node_by_object(ObjectId::new(2, 0))
+                .map(|node| node.id),
+            Some(node_id)
+        );
+        assert!(matches!(
+            ast.get_node(node_id).map(|node| &node.value),
+            Some(PdfValue::Dictionary(dict))
+                if dict.get("Type") == Some(&PdfValue::Name(PdfName::new("Page")))
+        ));
+    }
 
     #[test]
     fn test_object_header_parsing() {

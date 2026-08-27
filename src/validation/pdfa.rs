@@ -309,12 +309,12 @@ impl PdfA1bValidator {
         document: &PdfDocument,
         visited: &mut HashSet<NodeId>,
     ) -> bool {
-        if dict.contains_key("FontFile")
-            || dict.contains_key("FontFile2")
-            || dict.contains_key("FontFile3")
-            || dict.contains_key("CIDFontFile")
-        {
-            return true;
+        for key in ["FontFile", "FontFile2", "FontFile3", "CIDFontFile"] {
+            if let Some(value) = dict.get(key) {
+                if Self::is_embedded_font_program(value, document, visited) {
+                    return true;
+                }
+            }
         }
 
         match dict.get("FontDescriptor") {
@@ -340,6 +340,28 @@ impl PdfA1bValidator {
                         Self::has_embedded_font_program_with_visited(descriptor, document, visited)
                     });
                 visited.remove(&node_id);
+                result
+            }
+            _ => false,
+        }
+    }
+
+    fn is_embedded_font_program(
+        value: &PdfValue,
+        document: &PdfDocument,
+        visited: &mut HashSet<NodeId>,
+    ) -> bool {
+        match value {
+            PdfValue::Stream(_) => true,
+            PdfValue::Reference(reference) => {
+                let Some(node) = document.ast.get_node_by_object(reference.id()) else {
+                    return false;
+                };
+                if !visited.insert(node.id) {
+                    return false;
+                }
+                let result = matches!(node.value, PdfValue::Stream(_));
+                visited.remove(&node.id);
                 result
             }
             _ => false,

@@ -32,6 +32,54 @@ fn resolve_stream_from_value(document: &PdfDocument, value: &PdfValue) -> Option
     }
 }
 
+fn has_embedded_font_program(
+    dict: &PdfDictionary,
+    document: &PdfDocument,
+    visited: &mut HashSet<NodeId>,
+) -> bool {
+    for key in ["FontFile", "FontFile2", "FontFile3", "CIDFontFile"] {
+        let Some(value) = dict.get(key) else {
+            continue;
+        };
+        let is_stream = match value {
+            PdfValue::Stream(_) => true,
+            PdfValue::Reference(reference) => match document.ast.get_node_by_object(reference.id())
+            {
+                Some(node) if visited.insert(node.id) => {
+                    let result = matches!(node.value, PdfValue::Stream(_));
+                    visited.remove(&node.id);
+                    result
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if is_stream {
+            return true;
+        }
+    }
+
+    match dict.get("FontDescriptor") {
+        Some(PdfValue::Dictionary(descriptor)) => {
+            has_embedded_font_program(descriptor, document, visited)
+        }
+        Some(PdfValue::Reference(reference)) => {
+            let Some(node) = document.ast.get_node_by_object(reference.id()) else {
+                return false;
+            };
+            if !visited.insert(node.id) {
+                return false;
+            }
+            let result = node
+                .as_dict()
+                .is_some_and(|descriptor| has_embedded_font_program(descriptor, document, visited));
+            visited.remove(&node.id);
+            result
+        }
+        _ => false,
+    }
+}
+
 fn value_contains_name(value: &PdfValue, name: &str) -> bool {
     match value {
         PdfValue::Name(n) => n.without_slash() == name || n.as_str() == name,
@@ -782,11 +830,21 @@ impl SchemaConstraint for EmbeddedFontsConstraint {
             for font_id in fonts {
                 if let Some(font) = document.ast.get_node(font_id) {
                     if let PdfValue::Dictionary(dict) = &font.value {
-                        // Check if font has FontFile, FontFile2, FontFile3, or CIDFontFile
-                        let has_font_file = dict.contains_key("FontFile")
-                            || dict.contains_key("FontFile2")
-                            || dict.contains_key("FontFile3")
-                            || dict.contains_key("CIDFontFile");
+                        let has_font_file =
+                            has_embedded_font_program(dict, document, &mut HashSet::new())
+                                || dict
+                                    .get("DescendantFonts")
+                                    .and_then(PdfValue::as_array)
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(|value| resolve_dict_from_value(document, value))
+                                    .any(|descendant| {
+                                        has_embedded_font_program(
+                                            &descendant,
+                                            document,
+                                            &mut HashSet::new(),
+                                        )
+                                    });
 
                         if !has_font_file {
                             all_embedded = false;

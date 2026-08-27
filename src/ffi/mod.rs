@@ -27,14 +27,12 @@ pub enum CErrorCode {
 
 /// Result structure for C API
 #[repr(C)]
-#[repr(C)]
 pub struct CResult {
     pub error_code: CErrorCode,
     pub message: *mut c_char,
 }
 
 /// Node information for C API
-#[repr(C)]
 #[repr(C)]
 pub struct CNodeInfo {
     pub id: u64,

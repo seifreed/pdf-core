@@ -141,6 +141,19 @@ impl PdfAstGraph {
         node_id
     }
 
+    /// Associates an indirect object identity with an already-created node.
+    ///
+    /// Resolvers often assign a semantic node type instead of
+    /// `NodeType::Object`, so the identity must be registered separately.
+    pub fn register_object_node(&mut self, object_id: ObjectId, node_id: NodeId) -> bool {
+        if self.node_map.contains_key(&node_id) {
+            self.object_map.insert(object_id, node_id);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Creates a node and emits an event to the provided listener.
     pub fn create_node_with_listener(
         &mut self,

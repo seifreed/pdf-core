@@ -132,6 +132,10 @@ mod validation_tests {
     fn test_pdfa_cid_font_descriptor_embedding() {
         let validator = PdfA1bValidator::new().with_strict_mode(false);
         let mut document = create_test_document();
+        document.ast.create_node(
+            NodeType::Object(ObjectId::new(99, 0)),
+            PdfValue::Stream(PdfStream::new(PdfDictionary::new(), vec![0x01])),
+        );
         let descriptor = PdfValue::Dictionary({
             let mut dict = PdfDictionary::new();
             dict.insert("FontFile2", PdfValue::Reference(PdfReference::new(99, 0)));
@@ -157,6 +161,23 @@ mod validation_tests {
 
         let report = validator.validate(&document);
         assert!(!has_issue(&report, "PDF_A_FONT_EMBEDDING"));
+    }
+
+    #[test]
+    fn pdfa_font_file_key_must_reference_a_stream() {
+        let validator = PdfA1bValidator::new().with_strict_mode(false);
+        let mut document = create_test_document();
+        let font = PdfValue::Dictionary({
+            let mut dict = PdfDictionary::new();
+            dict.insert("Type", PdfValue::Name(PdfName::new("Font")));
+            dict.insert("BaseFont", PdfValue::Name(PdfName::new("TestFont")));
+            dict.insert("FontFile", PdfValue::Null);
+            dict
+        });
+        document.ast.create_node(NodeType::Font, font);
+
+        let report = validator.validate(&document);
+        assert!(has_issue(&report, "PDF_A_FONT_EMBEDDING"));
     }
 
     #[test]
@@ -604,6 +625,12 @@ mod validation_tests {
     }
 
     fn add_embedded_font(document: &mut PdfDocument, font_name: &str, embedded: bool) {
+        if embedded {
+            document.ast.create_node(
+                NodeType::Object(ObjectId::new(999, 0)),
+                PdfValue::Stream(PdfStream::new(PdfDictionary::new(), vec![0x01])),
+            );
+        }
         let font_value = PdfValue::Dictionary({
             let mut dict = PdfDictionary::new();
             dict.insert("Type", PdfValue::Name(PdfName::new("Font")));
