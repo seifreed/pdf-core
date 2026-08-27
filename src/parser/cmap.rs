@@ -507,18 +507,19 @@ impl<'a> CMapParser<'a> {
 
     fn hex_to_bytes(&self, hex: &str) -> Option<Vec<u8>> {
         let hex = hex.trim_start_matches('<').trim_end_matches('>');
-        if !hex.is_ascii() || !hex.len().is_multiple_of(2) {
+        if !hex.is_ascii() {
             return None;
         }
 
-        let mut bytes = Vec::with_capacity(hex.len() / 2);
-        for pair in hex.as_bytes().as_chunks::<2>().0 {
-            let byte_str = std::str::from_utf8(pair).ok()?;
-            if let Ok(byte) = u8::from_str_radix(byte_str, 16) {
-                bytes.push(byte);
-            } else {
-                return None;
-            }
+        let digits = hex.as_bytes();
+        let mut bytes = Vec::with_capacity(digits.len().div_ceil(2));
+        for index in (0..digits.len()).step_by(2) {
+            let high = hex_digit(digits[index])?;
+            let low = match digits.get(index + 1) {
+                Some(digit) => hex_digit(*digit)?,
+                None => 0,
+            };
+            bytes.push((high << 4) | low);
         }
 
         Some(bytes)
@@ -666,6 +667,15 @@ impl<'a> CMapParser<'a> {
     }
 }
 
+fn hex_digit(digit: u8) -> Option<u8> {
+    match digit {
+        b'0'..=b'9' => Some(digit - b'0'),
+        b'a'..=b'f' => Some(digit - b'a' + 10),
+        b'A'..=b'F' => Some(digit - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn mapping_parts(mappings: &CMapMappings) -> MappingParts {
     match mappings {
         CMapMappings::Char(chars) => (chars.clone(), Vec::new(), HashMap::new(), Vec::new()),
@@ -728,6 +738,15 @@ mod tests {
         let parser = CMapParser::new(&mut ast, &resolver);
 
         assert!(parser.hex_to_bytes("\u{fffd}0").is_none());
+    }
+
+    #[test]
+    fn pads_odd_length_pdf_hex_strings() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let parser = CMapParser::new(&mut ast, &resolver);
+
+        assert_eq!(parser.hex_to_bytes("<A>"), Some(vec![0xA0]));
     }
 
     #[test]
