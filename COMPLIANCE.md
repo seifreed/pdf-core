@@ -36,7 +36,7 @@ version-incompatible profile, matching `validate_all`.
 | Standard area | Rule or feature | Status | Evidence |
 |---|---|---|---|
 | ISO 32000-1/2 | Basic objects, arrays, dictionaries | Implemented | Parser and parser tests |
-| ISO 32000-1/2 | Classic xref and trailer | Implemented | Budgeted table/trailer parser, xref tests, and corpus gate |
+| ISO 32000-1/2 | Classic xref and trailer | Implemented | Budgeted table/trailer parser, residual-entry rejection, xref tests, and corpus gate |
 | ISO 32000-1/2 | Xref streams and hybrid xref | Partial | Bounded table/stream decoder; `test_hybrid_xref_table_and_stream` |
 | ISO 32000-1/2 | Incremental updates and `/Prev` | Partial | `test_incremental_xref_chain`; no complete conformance suite |
 | ISO 32000-1/2 | Object streams | Partial | Checked offsets and bounded decoding |

@@ -511,6 +511,9 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let mut entries: std::collections::HashMap<ObjectId, XRefEntry> =
             table_entries.into_iter().collect();
 
+        if !Self::skip_whitespace(remaining).starts_with(TRAILER_KEYWORD) {
+            return Ok(None);
+        }
         let trailer = match Self::extract_trailer_dict_with_budget(
             remaining,
             self.limits.max_depth,
@@ -1108,7 +1111,9 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         }
 
         // Find and parse trailer
-        if let Some(trailer_pos) = Self::find_pattern(remaining, b"trailer") {
+        let remaining = Self::skip_whitespace(remaining);
+        if remaining.starts_with(TRAILER_KEYWORD) {
+            let trailer_pos = 0;
             let trailer_data = &remaining[trailer_pos + 7..];
             let trailer_data = Self::skip_whitespace(trailer_data);
 
@@ -3120,5 +3125,24 @@ mod tests {
         let trailer = b"trailer << /Name (long value) >>";
         let budget = crate::performance::ResourceBudget::new(1, 1024, 1024, 100, 10, 10, 10, 8);
         assert!(Parser::extract_trailer_dict_with_budget(trailer, 256, &budget).is_none());
+    }
+
+    #[test]
+    fn xref_table_rejects_residual_entries_before_trailer() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Tolerant,
+            10,
+            PerformanceLimits::default(),
+        )
+        .expect("parser should initialize");
+        let malformed =
+            b"xref\n0 1\n0000000000 65535 f \n0000000010 00000 n \ntrailer\n<< /Size 1 >>";
+
+        assert!(parser
+            .parse_xref_table_section(malformed)
+            .expect("xref parsing should be controlled")
+            .is_none());
     }
 }
