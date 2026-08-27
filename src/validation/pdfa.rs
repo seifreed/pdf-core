@@ -280,10 +280,7 @@ impl PdfA1bValidator {
     }
 
     fn is_font_embedded(&self, font_dict: &PdfDictionary, document: &PdfDocument) -> bool {
-        if font_dict.contains_key("FontFile")
-            || font_dict.contains_key("FontFile2")
-            || font_dict.contains_key("FontFile3")
-        {
+        if Self::has_embedded_font_program(font_dict, document) {
             return true;
         }
 
@@ -300,11 +297,53 @@ impl PdfA1bValidator {
                     .and_then(|node| node.as_dict().cloned()),
                 _ => None,
             })
-            .any(|dict| {
-                dict.contains_key("FontFile")
-                    || dict.contains_key("FontFile2")
-                    || dict.contains_key("FontFile3")
-            })
+            .any(|dict| Self::has_embedded_font_program(&dict, document))
+    }
+
+    fn has_embedded_font_program(dict: &PdfDictionary, document: &PdfDocument) -> bool {
+        Self::has_embedded_font_program_with_visited(dict, document, &mut HashSet::new())
+    }
+
+    fn has_embedded_font_program_with_visited(
+        dict: &PdfDictionary,
+        document: &PdfDocument,
+        visited: &mut HashSet<NodeId>,
+    ) -> bool {
+        if dict.contains_key("FontFile")
+            || dict.contains_key("FontFile2")
+            || dict.contains_key("FontFile3")
+            || dict.contains_key("CIDFontFile")
+        {
+            return true;
+        }
+
+        match dict.get("FontDescriptor") {
+            Some(PdfValue::Dictionary(descriptor)) => {
+                Self::has_embedded_font_program_with_visited(descriptor, document, visited)
+            }
+            Some(PdfValue::Reference(reference)) => {
+                let Some(node_id) = document
+                    .ast
+                    .get_node_by_object(reference.id())
+                    .map(|node| node.id)
+                else {
+                    return false;
+                };
+                if !visited.insert(node_id) {
+                    return false;
+                }
+                let result = document
+                    .ast
+                    .get_node(node_id)
+                    .and_then(|node| node.as_dict())
+                    .is_some_and(|descriptor| {
+                        Self::has_embedded_font_program_with_visited(descriptor, document, visited)
+                    });
+                visited.remove(&node_id);
+                result
+            }
+            _ => false,
+        }
     }
 
     fn is_standard_font(&self, font_name: &str) -> bool {

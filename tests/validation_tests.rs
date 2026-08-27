@@ -129,6 +129,37 @@ mod validation_tests {
     }
 
     #[test]
+    fn test_pdfa_cid_font_descriptor_embedding() {
+        let validator = PdfA1bValidator::new().with_strict_mode(false);
+        let mut document = create_test_document();
+        let descriptor = PdfValue::Dictionary({
+            let mut dict = PdfDictionary::new();
+            dict.insert("FontFile2", PdfValue::Reference(PdfReference::new(99, 0)));
+            dict
+        });
+        let cid_font = PdfValue::Dictionary({
+            let mut dict = PdfDictionary::new();
+            dict.insert("Type", PdfValue::Name(PdfName::new("Font")));
+            dict.insert(
+                "DescendantFonts",
+                PdfValue::Array(
+                    vec![PdfValue::Dictionary({
+                        let mut descendant = PdfDictionary::new();
+                        descendant.insert("FontDescriptor", descriptor);
+                        descendant
+                    })]
+                    .into(),
+                ),
+            );
+            dict
+        });
+        document.ast.create_node(NodeType::CIDFont, cid_font);
+
+        let report = validator.validate(&document);
+        assert!(!has_issue(&report, "PDF_A_FONT_EMBEDDING"));
+    }
+
+    #[test]
     fn fixture_pdfa_multimedia_rule_has_positive_and_negative_cases() {
         let validator = PdfA1bValidator::new().with_strict_mode(false);
         let clean_report = validator.validate(&create_test_document());
