@@ -1,9 +1,19 @@
 use crate::metadata::XmpMetadata;
+use crate::performance::ResourceBudget;
 use quick_xml::{events::Event, Reader};
 use std::collections::HashMap;
 
 /// Comprehensive XMP namespace support with all major namespaces
 pub fn parse_xmp(xml: &str) -> Result<XmpMetadata, String> {
+    parse_xmp_with_budget(xml, &ResourceBudget::default())
+}
+
+/// Parses XMP while enforcing the caller's input budget.
+pub fn parse_xmp_with_budget(xml: &str, budget: &ResourceBudget) -> Result<XmpMetadata, String> {
+    budget
+        .consume_input(xml.len() as u64)
+        .map_err(|error| error.to_string())?;
+
     let mut metadata = XmpMetadata::new();
     metadata.raw_xml = xml.to_string();
 
@@ -2400,6 +2410,15 @@ impl XmpMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn xmp_parsers_respect_input_budget() {
+        let budget = ResourceBudget::new(3, 1024, 1024, 100, 10, 10, 10, 10);
+        assert!(parse_xmp_with_budget("<x/>", &budget).is_err());
+
+        let budget = ResourceBudget::new(3, 1024, 1024, 100, 10, 10, 10, 10);
+        assert!(XmpMetadata::parse_from_stream_with_budget(b"<x/>", &budget).is_err());
+    }
 
     #[test]
     fn test_comprehensive_namespace_registry() {

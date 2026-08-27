@@ -2456,7 +2456,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             None => return Ok(()),
         };
 
-        let xmp = match XmpMetadata::parse_from_stream(&decoded) {
+        let xmp = match XmpMetadata::parse_from_stream_with_budget(&decoded, &self.limits.budget) {
             Ok(metadata) => metadata,
             Err(_) => return Ok(()),
         };
