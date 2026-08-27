@@ -98,7 +98,11 @@ pub unsafe extern "C" fn pdf_ast_parse(
     len: usize,
     document: *mut *mut CPdfDocument,
 ) -> CResult {
-    if data.is_null() || document.is_null() {
+    if document.is_null() {
+        return CResult::error(CErrorCode::NullPointer, "Null pointer provided");
+    }
+    unsafe { *document = ptr::null_mut() };
+    if data.is_null() {
         return CResult::error(CErrorCode::NullPointer, "Null pointer provided");
     }
 
@@ -137,7 +141,11 @@ pub unsafe extern "C" fn pdf_ast_parse_file(
     path: *const c_char,
     document: *mut *mut CPdfDocument,
 ) -> CResult {
-    if path.is_null() || document.is_null() {
+    if document.is_null() {
+        return CResult::error(CErrorCode::NullPointer, "Null pointer provided");
+    }
+    unsafe { *document = ptr::null_mut() };
+    if path.is_null() {
         return CResult::error(CErrorCode::NullPointer, "Null pointer provided");
     }
 
@@ -228,6 +236,7 @@ pub unsafe extern "C" fn pdf_ast_get_root_node(
     if document.is_null() || node.is_null() {
         return CResult::error(CErrorCode::NullPointer, "Null pointer provided");
     }
+    unsafe { *node = ptr::null_mut() };
 
     let doc = unsafe { &*((*document).0) };
     if let Some(root_id) = doc.ast.get_root() {
@@ -294,6 +303,10 @@ pub unsafe extern "C" fn pdf_ast_get_children(
 ) -> CResult {
     if document.is_null() || parent_node.is_null() || children.is_null() || count.is_null() {
         return CResult::error(CErrorCode::NullPointer, "Null pointer provided");
+    }
+    unsafe {
+        *children = ptr::null_mut();
+        *count = 0;
     }
 
     let doc = unsafe { &*((*document).0) };
@@ -371,6 +384,7 @@ pub unsafe extern "C" fn pdf_ast_to_json(
     if document.is_null() || json_str.is_null() {
         return CResult::error(CErrorCode::NullPointer, "Null pointer provided");
     }
+    unsafe { *json_str = ptr::null_mut() };
 
     let doc = unsafe { &*((*document).0) };
 
@@ -485,7 +499,8 @@ pub extern "C" fn pdf_ast_abi_version() -> u32 {
 #[cfg(test)]
 mod tests {
     use super::{
-        pdf_ast_abi_version, pdf_ast_free_children, pdf_ast_init, pdf_ast_version, CErrorCode,
+        pdf_ast_abi_version, pdf_ast_free_children, pdf_ast_init, pdf_ast_parse, pdf_ast_version,
+        CErrorCode, CPdfDocument,
     };
     use std::ffi::CStr;
 
@@ -496,5 +511,16 @@ mod tests {
         assert_eq!(version.to_str().unwrap(), env!("CARGO_PKG_VERSION"));
         assert_eq!(pdf_ast_abi_version(), 0x0001_0000);
         unsafe { pdf_ast_free_children(std::ptr::null_mut(), 0) };
+    }
+
+    #[test]
+    fn failed_parse_clears_output_handle() {
+        let input = b"not a PDF";
+        let mut document = 1usize as *mut CPdfDocument;
+        let mut result = unsafe { pdf_ast_parse(input.as_ptr(), input.len(), &mut document) };
+
+        assert_eq!(result.error_code, CErrorCode::ParseError);
+        assert!(document.is_null());
+        unsafe { super::pdf_ast_free_result(&mut result) };
     }
 }
