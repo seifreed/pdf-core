@@ -82,7 +82,7 @@ pub use multimedia::threed::ThreeDInfo;
 pub use parser::PdfParser;
 pub use performance::{
     get_performance_stats, start_timer, PerformanceAnalyzer, PerformanceConfig, PerformanceReport,
-    PerformanceStats,
+    PerformanceStats, ResourceBudget, ResourceBudgetError,
 };
 pub use security::etsi::{validate_etsi_profiles, EtsiValidationOptions};
 pub use security::ltv::LtvInfo;

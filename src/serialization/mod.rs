@@ -3,6 +3,7 @@ use crate::ast::{
     LinearizationInfo, NodeId, NodeType, PdfAstGraph, PdfDocument, PdfVersion, XRefEntry,
     XRefStream,
 };
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::types::{ObjectId, PdfValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -366,6 +367,22 @@ impl SerializableGraph {
         serializer.serialize(ast)
     }
 
+    /// Serializes an AST after charging its nodes, edges, and byte payloads to
+    /// the supplied resource budget.
+    pub fn from_ast_with_budget(
+        ast: &PdfAstGraph,
+        budget: &ResourceBudget,
+    ) -> Result<Self, ResourceBudgetError> {
+        for node in ast.get_all_nodes() {
+            budget.consume_node()?;
+            check_value_budget(&node.value, budget)?;
+        }
+        for _ in ast.get_all_edges() {
+            budget.consume_edge()?;
+        }
+        Ok(Self::from_ast(ast))
+    }
+
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string_pretty(self)
     }
@@ -381,6 +398,42 @@ impl SerializableGraph {
     pub fn from_cbor(data: &[u8]) -> serde_cbor::Result<Self> {
         serde_cbor::from_slice(data)
     }
+}
+
+fn check_value_budget(
+    value: &PdfValue,
+    budget: &ResourceBudget,
+) -> Result<(), ResourceBudgetError> {
+    match value {
+        PdfValue::String(value) => budget.consume_input(value.to_string_lossy().len() as u64)?,
+        PdfValue::Name(value) => budget.consume_input(value.as_str().len() as u64)?,
+        PdfValue::Array(values) => {
+            for value in values {
+                check_value_budget(value, budget)?;
+            }
+        }
+        PdfValue::Dictionary(dictionary) => {
+            for (key, value) in dictionary.iter() {
+                budget.consume_input(key.as_str().len() as u64)?;
+                check_value_budget(value, budget)?;
+            }
+        }
+        PdfValue::Stream(stream) => {
+            if let Some(data) = stream.data.as_bytes() {
+                budget.consume_input(data.len() as u64)?;
+            }
+            if let Some(data) = stream.original_data() {
+                budget.consume_input(data.len() as u64)?;
+            }
+            check_value_budget(&PdfValue::Dictionary(stream.dict.clone()), budget)?;
+        }
+        PdfValue::Null
+        | PdfValue::Boolean(_)
+        | PdfValue::Integer(_)
+        | PdfValue::Real(_)
+        | PdfValue::Reference(_) => {}
+    }
+    Ok(())
 }
 
 struct GraphSerializer {
@@ -895,6 +948,28 @@ pub fn to_json(document: &PdfDocument) -> Result<String, serde_json::Error> {
 }
 
 impl SerializableDocument {
+    /// Serializes a document after charging its AST and retained byte payloads
+    /// to the supplied resource budget.
+    pub fn from_document_with_budget(
+        document: &PdfDocument,
+        budget: &ResourceBudget,
+    ) -> Result<Self, ResourceBudgetError> {
+        let _ = SerializableGraph::from_ast_with_budget(&document.ast, budget)?;
+        if let Some(bytes) = &document.original_bytes {
+            budget.consume_input(bytes.len() as u64)?;
+        }
+        check_value_budget(&PdfValue::Dictionary(document.trailer.clone()), budget)?;
+        for stream in &document.xref.streams {
+            budget.consume_object()?;
+            check_value_budget(&PdfValue::Dictionary(stream.dict.clone()), budget)?;
+        }
+        for revision in &document.revisions {
+            budget.consume_object()?;
+            check_value_budget(&PdfValue::Dictionary(revision.trailer.clone()), budget)?;
+        }
+        Ok(Self::from_document(document))
+    }
+
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string_pretty(self)
     }
@@ -1652,5 +1727,35 @@ mod tests {
 
         let deserialized = SerializableGraph::from_cbor(&cbor_data).unwrap();
         assert_eq!(deserialized.nodes.len(), 1);
+    }
+
+    #[test]
+    fn budgeted_graph_serialization_rejects_node_limits() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.create_node(NodeType::Root, PdfValue::Null);
+        ast.set_root(root_id);
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 0, 10, 10);
+
+        let error = SerializableGraph::from_ast_with_budget(&ast, &budget)
+            .expect_err("node budget must apply to serialization");
+        assert_eq!(error, ResourceBudgetError::Nodes);
+    }
+
+    #[test]
+    fn budgeted_graph_serialization_charges_stream_bytes() {
+        let mut ast = PdfAstGraph::new();
+        let stream_id = ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream(crate::types::PdfStream::new(
+                PdfDictionary::new(),
+                b"abc".to_vec(),
+            )),
+        );
+        ast.set_root(stream_id);
+        let budget = ResourceBudget::new(5, 1024, 1024, 100, 10, 10, 10, 10);
+
+        let error = SerializableGraph::from_ast_with_budget(&ast, &budget)
+            .expect_err("stream payload must apply to serialization budget");
+        assert_eq!(error, ResourceBudgetError::InputBytes);
     }
 }
