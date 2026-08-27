@@ -41,6 +41,8 @@ punto tiene regresion y pasa Clippy estricto. Las APIs publicas de XMP aceptan
 ahora un `ResourceBudget`, y el parser PDF lo propaga al parseo del paquete.
 Las APIs publicas de `PdfParser` para valores, objetos y secuencias tambien
 consumen la entrada del presupuesto antes de analizarla, con regresion.
+El parseo de cabeceras de object streams limita tambien el numero de entradas
+con el mismo presupuesto en sus rutas publicas e internas.
 
 Pendientes actuales, en orden practico:
 
