@@ -1,5 +1,5 @@
 use crate::ast::{NodeId, NodeType, PdfDocument};
-use crate::types::{PdfDictionary, PdfValue};
+use crate::types::{PdfDictionary, PdfStream, PdfValue};
 use crate::validation::{
     ConstraintCategory, SchemaConstraint, ValidationIssue, ValidationReport, ValidationSeverity,
 };
@@ -577,7 +577,7 @@ impl PdfA1bValidator {
 
         if let Some(catalog_dict) = document.get_catalog() {
             if let Some(names_value) = catalog_dict.get("Names") {
-                if let Some(names_dict) = names_value.as_dict() {
+                if let Some(names_dict) = Self::resolve_dictionary(document, names_value) {
                     if names_dict.contains_key("JavaScript") {
                         has_javascript = true;
                     }
@@ -585,7 +585,7 @@ impl PdfA1bValidator {
             }
 
             if let Some(open_action) = catalog_dict.get("OpenAction") {
-                if let Some(action_dict) = open_action.as_dict() {
+                if let Some(action_dict) = Self::resolve_dictionary(document, open_action) {
                     if let Some(s_value) = action_dict.get("S") {
                         if let Some(s_name) = s_value.as_name() {
                             if s_name.without_slash() == "JavaScript" {
@@ -683,7 +683,7 @@ impl PdfA1bValidator {
     fn validate_forms(&self, report: &mut ValidationReport, document: &PdfDocument) {
         if let Some(catalog_dict) = document.get_catalog() {
             if let Some(acroform_value) = catalog_dict.get("AcroForm") {
-                if let Some(acroform_dict) = acroform_value.as_dict() {
+                if let Some(acroform_dict) = Self::resolve_dictionary(document, acroform_value) {
                     if acroform_dict.contains_key("XFA") {
                         report.add_issue(ValidationIssue {
                             severity: ValidationSeverity::Error,
@@ -713,19 +713,26 @@ impl PdfA1bValidator {
     }
 
     fn validate_metadata(&self, report: &mut ValidationReport, document: &PdfDocument) {
-        let mut has_xmp_metadata = false;
+        let metadata_stream = document
+            .get_catalog()
+            .and_then(|catalog| catalog.get("Metadata"))
+            .and_then(|value| Self::resolve_stream(document, value));
 
-        if let Some(catalog_dict) = document.get_catalog() {
-            if catalog_dict.contains_key("Metadata") {
-                has_xmp_metadata = true;
-            }
-        }
+        let has_valid_xmp_metadata = metadata_stream.is_some_and(|stream| {
+            matches!(
+                stream.dict.get("Type").and_then(PdfValue::as_name),
+                Some(name) if name.without_slash() == "Metadata"
+            ) && matches!(
+                stream.dict.get("Subtype").and_then(PdfValue::as_name),
+                Some(name) if name.without_slash() == "XML"
+            )
+        });
 
-        if !has_xmp_metadata {
+        if !has_valid_xmp_metadata {
             report.add_issue(ValidationIssue {
                 severity: ValidationSeverity::Error,
                 code: "PDF_A_XMP_METADATA".to_string(),
-                message: "PDF/A-1b requires XMP metadata in catalog".to_string(),
+                message: "PDF/A-1b requires a Metadata XML stream in catalog".to_string(),
                 node_id: None,
                 location: Some("Metadata requirements".to_string()),
                 suggestion: Some("Add XMP metadata stream to document catalog".to_string()),
@@ -742,6 +749,31 @@ impl PdfA1bValidator {
                 location: Some("Metadata synchronization".to_string()),
                 suggestion: None,
             });
+        }
+    }
+
+    fn resolve_dictionary<'a>(
+        document: &'a PdfDocument,
+        value: &'a PdfValue,
+    ) -> Option<&'a PdfDictionary> {
+        match value {
+            PdfValue::Dictionary(dict) => Some(dict),
+            PdfValue::Reference(reference) => document
+                .ast
+                .get_node_by_object(reference.id())
+                .and_then(|node| node.as_dict()),
+            _ => None,
+        }
+    }
+
+    fn resolve_stream<'a>(document: &'a PdfDocument, value: &'a PdfValue) -> Option<&'a PdfStream> {
+        match value {
+            PdfValue::Stream(stream) => Some(stream),
+            PdfValue::Reference(reference) => document
+                .ast
+                .get_node_by_object(reference.id())
+                .and_then(|node| node.as_stream()),
+            _ => None,
         }
     }
 

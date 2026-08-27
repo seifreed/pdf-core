@@ -481,6 +481,59 @@ mod validation_tests {
         assert!(has_issue(&invalid, "METADATA_STREAM_INVALID"));
     }
 
+    #[test]
+    fn pdfa_resolves_indirect_catalog_entries() {
+        let mut document = create_test_document();
+        let action_id = ObjectId::new(40, 0);
+        document.ast.create_node(
+            NodeType::Object(action_id),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("S", PdfValue::Name(PdfName::new("JavaScript")));
+                dict
+            }),
+        );
+        let form_id = ObjectId::new(41, 0);
+        document.ast.create_node(
+            NodeType::Object(form_id),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("XFA", PdfValue::String(PdfString::new_literal(b"xfa")));
+                dict
+            }),
+        );
+        document.ast.create_node(
+            NodeType::Object(ObjectId::new(42, 0)),
+            PdfValue::Stream(PdfStream::new(
+                {
+                    let mut dict = PdfDictionary::new();
+                    dict.insert("Type", PdfValue::Name(PdfName::new("Metadata")));
+                    dict.insert("Subtype", PdfValue::Name(PdfName::new("XML")));
+                    dict
+                },
+                b"<x:xmpmeta/>".to_vec(),
+            )),
+        );
+
+        let catalog = document.catalog.expect("catalog should exist");
+        let catalog_node = document
+            .ast
+            .get_node_mut(catalog)
+            .expect("catalog node should exist");
+        if let PdfValue::Dictionary(catalog_dict) = &mut catalog_node.value {
+            catalog_dict.insert("OpenAction", PdfValue::Reference(PdfReference::new(40, 0)));
+            catalog_dict.insert("AcroForm", PdfValue::Reference(PdfReference::new(41, 0)));
+            catalog_dict.insert("Metadata", PdfValue::Reference(PdfReference::new(42, 0)));
+        }
+
+        let report = PdfA1bValidator::new()
+            .with_strict_mode(false)
+            .validate(&document);
+        assert!(has_issue(&report, "PDF_A_JAVASCRIPT"));
+        assert!(has_issue(&report, "PDF_A_XFA"));
+        assert!(!has_issue(&report, "PDF_A_XMP_METADATA"));
+    }
+
     // Helper functions for creating test scenarios
 
     fn has_issue(report: &pdf_ast::validation::ValidationReport, code: &str) -> bool {
