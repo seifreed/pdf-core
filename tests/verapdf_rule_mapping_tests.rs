@@ -439,7 +439,7 @@ fn published_rule_coverage_has_positive_and_negative_verapdf_evidence() {
         serde_json::from_slice(&fs::read(&manifest_path).expect("read coverage manifest"))
             .expect("valid coverage manifest");
     let mappings = manifest["mappings"].as_array().expect("coverage mappings");
-    assert_eq!(mappings.len(), 8);
+    assert_eq!(mappings.len(), 9);
 
     for mapping in mappings {
         let positive = manifest_fixture_path(
