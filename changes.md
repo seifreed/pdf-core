@@ -69,6 +69,9 @@ punto tiene regresion y pasa Clippy estricto. Las APIs publicas de XMP aceptan
 ahora un `ResourceBudget`, y el parser PDF lo propaga al parseo del paquete.
 Las APIs publicas de `PdfParser` para valores, objetos y secuencias tambien
 consumen la entrada del presupuesto antes de analizarla, con regresion.
+`ContentAnalyzer::analyze_content_stream_with_budget` cobra la entrada antes
+de analizarla y cada nodo antes de materializarlo, evitando copias iniciales
+del stream; la API legacy conserva el presupuesto por defecto.
 El parseo de cabeceras de object streams limita tambien el numero de entradas
 con el mismo presupuesto en sus rutas publicas e internas.
 El parser publico de imagenes inline tambien rechaza entradas que exceden el
@@ -164,7 +167,7 @@ Pendientes actuales, en orden practico:
 * **Parser endurecido:** strict y varios recorridos ya tienen guardas, y los
   streams conservan ahora estado lossless explícito, pero falta hacer
   completamente estrictos los modos de error/recuperacion y demostrar que
-  `ResourceBudget` cubre toda operacion publica de parseo, resolucion,
+  `ResourceBudget` cubre la superficie publica restante de parseo, resolucion,
   recorrido, decodificacion y serializacion. Las variantes acotadas de
   `parser::lexer` cobran el slice completo antes de analizarlo, pero no
   sustituyen aun la frontera de parseo estructural para entradas no

@@ -1,4 +1,5 @@
 use crate::ast::{AstNode, NodeId, NodeMetadata, NodeType};
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::types::{PdfString, PdfValue};
 use std::collections::HashMap;
 
@@ -76,55 +77,81 @@ impl ContentAnalyzer {
 
     /// Analyze a content stream and extract all operators and suspicious content
     pub fn analyze_content_stream(&self, stream_data: &[u8], node_id: usize) -> Vec<AstNode> {
+        self.analyze_content_stream_with_budget(stream_data, node_id, &ResourceBudget::default())
+            .unwrap_or_default()
+    }
+
+    /// Analyze a content stream while charging input and generated nodes.
+    pub fn analyze_content_stream_with_budget(
+        &self,
+        stream_data: &[u8],
+        node_id: usize,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<AstNode>, ResourceBudgetError> {
+        budget.consume_input(stream_data.len() as u64)?;
         let mut nodes = Vec::new();
         let mut next_id = node_id;
 
         // Try to interpret as text first
-        if let Ok(content) = String::from_utf8(stream_data.to_vec()) {
-            nodes.extend(self.parse_text_content(&content, &mut next_id));
+        if let Ok(content) = std::str::from_utf8(stream_data) {
+            nodes.extend(self.parse_text_content_with_budget(content, &mut next_id, budget)?);
         }
 
         // Parse as PDF operators
-        nodes.extend(self.parse_pdf_operators(stream_data, &mut next_id));
+        nodes.extend(self.parse_pdf_operators_with_budget(stream_data, &mut next_id, budget)?);
 
-        nodes
+        Ok(nodes)
     }
 
     /// Parse text content looking for JavaScript and suspicious patterns
-    fn parse_text_content(&self, content: &str, next_id: &mut usize) -> Vec<AstNode> {
+    fn parse_text_content_with_budget(
+        &self,
+        content: &str,
+        next_id: &mut usize,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<AstNode>, ResourceBudgetError> {
         let mut nodes = Vec::new();
 
         // Check for JavaScript code
         if self.contains_javascript(content) {
+            budget.consume_node()?;
             let js_node = self.create_js_node(content, next_id);
             nodes.push(js_node);
         }
 
         // Check for suspicious patterns
         for suspicious in self.find_suspicious_patterns(content) {
+            budget.consume_node()?;
             let suspicious_node = self.create_suspicious_node(&suspicious, next_id);
             nodes.push(suspicious_node);
         }
 
         // Check for external references (URLs, file paths)
         for external_ref in self.find_external_references(content) {
+            budget.consume_node()?;
             let ref_node = self.create_external_ref_node(&external_ref, next_id);
             nodes.push(ref_node);
         }
 
-        nodes
+        Ok(nodes)
     }
 
     /// Parse PDF content stream operators (BT, ET, Tf, Tj, etc.)
-    fn parse_pdf_operators(&self, data: &[u8], next_id: &mut usize) -> Vec<AstNode> {
+    fn parse_pdf_operators_with_budget(
+        &self,
+        data: &[u8],
+        next_id: &mut usize,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<AstNode>, ResourceBudgetError> {
         let mut nodes = Vec::new();
 
-        if let Ok(content) = String::from_utf8(data.to_vec()) {
-            let tokens = self.tokenize_content_stream(&content);
+        if let Ok(content) = std::str::from_utf8(data) {
+            let tokens = self.tokenize_content_stream(content);
             let mut i = 0;
 
             while i < tokens.len() {
                 if let Some(operator) = self.identify_operator(&tokens, i) {
+                    budget.consume_node()?;
                     let op_node = self.create_operator_node(&operator, next_id);
                     nodes.push(op_node);
                     i += operator.token_count;
@@ -134,7 +161,7 @@ impl ContentAnalyzer {
             }
         }
 
-        nodes
+        Ok(nodes)
     }
 
     /// Tokenize content stream into PDF tokens
@@ -489,5 +516,29 @@ pub enum RiskLevel {
 impl Default for ContentAnalyzer {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ContentAnalyzer;
+    use crate::performance::{ResourceBudget, ResourceBudgetError};
+
+    #[test]
+    fn content_analysis_charges_input_before_work() {
+        let budget = ResourceBudget::new(3, 1024, 1024, 100, 10, 10, 10, 10);
+        let error = ContentAnalyzer::new()
+            .analyze_content_stream_with_budget(b"BT ET", 0, &budget)
+            .expect_err("content input must respect the shared budget");
+        assert_eq!(error, ResourceBudgetError::InputBytes);
+    }
+
+    #[test]
+    fn content_analysis_charges_generated_nodes() {
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 1, 10, 10);
+        let error = ContentAnalyzer::new()
+            .analyze_content_stream_with_budget(b"BT ET", 0, &budget)
+            .expect_err("each generated operator must consume node budget");
+        assert_eq!(error, ResourceBudgetError::Nodes);
     }
 }
