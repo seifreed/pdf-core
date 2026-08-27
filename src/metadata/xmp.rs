@@ -13,6 +13,9 @@ pub fn parse_xmp_with_budget(xml: &str, budget: &ResourceBudget) -> Result<XmpMe
     budget
         .consume_input(xml.len() as u64)
         .map_err(|error| error.to_string())?;
+    budget
+        .consume_decoded(xml.len() as u64)
+        .map_err(|error| error.to_string())?;
 
     parse_xmp_unbudgeted(xml)
 }
@@ -23,6 +26,9 @@ pub(crate) fn parse_xmp_bytes_with_budget(
 ) -> Result<XmpMetadata, String> {
     budget
         .consume_input(data.len() as u64)
+        .map_err(|error| error.to_string())?;
+    budget
+        .consume_decoded(data.len() as u64)
         .map_err(|error| error.to_string())?;
     let xml =
         std::str::from_utf8(data).map_err(|error| format!("XMP UTF-8 decode error: {error}"))?;
@@ -2434,6 +2440,19 @@ mod tests {
 
         let budget = ResourceBudget::new(3, 1024, 1024, 100, 10, 10, 10, 10);
         assert!(XmpMetadata::parse_from_stream_with_budget(b"<x/>", &budget).is_err());
+    }
+
+    #[test]
+    fn xmp_parsers_respect_decoded_budget_before_copying_xml() {
+        let budget = ResourceBudget::new(1024, 1, 1024, 100, 10, 10, 10, 10);
+        let error = parse_xmp_with_budget("<x/>", &budget)
+            .expect_err("raw XML copy must respect the decoded budget");
+        assert!(error.contains("DecodedBytes"));
+
+        let budget = ResourceBudget::new(1024, 1, 1024, 100, 10, 10, 10, 10);
+        let error = XmpMetadata::parse_from_stream_with_budget(b"<x/>", &budget)
+            .expect_err("byte XML copy must respect the decoded budget");
+        assert!(error.contains("DecodedBytes"));
     }
 
     #[test]
