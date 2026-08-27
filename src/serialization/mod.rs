@@ -586,11 +586,9 @@ impl GraphSerializer {
 
             self.node_id_map.insert(node.id, serial_id);
 
-            // Extract object_id if this is an Object node
-            let object_id = match &node.node_type {
-                crate::ast::NodeType::Object(obj_id) => Some((obj_id.number, obj_id.generation)),
-                _ => None,
-            };
+            let object_id = ast
+                .get_object_id(node.id)
+                .map(|object_id| (object_id.number, object_id.generation));
 
             let serialized_node = SerializableNode {
                 original_id: Some(node.id.0),
@@ -738,6 +736,9 @@ impl GraphDeserializer {
                 return Err(format!("Duplicate restored node ID: {}", node_id.0));
             }
             ast.add_node(AstNode::new(node_id, node_type, value));
+            if let Some((number, generation)) = serialized_node.object_id {
+                ast.register_object_node(ObjectId::new(number, generation), node_id);
+            }
             let node = ast
                 .get_node_mut(node_id)
                 .ok_or_else(|| format!("Failed to restore node {}", serialized_node.id))?;
@@ -1538,6 +1539,28 @@ mod tests {
         assert_eq!(deserialized.nodes.len(), 2);
         let restored = GraphDeserializer::deserialize(deserialized).unwrap();
         assert!(restored.get_node_by_object(object_id).is_some());
+    }
+
+    #[test]
+    fn preserves_semantic_object_identity_across_round_trip() {
+        let mut ast = PdfAstGraph::new();
+        let node_id = ast.create_node(NodeType::Page, PdfValue::Null);
+        let object_id = ObjectId::new(7, 0);
+        assert!(ast.register_object_node(object_id, node_id));
+
+        let serialized = SerializableGraph::from_ast(&ast);
+        let node = serialized
+            .nodes
+            .iter()
+            .find(|node| node.original_id == Some(node_id.index()))
+            .expect("semantic node should be serialized");
+        assert_eq!(node.object_id, Some((7, 0)));
+
+        let restored = GraphDeserializer::deserialize(serialized).expect("graph should restore");
+        assert_eq!(
+            restored.get_node_by_object(object_id).map(|node| node.id),
+            Some(node_id)
+        );
     }
 
     #[test]

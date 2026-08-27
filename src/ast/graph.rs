@@ -747,12 +747,9 @@ impl PdfAstGraph {
     }
 
     pub fn get_object_id(&self, node_id: NodeId) -> Option<ObjectId> {
-        if let Some(node) = self.get_node(node_id) {
-            if let NodeType::Object(obj_id) = &node.node_type {
-                return Some(*obj_id);
-            }
-        }
-        None
+        self.object_map
+            .iter()
+            .find_map(|(object_id, mapped_node)| (*mapped_node == node_id).then_some(*object_id))
     }
 
     pub fn node_indices(&self) -> Vec<NodeId> {
