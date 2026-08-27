@@ -57,16 +57,23 @@ jobs:
           summary_file="$RUNNER_TEMP/fuzz-${{ matrix.target }}.summary"
           mkdir -p "$artifact_dir"
           set -o pipefail
+          set +e
           /usr/bin/time -v -o "$resource_file" cargo fuzz run "${{ matrix.target }}" -- \
             -runs=1000 \
             -timeout=5 \
             -print_final_stats=1 \
             -artifact_prefix="$artifact_dir/" 2>&1 | tee "$log_file"
+          fuzz_status=${PIPESTATUS[0]}
+          set -e
           peak_rss_kib=$(awk -F: '/Maximum resident set size/ {gsub(/^[[:space:]]+/, "", $2); print $2; exit}' "$resource_file")
           peak_rss_kib="${peak_rss_kib:-unknown}"
-          if find "$artifact_dir" -type f -print -quit | grep -q .; then
+          findings=0
+          if [ "$fuzz_status" -ne 0 ] || find "$artifact_dir" -type f -print -quit | grep -q .; then
+            findings=1
+          fi
+          if [ "$findings" -eq 1 ]; then
             {
-              echo "findings=1"
+              echo "findings=$findings"
               echo "peak_rss_kib=$peak_rss_kib"
             } | tee "$summary_file"
             exit 1
