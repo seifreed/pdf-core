@@ -19,8 +19,8 @@ El validador PDF/A ahora sigue recursos heredados desde `Pages`, incluyendo
 referencias indirectas y ciclos controlados, con regresion dedicada.
 La matriz de CI tambien instala qpdf/MuPDF para el diferencial, conserva el
 log y las metricas de memoria como artefacto, y ejecuta el corpus externo
-completo. Los workflows de CI y ClusterFuzzLite sobre `44dd805` siguen en
-curso; hasta que terminen no se debe contar esta evidencia como verde.
+completo. Los workflows del último push siguen en cola; hasta que terminen no
+se debe contar esta evidencia como verde.
 
 Avance publicado en `f2e8a5f`: el smoke test de instalación JavaScript ejecuta
 la carga del addon nativo en un proceso hijo, evitando el bloqueo `EPERM` de
@@ -73,10 +73,9 @@ Pendientes actuales, en orden practico:
 
 * **Evidencia remota:** faltan ejecuciones verdes y repetidas del CI completo,
   corpus/differential, ClusterFuzzLite y los seis smoke tests de bindings. Los
-  runs actuales sobre `3526f07` son CI `33037569748`, bindings `33037569749`,
-  corpus externo `33037569719`, diferencial `33037569722`, ClusterFuzzLite
-  `33037569727`, fuzzing `33037569738` y API stability `33037569720`; estaban
-  pendientes/en cola al actualizar este documento.
+  runs generados por el último push (`b1f1ae8`) siguen pendientes/en cola en
+  Actions al actualizar este documento; los IDs se consultan con
+  `gh run list` para evitar referencias obsoletas tras cada push.
 * **Parser endurecido:** strict y varios recorridos ya tienen guardas, y los
   streams conservan ahora estado lossless explícito, pero falta hacer
   completamente estrictos los modos de error/recuperacion y demostrar que
