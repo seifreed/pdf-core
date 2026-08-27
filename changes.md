@@ -22,6 +22,15 @@ log y las metricas de memoria como artefacto, y ejecuta el corpus externo
 completo. Los workflows de CI y ClusterFuzzLite sobre `44dd805` siguen en
 curso; hasta que terminen no se debe contar esta evidencia como verde.
 
+Avance publicado en `f2e8a5f`: el smoke test de instalación JavaScript ejecuta
+la carga del addon nativo en un proceso hijo, evitando el bloqueo `EPERM` de
+Windows durante la limpieza del directorio temporal. Avance publicado en
+`76d9fd6`: cada `PdfStream` conserva ahora, cuando están disponibles, sus
+bytes originales, longitud declarada y observada, errores de parseo, acciones
+de recuperación y estado raw/decoded/lazy; el estado se conserva al
+serializar y al convertir streams durante desencriptación o resolución de
+JBIG2Globals. Ambos cambios tienen regresiones locales.
+
 Avance local adicional: el parser `Strict` rechaza tokens no consumidos en
 `parse_value` y `parse_object`; `PdfAstGraph` y `NameTreeParser` terminan sus
 recorridos aunque el grafo tenga ciclos; y los helpers publicos legacy de
@@ -47,18 +56,21 @@ El parser publico de imagenes inline tambien rechaza entradas que exceden el
 presupuesto antes de clonar los datos.
 El resolver ya no parsea content streams con un presupuesto por defecto ni
 silencia sus fallos: comparte el presupuesto, conserva el error en el nodo y
-propaga el fallo en modo `Strict`.
+en el estado lossless del stream, y propaga el fallo en modo `Strict`.
 
 Pendientes actuales, en orden practico:
 
 * **Evidencia remota:** faltan ejecuciones verdes y repetidas del CI completo,
-  corpus/differential, ClusterFuzzLite y los seis smoke tests de bindings. Las
-  ejecuciones actuales son CI `33023949387` sobre `926ed37`, bindings
-  `33023738374` sobre `1d508a7` y fuzzing `33023545057` sobre `2d2974d`.
-* **Parser endurecido:** strict y varios recorridos ya tienen guardas, pero
-  falta hacer completamente estrictos los modos de error/recuperacion y
-  demostrar que `ResourceBudget` cubre toda operacion publica de parseo,
-  resolucion, recorrido, decodificacion y serializacion.
+  corpus/differential, ClusterFuzzLite y los seis smoke tests de bindings. Los
+  runs actuales sobre `76d9fd6` son CI `33036516601`, bindings `33036516606`,
+  corpus externo `33036516624`, diferencial `33036516647`, ClusterFuzzLite
+  `33036516666`, fuzzing `33036516671` y API stability `33036516646`; estaban
+  pendientes/en cola al actualizar este documento.
+* **Parser endurecido:** strict y varios recorridos ya tienen guardas, y los
+  streams conservan ahora estado lossless explícito, pero falta hacer
+  completamente estrictos los modos de error/recuperacion y demostrar que
+  `ResourceBudget` cubre toda operacion publica de parseo, resolucion,
+  recorrido, decodificacion y serializacion.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa, fusionar las validaciones y
