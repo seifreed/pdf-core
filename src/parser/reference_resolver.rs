@@ -847,7 +847,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             _ => return Err("Object stream is not a stream".to_string()),
         };
 
-        let filters = stream.get_filters();
+        let filters = stream.get_filters_with_params_checked()?;
         let raw = stream
             .raw_data()
             .ok_or_else(|| "Object stream has no data".to_string())?;
@@ -1072,7 +1072,14 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         };
 
         if let Some(raw) = stream.raw_data() {
-            let filters = stream.get_filters_with_params();
+            let filters = match stream.get_filters_with_params_checked() {
+                Ok(filters) => filters,
+                Err(_error) if self.tolerant => {
+                    dict.insert("JBIG2Globals", PdfValue::Stream(stream));
+                    return Ok(true);
+                }
+                Err(error) => return Err(error),
+            };
             match decode_stream_with_budget(raw, &filters, &self.limits.budget) {
                 Ok(decoded) => stream.set_decoded(decoded),
                 Err(_) if self.tolerant => {}
@@ -1108,7 +1115,23 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                         crate::types::stream::StreamData::Decoded(data) => data,
                         _ => continue, // Skip lazy streams for now
                     };
-                    let filters = stream.get_filters();
+                    let filters = match stream.get_filters_with_params_checked() {
+                        Ok(filters) => filters,
+                        Err(error) => {
+                            let message = format!("Failed to resolve stream filters: {error}");
+                            self.record_stream_issue(
+                                ast,
+                                stream_node_id,
+                                crate::ast::ErrorCode::CorruptedStream,
+                                message.clone(),
+                                "stream_decode_skipped",
+                            );
+                            if !self.tolerant {
+                                return Err(message);
+                            }
+                            continue;
+                        }
+                    };
                     match decode_stream_with_budget(data, &filters, &self.limits.budget) {
                         Ok(decoded) => decoded,
                         Err(e) => {
