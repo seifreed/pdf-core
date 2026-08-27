@@ -63,6 +63,10 @@ recursos efectivos por niveles `Pages` anidados y añade una regresión que
 verifica la herencia y la creación de recursos derivados. Sus workflows aun
 estan pendientes o en cola.
 
+`8f496b6` añade al workflow de fuzzing un artefacto de recursos por target y
+registra el `Maximum resident set size` en cada resumen; la métrica queda
+disponible para la próxima ejecución verde de los 16 targets.
+
 Avance publicado en `f2e8a5f`: el smoke test de instalación JavaScript ejecuta
 la carga del addon nativo en un proceso hijo, evitando el bloqueo `EPERM` de
 Windows durante la limpieza del directorio temporal. Avance publicado en
