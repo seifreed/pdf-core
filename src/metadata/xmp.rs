@@ -24,8 +24,9 @@ pub(crate) fn parse_xmp_bytes_with_budget(
     budget
         .consume_input(data.len() as u64)
         .map_err(|error| error.to_string())?;
-    let xml = String::from_utf8_lossy(data);
-    parse_xmp_unbudgeted(&xml)
+    let xml =
+        std::str::from_utf8(data).map_err(|error| format!("XMP UTF-8 decode error: {error}"))?;
+    parse_xmp_unbudgeted(xml)
 }
 
 fn parse_xmp_unbudgeted(xml: &str) -> Result<XmpMetadata, String> {
@@ -2604,5 +2605,12 @@ mod tests {
         let error = super::parse_xmp_bytes_with_budget(b"<x", &budget)
             .expect_err("input budget must be checked before XML parsing");
         assert!(error.contains("InputBytes"));
+    }
+
+    #[test]
+    fn byte_parser_rejects_invalid_utf8() {
+        let error = super::parse_xmp_bytes_with_budget(b"<x>\xff</x>", &ResourceBudget::default())
+            .expect_err("invalid XMP bytes must not be lossy-decoded");
+        assert!(error.contains("UTF-8"));
     }
 }
