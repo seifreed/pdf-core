@@ -38,7 +38,7 @@ pub fn parse_value_with_max_depth_and_budget<'a>(
     parse_value_with_max_depth_unbudgeted(input, max_depth)
 }
 
-fn parse_value_with_max_depth_unbudgeted(
+pub(crate) fn parse_value_with_max_depth_unbudgeted(
     input: &[u8],
     max_depth: usize,
 ) -> IResult<&[u8], PdfValue> {
@@ -215,6 +215,13 @@ pub fn parse_indirect_object_with_max_depth_and_budget<'a>(
 ) -> IResult<&'a [u8], (ObjectId, PdfValue)> {
     charge_input(input, budget)?;
     charge_object(input, budget)?;
+    parse_indirect_object_with_max_depth_unbudgeted(input, max_depth)
+}
+
+pub(crate) fn parse_indirect_object_with_max_depth_unbudgeted(
+    input: &[u8],
+    max_depth: usize,
+) -> IResult<&[u8], (ObjectId, PdfValue)> {
     let (input, obj_id) = parse_indirect_object_header(input)?;
     let (input, _) = skip_whitespace_and_comments(input)?;
     let (input, value) = parse_value_with_max_depth_unbudgeted(input, max_depth)?;

@@ -181,7 +181,11 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         if buffer.starts_with(b"<<") || buffer.iter().take(20).any(|&b| b.is_ascii_digit()) {
             // Might be xref stream object
             if let Ok((_, (_obj_id, PdfValue::Stream(stream)))) =
-                object_parser::parse_indirect_object_with_max_depth(&buffer, limits.max_depth)
+                object_parser::parse_indirect_object_with_max_depth_and_budget(
+                    &buffer,
+                    limits.max_depth,
+                    &limits.budget,
+                )
             {
                 return crate::parser::xref::parse_xref_stream_with_limits(&stream, limits).map(
                     |entries| {
@@ -500,17 +504,14 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         obj_id: ObjectId,
         ast: &mut PdfAstGraph,
     ) -> Result<NodeId, String> {
-        self.limits
-            .budget
-            .consume_object()
-            .map_err(|err| err.to_string())?;
         if let Some(&offset) = self.xref_table.get(&obj_id) {
             let buffer = self.read_object_buffer(offset)?;
 
             // Resolve an indirect stream length before parsing stream bytes.
-            let parsed = match object_parser::parse_indirect_stream_prefix_with_max_depth(
+            let parsed = match object_parser::parse_indirect_stream_prefix_with_max_depth_and_budget(
                 &buffer,
                 self.limits.max_depth,
+                &self.limits.budget,
             ) {
                 Ok((_, (_, dict))) => {
                     if let Some(PdfValue::Reference(length_ref)) = dict.get("Length") {
@@ -518,16 +519,18 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                             Some(PdfValue::Integer(length)) if length >= 0 => {
                                 match usize::try_from(length) {
                                     Ok(length) => {
-                                        object_parser::parse_indirect_object_with_stream_length_and_max_depth(
+                                        object_parser::parse_indirect_object_with_stream_length_and_max_depth_and_budget(
                                             &buffer,
                                             length,
                                             self.limits.max_depth,
+                                            &self.limits.budget,
                                         )
                                     }
                                     Err(_) if self.tolerant => {
-                                        object_parser::parse_indirect_object_with_max_depth(
+                                        object_parser::parse_indirect_object_with_max_depth_and_budget(
                                             &buffer,
                                             self.limits.max_depth,
+                                            &self.limits.budget,
                                         )
                                     }
                                     Err(_) => {
@@ -538,18 +541,20 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                                 }
                             }
                             Some(_) if self.tolerant => {
-                                object_parser::parse_indirect_object_with_max_depth(
+                                object_parser::parse_indirect_object_with_max_depth_and_budget(
                                     &buffer,
                                     self.limits.max_depth,
+                                    &self.limits.budget,
                                 )
                             }
                             Some(_) => {
                                 return Err("Indirect stream Length is not an integer".to_string())
                             }
                             None if self.tolerant => {
-                                object_parser::parse_indirect_object_with_max_depth(
+                                object_parser::parse_indirect_object_with_max_depth_and_budget(
                                     &buffer,
                                     self.limits.max_depth,
+                                    &self.limits.budget,
                                 )
                             }
                             None => {
@@ -557,15 +562,17 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                             }
                         }
                     } else {
-                        object_parser::parse_indirect_object_with_max_depth(
+                        object_parser::parse_indirect_object_with_max_depth_and_budget(
                             &buffer,
                             self.limits.max_depth,
+                            &self.limits.budget,
                         )
                     }
                 }
-                Err(_) => object_parser::parse_indirect_object_with_max_depth(
+                Err(_) => object_parser::parse_indirect_object_with_max_depth_and_budget(
                     &buffer,
                     self.limits.max_depth,
+                    &self.limits.budget,
                 ),
             };
 
@@ -786,9 +793,13 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         while pos < buffer.len() && buffer[pos].is_ascii_whitespace() {
             pos += 1;
         }
-        object_parser::parse_value_with_max_depth(&buffer[pos..], self.limits.max_depth)
-            .ok()
-            .map(|(_, value)| value)
+        object_parser::parse_value_with_max_depth_and_budget(
+            &buffer[pos..],
+            self.limits.max_depth,
+            &self.limits.budget,
+        )
+        .ok()
+        .map(|(_, value)| value)
     }
 
     fn resolve_compressed_object(
@@ -825,9 +836,12 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .ok_or_else(|| format!("Object stream {} offset missing", stream_object))?;
         let buffer = self.read_object_buffer(offset)?;
 
-        let (_, (_obj_id, value)) =
-            object_parser::parse_indirect_object_with_max_depth(&buffer, self.limits.max_depth)
-                .map_err(|e| format!("Failed to parse object stream: {:?}", e))?;
+        let (_, (_obj_id, value)) = object_parser::parse_indirect_object_with_max_depth_and_budget(
+            &buffer,
+            self.limits.max_depth,
+            &self.limits.budget,
+        )
+        .map_err(|e| format!("Failed to parse object stream: {:?}", e))?;
         let stream = match value {
             PdfValue::Stream(stream) => stream,
             _ => return Err("Object stream is not a stream".to_string()),
@@ -891,8 +905,12 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         let slice = data
             .get(start..next_offset)
             .ok_or_else(|| "Invalid object stream offsets".to_string())?;
-        let (_, value) = object_parser::parse_value_with_max_depth(slice, self.limits.max_depth)
-            .map_err(|e| format!("Parse value error: {:?}", e))?;
+        let (_, value) = object_parser::parse_value_with_max_depth_and_budget(
+            slice,
+            self.limits.max_depth,
+            &self.limits.budget,
+        )
+        .map_err(|e| format!("Parse value error: {:?}", e))?;
         Ok((value, start, next_offset - start))
     }
 
@@ -951,9 +969,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                             .map_err(|e| format!("Read error: {}", e))?;
 
                         if let Ok((_, (_, PdfValue::Integer(length)))) =
-                            object_parser::parse_indirect_object_with_max_depth(
+                            object_parser::parse_indirect_object_with_max_depth_and_budget(
                                 &buffer[..bytes_read],
                                 self.limits.max_depth,
+                                &self.limits.budget,
                             )
                         {
                             let length = usize::try_from(length)
@@ -1318,13 +1337,16 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
     }
 
     fn load_object_value(&mut self, obj_id: ObjectId) -> Option<PdfValue> {
-        self.limits.budget.consume_object().ok()?;
         let offset = self.xref_table.get(&obj_id).copied()?;
         let buffer = self.read_object_buffer(offset).ok()?;
 
-        object_parser::parse_indirect_object_with_max_depth(&buffer, self.limits.max_depth)
-            .ok()
-            .map(|(_, (_, value))| value)
+        object_parser::parse_indirect_object_with_max_depth_and_budget(
+            &buffer,
+            self.limits.max_depth,
+            &self.limits.budget,
+        )
+        .ok()
+        .map(|(_, (_, value))| value)
     }
 
     fn read_object_buffer(&mut self, offset: u64) -> Result<Vec<u8>, String> {

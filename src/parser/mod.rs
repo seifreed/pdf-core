@@ -231,17 +231,27 @@ impl PdfParser {
         if self.mode == ParseMode::Strict
             && object_parser::parse_indirect_object_header(object_input).is_ok()
         {
-            let (remaining, (_, value)) = object_parser::parse_indirect_object_with_max_depth(
-                object_input,
-                self.limits.max_depth,
-            )
-            .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
+            self.limits
+                .budget
+                .consume_object()
+                .map_err(|error| AstError::ParseError(error.to_string()))?;
+            let (remaining, (_, value)) =
+                object_parser::parse_indirect_object_with_max_depth_unbudgeted(
+                    object_input,
+                    self.limits.max_depth,
+                )
+                .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
             self.ensure_strictly_consumed(remaining)?;
             return Ok(value);
         }
-        if let Ok((_, (_, value))) =
-            object_parser::parse_indirect_object_with_max_depth(object_input, self.limits.max_depth)
-        {
+        if let Ok((_, (_, value))) = object_parser::parse_indirect_object_with_max_depth_unbudgeted(
+            object_input,
+            self.limits.max_depth,
+        ) {
+            self.limits
+                .budget
+                .consume_object()
+                .map_err(|error| AstError::ParseError(error.to_string()))?;
             return Ok(value);
         }
         self.parse_value_unbudgeted(input)
@@ -303,13 +313,20 @@ impl PdfParser {
                 break;
             }
             let parsed = if object_parser::parse_indirect_object_header(object_input).is_ok() {
-                object_parser::parse_indirect_object_with_max_depth(
+                self.limits
+                    .budget
+                    .consume_object()
+                    .map_err(|error| AstError::ParseError(error.to_string()))?;
+                object_parser::parse_indirect_object_with_max_depth_unbudgeted(
                     object_input,
                     self.limits.max_depth,
                 )
                 .map(|(rest, (_, value))| (rest, value))
             } else {
-                object_parser::parse_value_with_max_depth(object_input, self.limits.max_depth)
+                object_parser::parse_value_with_max_depth_unbudgeted(
+                    object_input,
+                    self.limits.max_depth,
+                )
             };
 
             match parsed {
