@@ -36,8 +36,9 @@ impl<'a> OutputIntentsParser<'a> {
             for intent_value in intents {
                 match intent_value {
                     PdfValue::Dictionary(intent_dict) => {
-                        let intent_id = self.parse_output_intent(intent_dict);
-                        intent_nodes.push(intent_id);
+                        if let Some(intent_id) = self.parse_output_intent(intent_dict) {
+                            intent_nodes.push(intent_id);
+                        }
                     }
                     PdfValue::Reference(obj_id) => {
                         if let Some(intent_id) = self.resolver.get_node_id(&obj_id.id()) {
@@ -64,7 +65,8 @@ impl<'a> OutputIntentsParser<'a> {
         intent_nodes
     }
 
-    fn parse_output_intent(&mut self, intent_dict: &PdfDictionary) -> NodeId {
+    fn parse_output_intent(&mut self, intent_dict: &PdfDictionary) -> Option<NodeId> {
+        self.budget.consume_node().ok()?;
         // Create OutputIntent node
         let mut node = AstNode::new(
             self.ast.next_node_id(),
@@ -111,8 +113,7 @@ impl<'a> OutputIntentsParser<'a> {
         // Link to ICC profile if present
         if let Some(PdfValue::Reference(icc_ref)) = intent_dict.get("DestOutputProfile") {
             if let Some(icc_id) = self.resolver.get_node_id(&icc_ref.id()) {
-                self.ast
-                    .add_edge(intent_id, icc_id, crate::ast::EdgeType::Reference);
+                self.add_edge(intent_id, icc_id, crate::ast::EdgeType::Reference);
 
                 // Update ICC profile node
                 if let Some(icc_node) = self.ast.get_node_mut(icc_id) {
@@ -132,7 +133,7 @@ impl<'a> OutputIntentsParser<'a> {
             }
         }
 
-        intent_id
+        Some(intent_id)
     }
 
     fn enrich_output_intent(&mut self, intent_dict: PdfDictionary, intent_id: NodeId) {
@@ -203,12 +204,14 @@ impl<'a> OutputIntentsParser<'a> {
             None => return,
         };
 
+        if self.budget.consume_node().is_err() {
+            return;
+        }
         let node_id = self.ast.next_node_id();
         let profile_id =
             self.ast
                 .add_node(AstNode::new(node_id, NodeType::Metadata, PdfValue::Null));
-        self.ast
-            .add_edge(icc_id, profile_id, crate::ast::EdgeType::Child);
+        self.add_edge(icc_id, profile_id, crate::ast::EdgeType::Child);
 
         if let Some(node) = self.ast.get_node_mut(profile_id) {
             node.metadata
@@ -274,5 +277,34 @@ impl<'a> OutputIntentsParser<'a> {
         }
 
         issues
+    }
+
+    fn add_edge(&mut self, from: NodeId, to: NodeId, edge_type: crate::ast::EdgeType) {
+        if self.budget.consume_edge().is_ok() {
+            self.ast.add_edge(from, to, edge_type);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::PdfArray;
+
+    #[test]
+    fn output_intents_parser_respects_node_budget() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 1, 10, 8);
+        let mut parser = OutputIntentsParser::new_with_budget(&mut ast, &resolver, &budget);
+        let intent = || PdfValue::Dictionary(PdfDictionary::new());
+        let mut catalog = PdfDictionary::new();
+        catalog.insert(
+            "OutputIntents",
+            PdfValue::Array(PdfArray::from(vec![intent(), intent()])),
+        );
+
+        assert_eq!(parser.parse_output_intents(&catalog).len(), 1);
+        assert_eq!(ast.node_count(), 1);
     }
 }
