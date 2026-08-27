@@ -176,9 +176,15 @@ pub fn decode_jpx_image(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>,
             "JPX output exceeds limit".to_string(),
         ));
     }
-    image
+    let decoded = image
         .decode()
-        .map_err(|error| FilterError::ImageDecodeError(format!("JPX decode error: {}", error)))
+        .map_err(|error| FilterError::ImageDecodeError(format!("JPX decode error: {}", error)))?;
+    if decoded.len() > max_output_bytes {
+        return Err(FilterError::DecompressionError(
+            "JPX output exceeds limit".to_string(),
+        ));
+    }
+    Ok(decoded)
 }
 
 pub fn decode_jpx_image_with_budget(
