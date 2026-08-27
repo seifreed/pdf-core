@@ -476,6 +476,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 self.limits.budget.max_input_bytes
             )));
         }
+        self.limits
+            .budget
+            .consume_decoded(remaining)
+            .map_err(|error| AstError::ParseError(error.to_string()))?;
 
         self.reader.seek(SeekFrom::Start(offset))?;
         let mut buffer = Vec::new();
@@ -2374,6 +2378,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             .saturating_sub(offset)
             .min(file_size.saturating_sub(offset))
             .min(max_bytes);
+        self.limits
+            .budget
+            .consume_decoded(bound)
+            .map_err(|error| AstError::ParseError(error.to_string()))?;
 
         self.reader.seek(SeekFrom::Start(offset))?;
         let mut buffer = Vec::new();

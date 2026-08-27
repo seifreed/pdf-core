@@ -145,10 +145,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .seek(SeekFrom::Start(file_size.saturating_sub(tail_size)))
             .map_err(|e| format!("Seek error: {}", e))?;
 
-        let mut buffer = Vec::new();
-        reader
-            .read_to_end(&mut buffer)
-            .map_err(|e| format!("Read error: {}", e))?;
+        let buffer = Self::read_limited(reader, tail_size, &limits.budget)?;
 
         let content = String::from_utf8_lossy(&buffer);
 
@@ -175,7 +172,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .seek(SeekFrom::Start(offset))
             .map_err(|e| format!("Seek error: {}", e))?;
 
-        let buffer = Self::read_limited(reader, limits.budget.max_input_bytes)?;
+        let buffer = Self::read_limited(reader, limits.budget.max_input_bytes, &limits.budget)?;
 
         // Try to parse as xref stream first (PDF 1.5+)
         if buffer.starts_with(b"<<") || buffer.iter().take(20).any(|&b| b.is_ascii_digit()) {
@@ -255,7 +252,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .seek(SeekFrom::Start(0))
             .map_err(|e| format!("Seek error: {}", e))?;
 
-        let content = Self::read_limited(reader, limits.budget.max_input_bytes)?;
+        let content = Self::read_limited(reader, limits.budget.max_input_bytes, &limits.budget)?;
 
         let mut xref_table = HashMap::new();
         let mut pos = 0;
@@ -280,13 +277,26 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         Ok(xref_table)
     }
 
-    fn read_limited(reader: &mut R, max_bytes: u64) -> Result<Vec<u8>, String> {
+    fn read_limited(
+        reader: &mut R,
+        max_bytes: u64,
+        budget: &crate::performance::ResourceBudget,
+    ) -> Result<Vec<u8>, String> {
         let mut content = Vec::new();
-        reader
-            .by_ref()
-            .take(max_bytes.saturating_add(1))
-            .read_to_end(&mut content)
-            .map_err(|e| format!("Read error: {}", e))?;
+        let mut chunk = [0u8; 8192];
+        let mut limited = reader.by_ref().take(max_bytes.saturating_add(1));
+        loop {
+            let bytes_read = limited
+                .read(&mut chunk)
+                .map_err(|e| format!("Read error: {}", e))?;
+            if bytes_read == 0 {
+                break;
+            }
+            budget
+                .consume_decoded(bytes_read as u64)
+                .map_err(|error| error.to_string())?;
+            content.extend_from_slice(&chunk[..bytes_read]);
+        }
         if content.len() as u64 > max_bytes {
             return Err(format!(
                 "Input exceeds resource limit of {} bytes",
@@ -1412,6 +1422,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .saturating_sub(offset)
             .min(file_size.saturating_sub(offset))
             .min(max_bytes);
+        self.limits
+            .budget
+            .consume_decoded(bound)
+            .map_err(|error| error.to_string())?;
 
         self.reader
             .seek(SeekFrom::Start(offset))

@@ -190,6 +190,9 @@ La construcción best-effort de recovery reutiliza el presupuesto del parser y
 limita nodos, aristas y copias de objetos antes de materializarlos.
 `PdfParser::parse_bytes` cobra también la retención de `original_bytes` antes
 de crear la copia lossless.
+Las lecturas auxiliares de xref, objetos y escaneos del `ReferenceResolver`
+reservan sus buffers mediante el presupuesto compartido antes de materializar
+los bytes.
 El timeout configurado en `RecoveryConfig` se comprueba antes de cada
 estrategia y antes del parseo final, evitando recuperaciones sin límite
 temporal.
