@@ -118,6 +118,9 @@ y Clippy estricto.
 `1005b2e` hace que `StructTreeParser` materialice `Lang`, `Alt` y
 `ActualText` cuando sus valores son referencias indirectas; la regresion pasa
 `4/4` en la suite de estructura y Clippy estricto.
+`53f80fb` resuelve arrays indirectos `Nums`, `Kids` y `Limits` del `ParentTree`
+de estructura etiquetada; la regresion pasa `5/5` en la suite de estructura y
+Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
