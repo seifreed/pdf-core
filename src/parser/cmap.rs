@@ -658,7 +658,9 @@ impl<'a> CMapParser<'a> {
             return None;
         }
         let mut units: Vec<u16> = base
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u16::from_be_bytes([pair[0], pair[1]]))
             .collect();
         let last = units.last_mut()?;

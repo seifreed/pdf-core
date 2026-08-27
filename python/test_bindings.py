@@ -31,16 +31,16 @@ endobj
 xref
 0 4
 0000000000 65535 f 
-0000000010 00000 n 
-0000000079 00000 n 
-0000000136 00000 n 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
 trailer
 <<
 /Size 4
 /Root 1 0 R
 >>
 startxref
-200
+186
 %%EOF"""
     
     doc = pdf_ast.parse_pdf(minimal_pdf)
