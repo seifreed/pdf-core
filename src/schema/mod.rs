@@ -6,13 +6,13 @@ use crate::types::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 type MigrationFunction = Box<dyn Fn(&mut StableAstSchema) -> Result<(), String>>;
 
 pub const SCHEMA_VERSION: &str = "1.1.0";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SchemaVersion {
     pub major: u32,
     pub minor: u32,
@@ -694,7 +694,14 @@ impl SchemaMigrator {
         mut schema: StableAstSchema,
         target_version: SchemaVersion,
     ) -> Result<StableAstSchema, String> {
+        let mut visited_versions = HashSet::new();
         while schema.version != target_version {
+            if !visited_versions.insert(schema.version.clone()) {
+                return Err(format!(
+                    "Schema migration cycle detected at version {}.{}.{}",
+                    schema.version.major, schema.version.minor, schema.version.patch
+                ));
+            }
             let migration = self.find_migration(&schema.version)?;
             (migration.migration_fn)(&mut schema)?;
             schema.version = migration.to_version.clone();
@@ -830,6 +837,29 @@ mod tests {
             .migrate(schema, SchemaVersion::current())
             .expect("migration chain should reach the requested version");
         assert_eq!(migrated.version, SchemaVersion::current());
+    }
+
+    #[test]
+    fn schema_migration_rejects_non_progressing_cycles() {
+        let version = SchemaVersion {
+            major: 1,
+            minor: 0,
+            patch: 0,
+        };
+        let mut migrator = SchemaMigrator::new();
+        migrator.register_migration(version.clone(), version.clone(), Box::new(|_| Ok(())));
+        let schema = StableAstSchema {
+            version,
+            document_metadata: HashMap::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            deterministic_ids: false,
+        };
+
+        let error = migrator
+            .migrate(schema, SchemaVersion::current())
+            .expect_err("non-progressing migrations must terminate");
+        assert!(error.contains("cycle"));
     }
 
     #[test]
