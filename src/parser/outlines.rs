@@ -80,18 +80,20 @@ impl<'a> OutlineParser<'a> {
                 if let Some(item_dict) = node.as_dict() {
                     let item_dict = item_dict.clone();
                     let outline_item = self.parse_outline_item(&item_dict, item_id, parent_id);
-
-                    // Process children if present
-                    if let Some(first_child) = outline_item.first {
-                        self.parse_outline_items(first_child, Some(item_id), tree);
-                    }
-
                     let next = outline_item.next;
+
+                    // Insert before descending so /First cycles are visible to recursive calls.
                     tree.items.insert(item_id, outline_item);
 
                     // Mark as outline item
                     if let Some(node) = self.ast.get_node_mut(item_id) {
                         node.node_type = NodeType::OutlineItem;
+                    }
+
+                    // Process children if present
+                    if let Some(first_child) = tree.items.get(&item_id).and_then(|item| item.first)
+                    {
+                        self.parse_outline_items(first_child, Some(item_id), tree);
                     }
 
                     next
@@ -515,5 +517,34 @@ mod tests {
         assert_eq!(hierarchy[0].children.len(), 1);
         assert_eq!(hierarchy[0].children[0].children.len(), 1);
         assert!(hierarchy[0].children[0].children[0].children.is_empty());
+    }
+
+    #[test]
+    fn parse_outline_tree_terminates_on_first_cycle() {
+        let object_id = crate::types::ObjectId::new(1, 0);
+        let node_id = NodeId(0);
+        let mut item_dict = PdfDictionary::new();
+        item_dict.insert("Title", PdfValue::String("cyclic".into()));
+        item_dict.insert("First", PdfValue::Reference(object_id.into()));
+
+        let mut ast = PdfAstGraph::new();
+        ast.add_node(crate::ast::AstNode::new(
+            node_id,
+            NodeType::Unknown,
+            PdfValue::Dictionary(item_dict),
+        ));
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(object_id, node_id);
+
+        let mut outlines_dict = PdfDictionary::new();
+        outlines_dict.insert("First", PdfValue::Reference(object_id.into()));
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 10, 10, 8);
+        let mut parser = OutlineParser::new_with_budget(&mut ast, &resolver, &budget);
+
+        let tree = parser
+            .parse_outline_tree(&outlines_dict)
+            .expect("outline root should resolve");
+        assert_eq!(tree.items.len(), 1);
+        assert_eq!(tree.root, node_id);
     }
 }
