@@ -1,4 +1,5 @@
 use super::{FilterError, FilterResult};
+use crate::performance::ResourceBudget;
 
 /// Decode an embedded JBIG2 stream into packed, MSB-first bitmap rows.
 pub fn decode_jbig2(
@@ -39,6 +40,45 @@ pub fn decode_jbig2(
         ));
     }
     Ok(sink.data)
+}
+
+pub fn decode_jbig2_with_budget(
+    data: &[u8],
+    globals: Option<&[u8]>,
+    budget: &ResourceBudget,
+) -> FilterResult<Vec<u8>> {
+    decode_jbig2_with_budget_and_limit(data, globals, budget, usize::MAX)
+}
+
+fn decode_jbig2_with_budget_and_limit(
+    data: &[u8],
+    globals: Option<&[u8]>,
+    budget: &ResourceBudget,
+    configured_limit: usize,
+) -> FilterResult<Vec<u8>> {
+    budget
+        .check()
+        .map_err(|error| FilterError::Jbig2Error(error.to_string()))?;
+    budget
+        .consume_input(data.len() as u64)
+        .map_err(|error| FilterError::Jbig2Error(error.to_string()))?;
+    if let Some(globals) = globals {
+        budget
+            .consume_input(globals.len() as u64)
+            .map_err(|error| FilterError::Jbig2Error(error.to_string()))?;
+    }
+    let max_output_bytes = usize::try_from(
+        budget
+            .max_decoded_bytes_per_stream
+            .min(budget.remaining_decoded_bytes()),
+    )
+    .unwrap_or(usize::MAX)
+    .min(configured_limit);
+    let output = decode_jbig2(data, globals, max_output_bytes)?;
+    budget
+        .consume_decoded(output.len() as u64)
+        .map_err(|error| FilterError::Jbig2Error(error.to_string()))?;
+    Ok(output)
 }
 
 const JBIG2_FILE_HEADER: &[u8; 8] = b"\x97JB2\r\n\x1a\n";
@@ -374,6 +414,20 @@ impl Jbig2Decoder {
         let max_output_bytes = self.config.max_memory_mb.saturating_mul(1024 * 1024);
         decode_jbig2(data, globals, max_output_bytes)
     }
+
+    pub fn decode_with_budget(
+        &mut self,
+        data: &[u8],
+        globals: Option<&[u8]>,
+        budget: &ResourceBudget,
+    ) -> FilterResult<Vec<u8>> {
+        decode_jbig2_with_budget_and_limit(
+            data,
+            globals,
+            budget,
+            self.config.max_memory_mb.saturating_mul(1024 * 1024),
+        )
+    }
 }
 
 impl Default for Jbig2Decoder {
@@ -396,5 +450,26 @@ impl Default for Jbig2Config {
             strict_mode: false,
             max_symbols: 65536,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::decode_jbig2_with_budget;
+    use crate::performance::ResourceBudget;
+
+    #[test]
+    fn jbig2_budget_rejects_input_and_globals_before_decoding() {
+        let data_budget = ResourceBudget::new(0, 1024, 1024, 100, 10, 10, 10, 10);
+        assert!(decode_jbig2_with_budget(b"x", None, &data_budget)
+            .expect_err("JBIG2 input must respect the budget")
+            .to_string()
+            .contains("InputBytes"));
+
+        let globals_budget = ResourceBudget::new(1, 1024, 1024, 100, 10, 10, 10, 10);
+        assert!(decode_jbig2_with_budget(b"x", Some(b"y"), &globals_budget)
+            .expect_err("JBIG2 globals must respect the budget")
+            .to_string()
+            .contains("InputBytes"));
     }
 }

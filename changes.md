@@ -123,6 +123,9 @@ perfiles ICC. `DecodeParms` con tipos inválidos también se rechaza en lugar de
 convertirse silenciosamente en parámetros por defecto.
 `DCTDecode` ya no devuelve datos JPEG inválidos como si fueran bytes raw; los
 errores de formato se propagan al límite de decodificación.
+Las APIs directas de JPX y JBIG2 exponen ahora variantes `*_with_budget` que
+cobran sus buffers de entrada, `JBIG2Globals` y la salida decodificada antes de
+devolverla; las APIs legacy conservan límites por defecto.
 El parser documental de xref streams rechaza ahora en `Strict` tipos de
 entrada desconocidos en lugar de convertirlos silenciosamente en entradas
 libres; `Tolerant` conserva la recuperación anterior.
