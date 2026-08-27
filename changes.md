@@ -37,7 +37,8 @@ entrada y numero de operadores bajo `ResourceBudget`. La resolucion de
 el diccionario declarado y todos los bytes observados, registrando la longitud
 resuelta como metadato separado. `PageTreeParser` acota tambien los nodos de
 color space y perfiles ICC inline, ademas de sus aristas de recursos. Cada
-punto tiene regresion y pasa Clippy estricto.
+punto tiene regresion y pasa Clippy estricto. Las APIs publicas de XMP aceptan
+ahora un `ResourceBudget`, y el parser PDF lo propaga al parseo del paquete.
 
 Pendientes actuales, en orden practico:
 
