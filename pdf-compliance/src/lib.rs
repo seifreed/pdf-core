@@ -184,21 +184,29 @@ mod tests {
     }
 
     #[test]
-    fn validates_all_exposed_profiles_through_the_root_registry() {
-        let doc = PdfDocument::new(PdfVersion::new(1, 7));
-        for profile in [
-            ComplianceProfile::PdfA1a,
-            ComplianceProfile::PdfA1b,
-            ComplianceProfile::PdfA2a,
-            ComplianceProfile::PdfA2b,
-            ComplianceProfile::PdfA2u,
-            ComplianceProfile::PdfA3a,
-            ComplianceProfile::PdfA3b,
-            ComplianceProfile::PdfA3u,
-            ComplianceProfile::PdfUA1,
+    fn validates_exposed_profiles_through_the_root_registry() {
+        for (profile, version) in [
+            (ComplianceProfile::PdfA1a, PdfVersion::new(1, 4)),
+            (ComplianceProfile::PdfA1b, PdfVersion::new(1, 4)),
+            (ComplianceProfile::PdfA2a, PdfVersion::new(1, 7)),
+            (ComplianceProfile::PdfA2b, PdfVersion::new(1, 7)),
+            (ComplianceProfile::PdfA2u, PdfVersion::new(1, 7)),
+            (ComplianceProfile::PdfA3a, PdfVersion::new(1, 7)),
+            (ComplianceProfile::PdfA3b, PdfVersion::new(1, 7)),
+            (ComplianceProfile::PdfA3u, PdfVersion::new(1, 7)),
+            (ComplianceProfile::PdfUA1, PdfVersion::new(1, 7)),
         ] {
-            assert!(validate_profile(&doc, profile).is_some());
+            assert!(validate_profile(&PdfDocument::new(version), profile).is_some());
         }
+    }
+
+    #[test]
+    fn rejects_profiles_with_an_incompatible_pdf_version() {
+        assert!(validate_profile(
+            &PdfDocument::new(PdfVersion::new(2, 0)),
+            ComplianceProfile::PdfA1b,
+        )
+        .is_none());
     }
 
     #[test]

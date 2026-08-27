@@ -80,6 +80,8 @@ Los perfiles PDF/X tambien exigen ahora la version PDF base que corresponde a
 cada familia, evitando aceptar versiones posteriores incompatibles.
 PDF/UA-1 y PDF/UA-2 siguen la misma regla de version base y ya no se aplican
 entre si por una simple comparacion de version minima.
+`SchemaRegistry::validate` comparte ahora ese filtro y devuelve `None` para
+perfiles desconocidos o incompatibles con la version del documento.
 Los trailers asociados a tablas xref tambien se decodifican con el presupuesto
 compartido, con regresion de limite de entrada.
 

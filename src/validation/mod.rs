@@ -246,8 +246,11 @@ impl SchemaRegistry {
         self.schemas.keys().map(|s| s.as_str()).collect()
     }
 
+    /// Validates a document only when the selected schema supports its PDF
+    /// version. Returns `None` for an unknown or incompatible schema.
     pub fn validate(&self, document: &PdfDocument, schema_name: &str) -> Option<ValidationReport> {
         self.get_schema(schema_name)
+            .filter(|schema| schema.supports_pdf_version(&document.version))
             .map(|schema| schema.validate(document))
     }
 

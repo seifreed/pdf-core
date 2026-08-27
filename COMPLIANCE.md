@@ -28,6 +28,8 @@ certificate. Registry-wide validation now gates PDF/A-1 to PDF 1.4 and earlier,
 PDF/A-2/3 to PDF 1.7, and the PDF 2.0 schema to PDF 2.0 documents.
 PDF/X profiles are likewise gated to their declared PDF 1.3 or 1.6 base
 version, and PDF/UA-1/2 are gated to PDF 1.7 and PDF 2.0 respectively.
+The direct registry entry point returns no report for an unknown or
+version-incompatible profile, matching `validate_all`.
 
 ## Feature Matrix
 
