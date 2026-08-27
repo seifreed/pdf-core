@@ -11,6 +11,9 @@ reproducible de 2.806 fixtures upstream mas tres regresiones, metricas
 diferenciales, una campana fuzz local de 16.000 ejecuciones sin crashes y un
 chequeo completo de 205 mapeos negativos contra veraPDF 1.30.2; la
 cobertura positiva exacta por regla sigue en 0/95.
+La rama `main` queda protegida en GitHub con checks estrictos de CI, corpus,
+diferencial, fuzz, API y bindings; tambien se exige resolver conversaciones y
+se bloquean force-pushes y borrados.
 La extraccion de texto resuelve ahora fuentes indirectas, descendientes CID,
 `ToUnicode`, encodings y metricas basicas de glifo dentro de su alcance
 experimental.
