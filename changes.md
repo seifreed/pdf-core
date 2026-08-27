@@ -54,7 +54,9 @@ peor caso de expansión AES; `6a18db2` cobra la materialización de XML XMP;
 `77ddaf4` añade importación del grafo AST con presupuesto; y `d5f1df7` más
 `99a0571` hacen que las migraciones de esquema alcancen el target exacto y
 terminen ciclos sin progreso. `d8d9d36` corrige el sentinel de la regresion
-FFI para mantener Clippy estricto en verde. `05c496e` unifica las 13
+FFI para mantener Clippy estricto en verde. `b6da322` fija a `int32_t` el
+ancho de los códigos de error del ABI C y lo comprueba en el smoke test.
+`05c496e` unifica las 13
 comprobaciones PDF/A-1b en la misma colección de constraints que consume el
 registro, sin alterar sus códigos ni severidades. `e34d732` propaga los
 recursos efectivos por niveles `Pages` anidados y añade una regresión que
