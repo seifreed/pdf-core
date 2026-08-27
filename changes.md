@@ -139,6 +139,9 @@ arrays anidados; la suite de estructura pasa `6/6` y Clippy estricto.
 `22417e5` conserva tambien entradas `ClassMap` inline con arrays de clases,
 sin perderlas al materializar la estructura; la suite pasa `6/6` y Clippy
 estricto.
+`839981d` valida que `/ToUnicode` apunte realmente a un stream, tambien cuando
+la referencia indirecta resuelve a otro tipo; la suite de fuentes pasa `2/2`
+y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
