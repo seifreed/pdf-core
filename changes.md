@@ -47,6 +47,15 @@ verde.
 El chequeo local de `cargo-semver-checks` sigue pasando contra `pdf-ast`
 `0.1.0` (254 checks omitidos por tratarse de un salto mayor alpha).
 
+Avances adicionales publicados: `39de16a` limpia los handles de salida del
+ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
+streams filtrados; `e79ee6e` y `ae2eafc` acotan cifrado/descifrado, incluido el
+peor caso de expansión AES; `6a18db2` cobra la materialización de XML XMP;
+`77ddaf4` añade importación del grafo AST con presupuesto; y `d5f1df7` más
+`99a0571` hacen que las migraciones de esquema alcancen el target exacto y
+terminen ciclos sin progreso. El ultimo SHA publicado es `ae2eafc`; sus
+workflows aun estan pendientes o en cola.
+
 Avance publicado en `f2e8a5f`: el smoke test de instalación JavaScript ejecuta
 la carga del addon nativo en un proceso hijo, evitando el bloqueo `EPERM` de
 Windows durante la limpieza del directorio temporal. Avance publicado en
