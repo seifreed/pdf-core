@@ -66,7 +66,7 @@ jobs:
 
       - name: Fetch pinned project corpus
         env:
-          PDF_CORPUS_COMMIT: e9f4b49f9ad8825883b9b5fe92e38821865940eb
+          PDF_CORPUS_COMMIT: b3e6f34
         run: tools/fetch-verapdf-corpus.sh "fixtures" "$RUNNER_TEMP/verapdf-corpus"
 
       - name: Run panic regression test

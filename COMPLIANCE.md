@@ -21,11 +21,11 @@ campaigns.
 The complete serialized Isartor-to-veraPDF mapping is maintained in
 [`RULE-MAPPINGS.json`](https://github.com/seifreed/pdf-core-corpus/blob/e9f4b49f9ad8825883b9b5fe92e38821865940eb)
 and covers 205 negative fixtures with 95 distinct veraPDF rule IDs. The
-`RULE-COVERAGE.json` records eight positive/negative pairs for the published
-local rules, with seven exact veraPDF rule IDs. The positive evidence is
+`RULE-COVERAGE.json` records nine positive/negative pairs for the published
+local rules, with eight exact veraPDF rule IDs. The positive evidence is
 document-level (`compliant=true`); veraPDF emits no passing rule summaries, so
 positive rule-level results remain unrecorded for the 95 mapped IDs.
-[`RULE-COVERAGE.json`](https://github.com/seifreed/pdf-core-corpus/blob/e9f4b49f9ad8825883b9b5fe92e38821865940eb/RULE-COVERAGE.json)
+[`RULE-COVERAGE.json`](https://github.com/seifreed/pdf-core-corpus/blob/b3e6f34/RULE-COVERAGE.json)
 contains the pair definitions and this limitation explicitly.
 clause-level ISO 32000 inventory is maintained in
 [ISO-32000-MATRIX.md](ISO-32000-MATRIX.md). It records implementation scope
@@ -116,7 +116,7 @@ divergences. Reproduce it with
 ## Required Before Conformance Claims
 
 - The local positive/negative fixture branch is covered by the matrix above;
-  eight serialized upstream positive/negative pairs are verified, but
+  nine serialized upstream positive/negative pairs are verified, but
   positive rule-level results remain outstanding for the 95 mapped veraPDF
   rule IDs because passing summaries are not emitted.
 - Run serialized versions of the same fixtures through a pinned veraPDF
