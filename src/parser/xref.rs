@@ -36,9 +36,16 @@ fn parse_u64(input: &[u8]) -> Result<u64, &'static str> {
 }
 
 pub fn parse_xref_table(input: &[u8]) -> IResult<&[u8], Vec<(ObjectId, XRefEntry)>> {
+    parse_xref_table_with_budget(input, &ResourceBudget::default())
+}
+
+pub fn parse_xref_table_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], Vec<(ObjectId, XRefEntry)>> {
     let (input, _) = tag(b"xref")(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, sections) = many1(parse_xref_section)(input)?;
+    let (input, sections) = many1(|input| parse_xref_section_with_budget(input, budget))(input)?;
 
     let mut entries = Vec::new();
     for section in sections {
@@ -48,17 +55,34 @@ pub fn parse_xref_table(input: &[u8]) -> IResult<&[u8], Vec<(ObjectId, XRefEntry
     Ok((input, entries))
 }
 
-fn parse_xref_section(input: &[u8]) -> IResult<&[u8], Vec<(ObjectId, XRefEntry)>> {
+fn parse_xref_section_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], Vec<(ObjectId, XRefEntry)>> {
     let (input, (start_obj, count)) = parse_xref_subsection_header(input)?;
-    let (input, raw_entries) = many1(parse_xref_entry)(input)?;
+    if count == 0 {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Verify,
+        )));
+    }
 
     let mut entries = Vec::new();
-    for (i, entry) in raw_entries.into_iter().take(count as usize).enumerate() {
-        let object_number = start_obj.checked_add(i as u32).ok_or_else(|| {
+    let mut input = input;
+    for i in 0..count {
+        budget.consume_object().map_err(|_| {
+            nom::Err::Failure(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::TooLarge,
+            ))
+        })?;
+        let (remaining, entry) = parse_xref_entry(input)?;
+        let object_number = start_obj.checked_add(i).ok_or_else(|| {
             nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
         })?;
         let obj_id = ObjectId::new(object_number, entry.generation());
         entries.push((obj_id, entry));
+        input = remaining;
     }
 
     Ok((input, entries))
@@ -410,7 +434,7 @@ pub fn parse_hybrid_xref_with_budget<'a>(
     budget: &ResourceBudget,
 ) -> XRefParseResult<'a> {
     // Try to parse traditional xref table first
-    if let Ok((remaining, table_entries)) = parse_xref_table(input) {
+    if let Ok((remaining, table_entries)) = parse_xref_table_with_budget(input, budget) {
         // Check if there's an xref stream following
         let (remaining, xref_stream) =
             opt(|input| parse_xref_stream_object(input, budget))(remaining)?;
@@ -486,7 +510,7 @@ impl XRefEntry {
 #[cfg(test)]
 mod tests {
     use super::{parse_xref_stream, parse_xref_stream_entry, parse_xref_table};
-    use crate::performance::PerformanceLimits;
+    use crate::performance::{PerformanceLimits, ResourceBudget};
     use crate::types::{PdfArray, PdfDictionary, PdfStream, PdfValue, StreamData};
 
     fn xref_stream(w: Vec<PdfValue>, index: Option<Vec<PdfValue>>) -> PdfStream {
@@ -551,6 +575,17 @@ mod tests {
         );
         assert!(parse_xref_table(b"xref\n0 1\n999999999999999999999999 00000 n\n").is_err());
         assert!(parse_xref_table(b"xref\n0 1\n0000000000 99999 n\n").is_err());
+    }
+
+    #[test]
+    fn xref_table_respects_object_budget() {
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 0, 10, 10, 8);
+        let error =
+            super::parse_xref_table_with_budget(b"xref\n0 1\n0000000000 00000 n \n", &budget)
+                .expect_err("xref entries must consume the shared object budget");
+        assert!(
+            matches!(error, nom::Err::Failure(error) if error.code == nom::error::ErrorKind::TooLarge)
+        );
     }
 
     #[test]

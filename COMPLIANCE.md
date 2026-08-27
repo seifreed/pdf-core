@@ -31,8 +31,8 @@ certificate.
 | Standard area | Rule or feature | Status | Evidence |
 |---|---|---|---|
 | ISO 32000-1/2 | Basic objects, arrays, dictionaries | Implemented | Parser and parser tests |
-| ISO 32000-1/2 | Classic xref and trailer | Implemented | Xref tests and corpus gate |
-| ISO 32000-1/2 | Xref streams and hybrid xref | Partial | Bounded decoder; `test_hybrid_xref_table_and_stream` |
+| ISO 32000-1/2 | Classic xref and trailer | Implemented | Budgeted table parser, xref tests, and corpus gate |
+| ISO 32000-1/2 | Xref streams and hybrid xref | Partial | Bounded table/stream decoder; `test_hybrid_xref_table_and_stream` |
 | ISO 32000-1/2 | Incremental updates and `/Prev` | Partial | `test_incremental_xref_chain`; no complete conformance suite |
 | ISO 32000-1/2 | Object streams | Partial | Checked offsets and bounded decoding |
 | ISO 32000-1/2 | Inherited page resources | Partial | `test_page_resources_are_inherited_from_pages_node`; PDF/A Device color detection also follows `Pages` resources in `test_pdfa_color_space_validation_follows_inherited_page_resources` |

@@ -9,7 +9,7 @@ use crate::multimedia::richmedia::extract_richmedia_info;
 use crate::multimedia::threed::extract_threed_info;
 use crate::parser::lexer::*;
 use crate::parser::object_parser;
-use crate::parser::xref::parse_xref_table;
+use crate::parser::xref::parse_xref_table_with_budget;
 use crate::parser::ParseMode;
 use crate::performance::{PerformanceLimits, ResourceBudget};
 use crate::security::ltv::extract_ltv_info;
@@ -497,10 +497,16 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     > {
         log::debug!("Parsing: detected xref table");
 
-        let (remaining, table_entries) = match parse_xref_table(buffer) {
-            Ok(result) => result,
-            Err(_) => return Ok(None),
-        };
+        let (remaining, table_entries) =
+            match parse_xref_table_with_budget(buffer, &self.limits.budget) {
+                Ok(result) => result,
+                Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                    return Err(AstError::ParseError(
+                        "XRef table exceeds the shared object budget".to_string(),
+                    ));
+                }
+                Err(_) => return Ok(None),
+            };
 
         let mut entries: std::collections::HashMap<ObjectId, XRefEntry> =
             table_entries.into_iter().collect();
@@ -1075,25 +1081,32 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
     fn parse_xref_table(&mut self, data: &[u8]) -> AstResult<()> {
         // Parse xref entries
-        if let Ok((remaining, entries)) = parse_xref_table(data) {
-            for (obj_id, entry) in entries {
-                self.document.add_xref_entry(obj_id, entry);
+        let (remaining, entries) = match parse_xref_table_with_budget(data, &self.limits.budget) {
+            Ok(result) => result,
+            Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                return Err(AstError::ParseError(
+                    "XRef table exceeds the shared object budget".to_string(),
+                ));
             }
+            Err(_) => return Ok(()),
+        };
+        for (obj_id, entry) in entries {
+            self.document.add_xref_entry(obj_id, entry);
+        }
 
-            // Find and parse trailer
-            if let Some(trailer_pos) = Self::find_pattern(remaining, b"trailer") {
-                let trailer_data = &remaining[trailer_pos + 7..];
-                let trailer_data = Self::skip_whitespace(trailer_data);
+        // Find and parse trailer
+        if let Some(trailer_pos) = Self::find_pattern(remaining, b"trailer") {
+            let trailer_data = &remaining[trailer_pos + 7..];
+            let trailer_data = Self::skip_whitespace(trailer_data);
 
-                if let Ok((_, PdfValue::Dictionary(dict))) =
-                    object_parser::parse_value_with_max_depth_and_budget(
-                        trailer_data,
-                        self.limits.max_depth,
-                        &self.limits.budget,
-                    )
-                {
-                    self.document.set_trailer(dict);
-                }
+            if let Ok((_, PdfValue::Dictionary(dict))) =
+                object_parser::parse_value_with_max_depth_and_budget(
+                    trailer_data,
+                    self.limits.max_depth,
+                    &self.limits.budget,
+                )
+            {
+                self.document.set_trailer(dict);
             }
         }
 

@@ -71,7 +71,9 @@ silencia sus fallos: comparte el presupuesto, conserva el error en el nodo y
 en el estado lossless del stream, y propaga el fallo en modo `Strict`.
 Los parsers publicos de valores, objetos indirectos y prefijos de streams en
 `parser::object_parser` aplican ahora el presupuesto estandar y exponen
-variantes con `ResourceBudget`, con regresion dedicada.
+variantes con `ResourceBudget`, con regresion dedicada. Las tablas xref
+publicas y la deteccion de xref hibrido tambien cobran cada entrada contra el
+mismo presupuesto.
 
 Pendientes actuales, en orden practico:
 
