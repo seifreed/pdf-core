@@ -101,6 +101,8 @@ modos tolerantes y errores en `Strict`, con regresión dedicada.
 Los ciclos autorreferentes del árbol de páginas también se rechazan en
 `Strict` y se cortan de forma controlada, con `ParseDiagnostic`, en modos
 tolerantes.
+El exceso de profundidad en árboles de campos de formulario sigue la misma
+política: error en `Strict` y diagnóstico de rama omitida en tolerante.
 La decodificación pública de `PdfStream` ya no trata filtros desconocidos o
 malformados como datos sin filtrar, y los errores de `JBIG2Globals` se
 propagan en `Strict` en lugar de descartarse silenciosamente; el resolver usa

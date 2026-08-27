@@ -1586,6 +1586,21 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         depth: usize,
     ) -> AstResult<()> {
         if depth > MAX_FORM_FIELD_DEPTH {
+            if !self.tolerant {
+                return Err(AstError::ParseError(format!(
+                    "Maximum form field depth exceeded: {}",
+                    MAX_FORM_FIELD_DEPTH
+                )));
+            }
+            self.record_diagnostic(
+                None,
+                None,
+                "max_form_field_depth",
+                "skipped_form_field_branch",
+                1.0,
+                0,
+                "Maximum form field depth exceeded; branch skipped",
+            )?;
             return Ok(());
         }
 
@@ -3032,10 +3047,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
 #[cfg(test)]
 mod tests {
-    use super::{PdfFileParser, XRefEntry};
+    use super::{PdfFileParser, XRefEntry, MAX_FORM_FIELD_DEPTH};
     use crate::parser::ParseMode;
     use crate::performance::PerformanceLimits;
-    use crate::types::{ObjectId, PdfDictionary, PdfReference, PdfStream, PdfValue};
+    use crate::types::{ObjectId, PdfArray, PdfDictionary, PdfReference, PdfStream, PdfValue};
     use std::io::{BufReader, Cursor};
 
     #[test]
@@ -3319,5 +3334,30 @@ mod tests {
             .diagnostics
             .iter()
             .any(|diagnostic| diagnostic.error_code == "page_tree_cycle"));
+    }
+
+    #[test]
+    fn strict_mode_rejects_form_field_depth_overflow() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut value = PdfValue::Null;
+        for _ in 0..=MAX_FORM_FIELD_DEPTH {
+            value = PdfValue::Array(PdfArray::from(vec![value]));
+        }
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("strict parser should initialize");
+        let root = parser
+            .document
+            .ast
+            .create_node(crate::ast::NodeType::Root, PdfValue::Null);
+
+        let error = parser
+            .parse_form_field_value(&value, root, 0)
+            .expect_err("strict form parsing must reject excessive depth");
+        assert!(error.to_string().contains("Maximum form field depth"));
     }
 }
