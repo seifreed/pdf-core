@@ -3099,6 +3099,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         // Create a new reader for the reference resolver
         let buffer = self.read_limited_input()?;
+        self.limits
+            .budget
+            .consume_memory(buffer.len() as u64)
+            .map_err(|error| AstError::ParseError(error.to_string()))?;
         self.document.original_bytes = Some(buffer.clone());
         let cursor = Cursor::new(buffer);
 

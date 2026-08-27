@@ -203,12 +203,7 @@ impl PdfParser {
     pub fn parse_bytes(&self, data: &[u8]) -> AstResult<PdfDocument> {
         use std::io::Cursor;
         let cursor = Cursor::new(data);
-        let mut document = self.parse(cursor)?;
-        self.limits
-            .budget
-            .consume_decoded(data.len() as u64)
-            .map_err(|error| AstError::ParseError(error.to_string()))?;
-        document.original_bytes = Some(data.to_vec());
+        let document = self.parse(cursor)?;
         Ok(document)
     }
 

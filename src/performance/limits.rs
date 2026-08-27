@@ -139,6 +139,16 @@ impl ResourceBudget {
         )
     }
 
+    /// Charges bytes retained in memory without applying the per-stream limit.
+    pub fn consume_memory(&self, bytes: u64) -> Result<(), ResourceBudgetError> {
+        self.consume_bytes(
+            &self.decoded_bytes_total,
+            self.max_decoded_bytes_total,
+            bytes,
+            ResourceBudgetError::DecodedBytes,
+        )
+    }
+
     pub fn remaining_decoded_bytes(&self) -> u64 {
         self.max_decoded_bytes_total
             .saturating_sub(self.decoded_bytes_total.load(Ordering::Acquire))
@@ -721,5 +731,17 @@ mod tests {
             Err(ResourceBudgetError::DecodedBytes)
         );
         assert_eq!(budget.remaining_decoded_bytes(), 2);
+    }
+
+    #[test]
+    fn retained_memory_uses_total_limit_not_stream_limit() {
+        let budget = ResourceBudget::new(100, 8, 4, 10, 1, 1, 1, 1);
+
+        budget.consume_memory(8).unwrap();
+        assert_eq!(budget.remaining_decoded_bytes(), 0);
+        assert_eq!(
+            budget.consume_memory(1),
+            Err(ResourceBudgetError::DecodedBytes)
+        );
     }
 }
