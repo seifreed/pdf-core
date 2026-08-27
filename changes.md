@@ -67,7 +67,8 @@ estan pendientes o en cola.
 registra el `Maximum resident set size` en cada resumen. `f96e169` conserva
 además el resumen y marca `findings=1` cuando libFuzzer termina con error,
 antes de devolver el fallo del job; la métrica queda disponible para la
-próxima ejecución verde de los 16 targets.
+próxima ejecución verde de los 16 targets. `2775aeb` conserva la misma
+métrica de memoria para el smoke completo del corpus veraPDF.
 
 Avance publicado en `f2e8a5f`: el smoke test de instalación JavaScript ejecuta
 la carga del addon nativo en un proceso hijo, evitando el bloqueo `EPERM` de
