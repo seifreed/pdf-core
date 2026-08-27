@@ -70,6 +70,12 @@ acumulada antes de esa suite, no un fallo funcional. Los commits
 strict del arbol de paginas, recursos y catalogo; `fc25e84` corrige la
 semantica de streams ya decodificados sin reaplicar filtros.
 
+Avances locales posteriores: `1eeec86` rechaza o diagnostica nodos `/Pages`
+sin `/Kids` o `/Count`; `7790b10` aplica la misma regla a `/Parent` de las
+hojas `/Page`; `b6a14f0` expone consultas de paginas con `ResourceBudget`; y
+`50bff65` resuelve referencias indirectas del catalogo durante las reglas
+PDF/A de JavaScript, XFA y metadata. Todos tienen regresiones y pasan Clippy.
+
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
 streams filtrados; `e79ee6e` y `ae2eafc` acotan cifrado/descifrado, incluido el
@@ -284,8 +290,9 @@ Pendientes actuales, en orden practico:
   porque esa politica impedia obtener evidencia completa tras cada push; los
   IDs y estados se consultan con `gh run list` para evitar referencias
   obsoletas.
-* **Parser endurecido:** strict y varios recorridos ya tienen guardas, y los
-  streams conservan ahora estado lossless explícito. Las APIs públicas de
+* **Parser endurecido:** strict y varios recorridos ya tienen guardas, incluido
+  el árbol de páginas y sus referencias obligatorias, y los streams conservan
+  ahora estado lossless explícito. Las APIs públicas de
   valores/objetos cobran también la memoria retenida, y la resolución usa el
   presupuesto configurado para su recorrido inicial, pero falta hacer
   completamente estrictos los modos de error/recuperacion y demostrar que
