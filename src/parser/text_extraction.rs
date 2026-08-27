@@ -3,7 +3,7 @@ use crate::parser::cmap::{CMap, CMapParser};
 use crate::parser::content_stream::ContentOperator;
 use crate::parser::reference_resolver::ObjectNodeMap;
 use crate::performance::{ResourceBudget, ResourceBudgetError};
-use crate::types::{PdfDictionary, PdfValue};
+use crate::types::{PdfArray, PdfDictionary, PdfValue};
 use std::collections::HashMap;
 
 /// Text extraction state machine
@@ -162,6 +162,18 @@ impl<'a> TextExtractor<'a> {
         }
     }
 
+    fn resolve_array(&self, value: &PdfValue) -> Option<PdfArray> {
+        match value {
+            PdfValue::Array(array) => Some(array.clone()),
+            PdfValue::Reference(reference) => self
+                .ast
+                .get_node_by_object(reference.id())
+                .and_then(|node| node.as_array())
+                .cloned(),
+            _ => None,
+        }
+    }
+
     fn effective_value<'b>(
         primary: &'b PdfDictionary,
         fallback: &'b PdfDictionary,
@@ -179,9 +191,9 @@ impl<'a> TextExtractor<'a> {
         let top_dict = self.resolve_dict(font_value).unwrap_or_default();
         let descendant_dict = top_dict
             .get("DescendantFonts")
-            .and_then(PdfValue::as_array)
-            .and_then(|fonts| fonts.iter().next())
-            .and_then(|value| self.resolve_dict(value))
+            .and_then(|value| self.resolve_array(value))
+            .and_then(|fonts| fonts.into_iter().next())
+            .and_then(|value| self.resolve_dict(&value))
             .unwrap_or_default();
         let effective_dict = if descendant_dict.is_empty() {
             &top_dict
@@ -870,9 +882,7 @@ mod tests {
         );
         font.insert(
             "DescendantFonts",
-            PdfValue::Array(PdfArray::from(vec![PdfValue::Reference(
-                crate::types::PdfReference::new(3, 0),
-            )])),
+            PdfValue::Reference(crate::types::PdfReference::new(4, 0)),
         );
         ast.add_node(AstNode::new(
             NodeId::new(1),
@@ -902,6 +912,13 @@ mod tests {
             NodeId::new(3),
             NodeType::Object(ObjectId::new(3, 0)),
             PdfValue::Dictionary(descendant),
+        ));
+        ast.add_node(AstNode::new(
+            NodeId::new(4),
+            NodeType::Object(ObjectId::new(4, 0)),
+            PdfValue::Array(PdfArray::from(vec![PdfValue::Reference(
+                crate::types::PdfReference::new(3, 0),
+            )])),
         ));
 
         let mut fonts = PdfDictionary::new();
