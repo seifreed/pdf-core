@@ -53,6 +53,9 @@ pub fn decode_stream_with_budget(
     budget
         .check()
         .map_err(|err| FilterError::DecompressionError(err.to_string()))?;
+    budget
+        .consume_input(data.len() as u64)
+        .map_err(|err| FilterError::DecompressionError(err.to_string()))?;
 
     if filters.is_empty() {
         budget
@@ -589,6 +592,15 @@ mod tests {
     };
     use crate::performance::ResourceBudget;
     use crate::types::{CCITTFaxDecodeParams, StreamFilter};
+
+    #[test]
+    fn budgeted_stream_charges_input_before_decoding() {
+        let budget = ResourceBudget::new(0, 1024, 1024, 100, 10, 10, 10, 10);
+
+        let error = decode_stream_with_budget(b"data", &[], &budget)
+            .expect_err("stream input must respect the budget");
+        assert!(error.to_string().contains("InputBytes"));
+    }
 
     #[test]
     fn rejects_negative_predictor_parameters() {
