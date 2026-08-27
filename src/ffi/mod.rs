@@ -14,7 +14,7 @@ pub struct CPdfDocument(*mut PdfDocument);
 pub struct CAstNode(*mut AstNode);
 
 /// Error codes for C API
-#[repr(C)]
+#[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CErrorCode {
     Success = 0,

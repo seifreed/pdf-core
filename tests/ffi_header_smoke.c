@@ -5,6 +5,8 @@
 
 _Static_assert(offsetof(pdf_ast_result_t, error_code) == 0,
                "pdf_ast_result_t error_code layout changed");
+_Static_assert(sizeof(pdf_ast_error_t) == sizeof(int32_t),
+               "pdf_ast_error_t width changed");
 _Static_assert(offsetof(pdf_ast_result_t, message) >= sizeof(pdf_ast_error_t) &&
                    offsetof(pdf_ast_result_t, message) % _Alignof(char *) == 0,
                "pdf_ast_result_t message layout changed");

@@ -18,15 +18,16 @@ typedef struct CAstNode CAstNode;
 #define PDF_AST_ABI_VERSION_MAJOR 1u
 #define PDF_AST_ABI_VERSION_MINOR 0u
 
-// Error codes
-typedef enum {
+// Error codes use a fixed-width type so the result ABI is compiler-independent.
+typedef int32_t pdf_ast_error_t;
+enum {
     PDF_AST_SUCCESS = 0,
     PDF_AST_INVALID_INPUT = 1,
     PDF_AST_PARSE_ERROR = 2,
     PDF_AST_MEMORY_ERROR = 3,
     PDF_AST_NULL_POINTER = 4,
     PDF_AST_INVALID_HANDLE = 5
-} pdf_ast_error_t;
+};
 
 // Result structure
 typedef struct {
