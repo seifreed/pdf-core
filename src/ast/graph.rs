@@ -7,7 +7,7 @@ use petgraph::visit::{Bfs, Dfs, EdgeRef};
 use petgraph::Graph;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone)]
@@ -661,12 +661,16 @@ impl PdfAstGraph {
     pub fn get_path_to_root(&self, node_id: NodeId) -> Vec<NodeId> {
         let mut path = Vec::new();
         let mut current = node_id;
+        let mut visited = HashSet::new();
 
-        while let Some(parent) = self.get_parent(current) {
+        while visited.insert(current) {
             path.push(current);
-            current = parent;
+            if let Some(parent) = self.get_parent(current) {
+                current = parent;
+            } else {
+                break;
+            }
         }
-        path.push(current); // Add root
         path.reverse();
         path
     }
@@ -675,9 +679,10 @@ impl PdfAstGraph {
         // Find the page node or its parent page
         let mut current = node_id;
         let mut page_node = None;
+        let mut visited = HashSet::new();
 
         // Walk up the tree to find a Page node
-        loop {
+        while visited.insert(current) {
             if let Some(node) = self.get_node(current) {
                 if matches!(node.node_type, NodeType::Page) {
                     page_node = Some(current);
@@ -717,24 +722,33 @@ impl PdfAstGraph {
     /// # Returns
     /// The longest path from root to any leaf node, or 0 if no root is set
     pub fn get_max_depth(&self) -> usize {
-        let mut max_depth = 0;
-        if let Some(root_id) = self.root {
-            max_depth = self.calculate_depth(root_id, 0);
-        }
-        max_depth
+        self.root
+            .map(|root_id| self.calculate_depth(root_id, 0, &mut HashSet::new()))
+            .unwrap_or(0)
     }
 
-    fn calculate_depth(&self, node_id: NodeId, current_depth: usize) -> usize {
+    fn calculate_depth(
+        &self,
+        node_id: NodeId,
+        current_depth: usize,
+        active: &mut HashSet<NodeId>,
+    ) -> usize {
+        if !active.insert(node_id) {
+            return current_depth;
+        }
+
         let children = self.get_children(node_id);
-        if children.is_empty() {
+        let depth = if children.is_empty() {
             current_depth
         } else {
             children
                 .iter()
-                .map(|&child| self.calculate_depth(child, current_depth + 1))
+                .map(|&child| self.calculate_depth(child, current_depth + 1, active))
                 .max()
                 .unwrap_or(current_depth)
-        }
+        };
+        active.remove(&node_id);
+        depth
     }
 
     pub fn next_node_id(&mut self) -> NodeId {
@@ -783,5 +797,24 @@ where
 impl Default for PdfAstGraph {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn graph_queries_terminate_on_child_cycles() {
+        let mut graph = PdfAstGraph::new();
+        let first = graph.add_node(AstNode::new(NodeId(0), NodeType::Unknown, PdfValue::Null));
+        let second = graph.add_node(AstNode::new(NodeId(1), NodeType::Page, PdfValue::Null));
+        graph.add_edge(first, second, EdgeType::Child);
+        graph.add_edge(second, first, EdgeType::Child);
+        graph.set_root(first);
+
+        assert_eq!(graph.get_max_depth(), 2);
+        assert_eq!(graph.get_path_to_root(second), vec![first, second]);
+        assert_eq!(graph.get_page_number(first), Some(1));
     }
 }
