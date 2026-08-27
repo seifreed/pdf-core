@@ -101,6 +101,9 @@ combinadas, y Clippy estricto.
 `06bda33` hace que la regla de estructura etiquetada PDF/UA resuelva tambien
 `MarkInfo` y `StructTreeRoot` indirectos; su regresion pasa `25/25` en
 validacion, `54/54` en las suites combinadas y Clippy estricto.
+`915fa1c` deja de convertir en cero los contadores invalidos de bloques CMap y
+propaga el error de parseo; su regresion pasa `11/11` en las pruebas de CMap y
+Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
