@@ -77,6 +77,9 @@ del stream; la API legacy conserva el presupuesto por defecto.
 `CMapParser::decode_bytes_with_budget` cobra la secuencia de códigos y el
 texto Unicode resultante, y `decode_bytes` conserva la API legacy con límites
 por defecto.
+`TextExtractor::extract_text_with_budget` comparte ese presupuesto con CMap y
+`ToUnicode`, cobra operadores y spans, y la API legacy conserva límites por
+defecto.
 El parseo de cabeceras de object streams limita tambien el numero de entradas
 con el mismo presupuesto en sus rutas publicas e internas.
 El parser publico de imagenes inline tambien rechaza entradas que exceden el

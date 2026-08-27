@@ -2,6 +2,7 @@ use crate::ast::{NodeId, PdfAstGraph};
 use crate::parser::cmap::{CMap, CMapParser};
 use crate::parser::content_stream::ContentOperator;
 use crate::parser::reference_resolver::ObjectNodeMap;
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::types::{PdfDictionary, PdfValue};
 use std::collections::HashMap;
 
@@ -88,33 +89,52 @@ impl<'a> TextExtractor<'a> {
     }
 
     pub fn extract_text(&mut self, operators: &[ContentOperator]) -> Vec<TextSpan> {
+        self.extract_text_with_budget(operators, &ResourceBudget::default())
+            .unwrap_or_default()
+    }
+
+    pub fn extract_text_with_budget(
+        &mut self,
+        operators: &[ContentOperator],
+        budget: &ResourceBudget,
+    ) -> Result<Vec<TextSpan>, ResourceBudgetError> {
         // Pre-load fonts from resources
-        self.load_fonts();
+        self.load_fonts_with_budget(budget)?;
 
         // Process operators
         for op in operators {
-            self.process_operator(op);
+            budget.consume_node()?;
+            self.process_operator_with_budget(op, budget)?;
         }
 
         // Sort spans by position
         self.text_spans
             .sort_by(|a, b| a.y.total_cmp(&b.y).then(a.x.total_cmp(&b.x)));
 
-        self.text_spans.clone()
+        for span in &self.text_spans {
+            budget.consume_decoded(span.text.len() as u64)?;
+        }
+
+        Ok(self.text_spans.clone())
     }
 
-    fn load_fonts(&mut self) {
+    fn load_fonts_with_budget(
+        &mut self,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError> {
         let Some(PdfValue::Dictionary(fonts)) = self.page_resources.get("Font") else {
-            return;
+            return Ok(());
         };
         let fonts: Vec<(String, PdfValue)> = fonts
             .iter()
             .map(|(name, value)| (name.without_slash().to_string(), value.clone()))
             .collect();
         for (name, font_value) in fonts {
-            let font_info = self.parse_font_info(&name, &font_value);
+            budget.consume_node()?;
+            let font_info = self.parse_font_info(&name, &font_value, budget);
             self.fonts.insert(name, font_info);
         }
+        Ok(())
     }
 
     fn resolve_dict(&self, value: &PdfValue) -> Option<PdfDictionary> {
@@ -149,7 +169,12 @@ impl<'a> TextExtractor<'a> {
         primary.get(key).or_else(|| fallback.get(key))
     }
 
-    fn parse_font_info(&mut self, name: &str, font_value: &PdfValue) -> FontInfo {
+    fn parse_font_info(
+        &mut self,
+        name: &str,
+        font_value: &PdfValue,
+        budget: &ResourceBudget,
+    ) -> FontInfo {
         let top_dict = self.resolve_dict(font_value).unwrap_or_default();
         let descendant_dict = top_dict
             .get("DescendantFonts")
@@ -217,7 +242,8 @@ impl<'a> TextExtractor<'a> {
                 let mut cmap_ast = PdfAstGraph::new();
                 let resolver = ObjectNodeMap::new();
                 if let Some((_, cmap)) =
-                    CMapParser::new(&mut cmap_ast, &resolver).parse_cmap_stream(&stream)
+                    CMapParser::new_with_budget(&mut cmap_ast, &resolver, budget)
+                        .parse_cmap_stream(&stream)
                 {
                     self.cmaps.insert(name.to_string(), cmap);
                 }
@@ -308,7 +334,11 @@ impl<'a> TextExtractor<'a> {
             .flatten()
     }
 
-    fn process_operator(&mut self, op: &ContentOperator) {
+    fn process_operator_with_budget(
+        &mut self,
+        op: &ContentOperator,
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError> {
         match op {
             ContentOperator::BeginText => {
                 self.graphics_state.text_matrix = [1.0, 0.0, 0.0, 1.0, 0.0, 0.0];
@@ -360,7 +390,10 @@ impl<'a> TextExtractor<'a> {
 
             ContentOperator::MoveTextNextLine => {
                 let leading = self.graphics_state.leading;
-                self.process_operator(&ContentOperator::MoveText(0.0, -leading));
+                self.process_operator_with_budget(
+                    &ContentOperator::MoveText(0.0, -leading),
+                    budget,
+                )?;
             }
 
             ContentOperator::SetTextMatrix(a, b, c, d, e, f) => {
@@ -369,14 +402,14 @@ impl<'a> TextExtractor<'a> {
             }
 
             ContentOperator::ShowText(text) => {
-                self.show_text(text);
+                self.show_text_with_budget(text, budget)?;
             }
 
             ContentOperator::ShowTextArray(array) => {
                 for element in array {
                     match element {
                         crate::parser::content_stream::TextArrayElement::Text(text) => {
-                            self.show_text(text);
+                            self.show_text_with_budget(text, budget)?;
                         }
                         crate::parser::content_stream::TextArrayElement::Spacing(spacing) => {
                             // Adjust text matrix by spacing
@@ -391,15 +424,15 @@ impl<'a> TextExtractor<'a> {
             }
 
             ContentOperator::ShowTextNextLine(text) => {
-                self.process_operator(&ContentOperator::MoveTextNextLine);
-                self.show_text(text);
+                self.process_operator_with_budget(&ContentOperator::MoveTextNextLine, budget)?;
+                self.show_text_with_budget(text, budget)?;
             }
 
             ContentOperator::ShowTextWithSpacing(tw, tc, text) => {
                 self.graphics_state.word_space = *tw;
                 self.graphics_state.char_space = *tc;
-                self.process_operator(&ContentOperator::MoveTextNextLine);
-                self.show_text(text);
+                self.process_operator_with_budget(&ContentOperator::MoveTextNextLine, budget)?;
+                self.show_text_with_budget(text, budget)?;
             }
 
             ContentOperator::Save => {
@@ -418,21 +451,27 @@ impl<'a> TextExtractor<'a> {
                 // Other operators don't affect text extraction
             }
         }
+        Ok(())
     }
 
-    fn show_text(&mut self, text_bytes: &[u8]) {
+    fn show_text_with_budget(
+        &mut self,
+        text_bytes: &[u8],
+        budget: &ResourceBudget,
+    ) -> Result<(), ResourceBudgetError> {
         if self.text_state.current_font.is_none() {
-            return;
+            return Ok(());
         }
 
         let Some(font) = self.text_state.current_font.as_ref() else {
-            return;
+            return Ok(());
         };
+        budget.consume_node()?;
         let mut chars = Vec::new();
         let mut total_width = 0.0;
 
         // Decode text using font encoding/ToUnicode
-        let decoded = self.decode_text(text_bytes, font);
+        let decoded = self.decode_text_with_budget(text_bytes, font, budget)?;
 
         // Calculate position for each character
         let tm = &self.graphics_state.text_matrix;
@@ -482,16 +521,23 @@ impl<'a> TextExtractor<'a> {
 
             self.text_spans.push(span);
         }
+        Ok(())
     }
 
-    fn decode_text(&self, text_bytes: &[u8], font: &FontInfo) -> String {
+    fn decode_text_with_budget(
+        &self,
+        text_bytes: &[u8],
+        font: &FontInfo,
+        budget: &ResourceBudget,
+    ) -> Result<String, ResourceBudgetError> {
         // Try ToUnicode CMap first
         if let Some(cmap) = &self.text_state.current_cmap {
-            return self.decode_with_cmap(text_bytes, cmap);
+            return self.decode_with_cmap_with_budget(text_bytes, cmap, budget);
         }
 
         // Fallback to encoding
-        match font.encoding.as_str() {
+        budget.consume_input(text_bytes.len() as u64)?;
+        let decoded = match font.encoding.as_str() {
             "WinAnsiEncoding" => self.decode_win_ansi(text_bytes),
             "MacRomanEncoding" => self.decode_mac_roman(text_bytes),
             "StandardEncoding" => {
@@ -502,13 +548,21 @@ impl<'a> TextExtractor<'a> {
                 // Default fallback encoding
                 String::from_utf8_lossy(text_bytes).to_string()
             }
-        }
+        };
+        budget.consume_decoded(decoded.len() as u64)?;
+        Ok(decoded)
     }
 
-    fn decode_with_cmap(&self, text_bytes: &[u8], cmap: &CMap) -> String {
+    fn decode_with_cmap_with_budget(
+        &self,
+        text_bytes: &[u8],
+        cmap: &CMap,
+        budget: &ResourceBudget,
+    ) -> Result<String, ResourceBudgetError> {
         let mut ast = PdfAstGraph::new();
         let resolver = crate::parser::reference_resolver::ObjectNodeMap::new();
-        CMapParser::new(&mut ast, &resolver).decode_bytes(cmap, text_bytes)
+        CMapParser::new_with_budget(&mut ast, &resolver, budget)
+            .decode_bytes_with_budget(cmap, text_bytes, budget)
     }
 
     fn decode_win_ansi(&self, text_bytes: &[u8]) -> String {
@@ -764,5 +818,18 @@ mod tests {
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].text, "A");
         assert!((spans[0].width - 6.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn text_extraction_charges_operator_traversal() {
+        let ast = PdfAstGraph::new();
+        let resources = PdfDictionary::new();
+        let operators = [ContentOperator::BeginText, ContentOperator::EndText];
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 1, 10, 10);
+
+        let error = TextExtractor::new(&ast, &resources)
+            .extract_text_with_budget(&operators, &budget)
+            .expect_err("operator traversal must respect node budget");
+        assert_eq!(error, ResourceBudgetError::Nodes);
     }
 }
