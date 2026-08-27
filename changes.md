@@ -45,6 +45,9 @@ El parseo de cabeceras de object streams limita tambien el numero de entradas
 con el mismo presupuesto en sus rutas publicas e internas.
 El parser publico de imagenes inline tambien rechaza entradas que exceden el
 presupuesto antes de clonar los datos.
+El resolver ya no parsea content streams con un presupuesto por defecto ni
+silencia sus fallos: comparte el presupuesto, conserva el error en el nodo y
+propaga el fallo en modo `Strict`.
 
 Pendientes actuales, en orden practico:
 
