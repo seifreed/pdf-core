@@ -818,6 +818,20 @@ fn operand_to_pdf_value(op: Operand) -> crate::types::PdfValue {
 
 /// Parse inline image with dictionary and data
 pub fn parse_inline_image(input: &[u8]) -> IResult<&[u8], InlineImageInfo> {
+    parse_inline_image_with_budget(input, &ResourceBudget::default())
+}
+
+pub fn parse_inline_image_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], InlineImageInfo> {
+    if budget.consume_input(input.len() as u64).is_err() {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::TooLarge,
+        )));
+    }
+
     // Skip BI
     let (input, _) = tag(b"BI")(input)?;
     let (input, _) = multispace0(input)?;
@@ -999,5 +1013,17 @@ fn pdf_value_to_content_operand(
             crate::parser::content_stream::Operand::Array(operands)
         }
         _ => crate::parser::content_stream::Operand::Integer(0), // Default for unsupported types
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_inline_image_with_budget;
+    use crate::performance::ResourceBudget;
+
+    #[test]
+    fn inline_image_parser_respects_input_budget() {
+        let budget = ResourceBudget::new(3, 1024, 1024, 10, 10, 10, 10, 8);
+        assert!(parse_inline_image_with_budget(b"BI ID x EI", &budget).is_err());
     }
 }
