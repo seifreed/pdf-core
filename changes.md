@@ -36,12 +36,14 @@ de los nodos semanticos resueltos y valida que las fuentes PDF/A apunten a
 streams reales; `93dfce8` rechaza bytes residuales en objetos de object streams
 en modo `Strict`; `d3cbb31` rechaza bytes XMP que no sean UTF-8; y `a3401e0`
 mas `e3f0d83` protegen la aritmetica de rangos y la entrada UTF-8 de CMap.
-El ultimo SHA publicado es `e3f0d83`; sus workflows de corpus, diferencial,
-fuzzing, API, bindings y CI aun estan pendientes o en cola y no se deben
-contar como evidencia verde hasta completar.
-
 `bb624f1` completa la preservacion del mapeo `ObjectId` en el round-trip de
 serializacion tambien para nodos semanticos, no solo para `NodeType::Object`.
+El ultimo SHA publicado es `b52da72`; su corpus externo termino en verde
+(run `33059191326`), mientras que el diferencial, ClusterFuzzLite y API
+Stability siguen en ejecucion y CI, bindings y fuzzing siguen en cola.
+Hasta que termine todo el conjunto no se debe contar la evidencia remota como
+verde.
+
 El chequeo local de `cargo-semver-checks` sigue pasando contra `pdf-ast`
 `0.1.0` (254 checks omitidos por tratarse de un salto mayor alpha).
 
