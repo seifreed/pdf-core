@@ -12,7 +12,7 @@ type MigrationFunction = Box<dyn Fn(&mut StableAstSchema) -> Result<(), String>>
 
 pub const SCHEMA_VERSION: &str = "1.1.0";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SchemaVersion {
     pub major: u32,
     pub minor: u32,
@@ -694,7 +694,7 @@ impl SchemaMigrator {
         mut schema: StableAstSchema,
         target_version: SchemaVersion,
     ) -> Result<StableAstSchema, String> {
-        while !schema.version.is_compatible_with(&target_version) {
+        while schema.version != target_version {
             let migration = self.find_migration(&schema.version)?;
             (migration.migration_fn)(&mut schema)?;
             schema.version = migration.to_version.clone();
@@ -800,6 +800,36 @@ mod tests {
 
         let v3 = SchemaVersion::from_string("2.0.0").unwrap();
         assert!(!v1.is_compatible_with(&v3));
+    }
+
+    #[test]
+    fn schema_migration_reaches_the_exact_target_version() {
+        let mut migrator = SchemaMigrator::new();
+        migrator.register_migration(
+            SchemaVersion {
+                major: 1,
+                minor: 0,
+                patch: 0,
+            },
+            SchemaVersion::current(),
+            Box::new(|_| Ok(())),
+        );
+        let schema = StableAstSchema {
+            version: SchemaVersion {
+                major: 0,
+                minor: 9,
+                patch: 0,
+            },
+            document_metadata: HashMap::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            deterministic_ids: false,
+        };
+
+        let migrated = migrator
+            .migrate(schema, SchemaVersion::current())
+            .expect("migration chain should reach the requested version");
+        assert_eq!(migrated.version, SchemaVersion::current());
     }
 
     #[test]
