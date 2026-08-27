@@ -1935,6 +1935,12 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         while let Some((current_ref, current_parent, inherited_resources)) = stack.pop() {
             let obj_id = current_ref.id();
             if !visited.insert(obj_id) {
+                if !self.tolerant {
+                    return Err(AstError::ParseError(format!(
+                        "Cycle detected in page tree at object {} {}",
+                        obj_id.number, obj_id.generation
+                    )));
+                }
                 continue;
             }
 
@@ -3248,5 +3254,34 @@ mod tests {
         parser.xref_offset = Some(9);
 
         assert!(parser.parse_xref_chain().is_err());
+    }
+
+    #[test]
+    fn strict_mode_rejects_page_tree_cycles() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let data = b"%PDF-1.7\n1 0 obj\n<< /Type /Pages /Kids [1 0 R] >>\nendobj\n";
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data.to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("strict parser should initialize");
+        parser.document.xref.entries.insert(
+            ObjectId::new(1, 0),
+            XRefEntry::InUse {
+                offset: 9,
+                generation: 0,
+            },
+        );
+        let root = parser
+            .document
+            .ast
+            .create_node(crate::ast::NodeType::Root, PdfValue::Null);
+
+        let error = parser
+            .parse_page_tree(&PdfReference::new(1, 0), root)
+            .expect_err("strict page-tree parsing must reject cycles");
+        assert!(error.to_string().contains("Cycle detected"));
     }
 }
