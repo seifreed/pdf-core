@@ -38,7 +38,8 @@ Avance adicional: `SerializableGraph` y `SerializableDocument` exponen ahora
 variantes `*_with_budget` que cargan nodos, aristas, revisiones y payloads de
 streams contra `ResourceBudget`; la deserializacion de AST y documento tambien
 expone variantes acotadas. Visitantes, consultas y walkers de nodos, aristas y
-revisiones tienen la misma variante acotada. CMap aplica
+revisiones tienen la misma variante acotada, incluyendo las entradas xref de
+documentos serializados. CMap aplica
 `UseCMap` cuando el base ya fue parseado, acepta hex PDF de longitud impar y
 limita el número de mappings procesados. El smoke C se compila en CI con
 `-Wall -Wextra -Werror`.

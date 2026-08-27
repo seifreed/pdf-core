@@ -509,6 +509,9 @@ fn check_serializable_document_budget(
         budget.consume_input(bytes.len() as u64)?;
     }
     check_serializable_value_budget(&document.trailer, budget)?;
+    for _ in &document.xref_entries {
+        budget.consume_object()?;
+    }
     for stream in &document.xref_streams {
         budget.consume_object()?;
         check_serializable_value_budget(&stream.dict, budget)?;
@@ -1043,6 +1046,9 @@ impl SerializableDocument {
             budget.consume_input(bytes.len() as u64)?;
         }
         check_value_budget(&PdfValue::Dictionary(document.trailer.clone()), budget)?;
+        for _ in &document.xref.entries {
+            budget.consume_object()?;
+        }
         for stream in &document.xref.streams {
             budget.consume_object()?;
             check_value_budget(&PdfValue::Dictionary(stream.dict.clone()), budget)?;
@@ -1871,5 +1877,24 @@ mod tests {
             .deserialize_with_budget(&budget)
             .expect_err("stream payload must apply to deserialization budget");
         assert!(error.contains("InputBytes"));
+    }
+
+    #[test]
+    fn budgeted_document_round_trip_charges_xref_entries() {
+        let mut document = PdfDocument::new(PdfVersion::new(1, 4));
+        document.xref.entries.insert(
+            ObjectId::new(1, 0),
+            XRefEntry::InUse {
+                offset: 10,
+                generation: 0,
+            },
+        );
+        let serialized = SerializableDocument::from_document(&document);
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 0, 10, 10, 10);
+
+        let error = serialized
+            .deserialize_document_with_budget(&budget)
+            .expect_err("xref entries must apply to document deserialization budget");
+        assert!(error.contains("Objects"));
     }
 }
