@@ -2162,6 +2162,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                         continue;
                     }
 
+                    if node_type == NodeType::Pages {
+                        self.validate_pages_node_fields(obj_id, pages_dict)?;
+                    }
+
                     let is_page = node_type == NodeType::Page;
                     let mut node_value = pages_value.clone();
                     if !inherited_resources.is_empty() {
@@ -2264,6 +2268,42 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             }
         }
 
+        Ok(())
+    }
+
+    fn validate_pages_node_fields(
+        &mut self,
+        obj_id: ObjectId,
+        pages_dict: &PdfDictionary,
+    ) -> AstResult<()> {
+        for (key, error_code, message) in [
+            (
+                "Kids",
+                "missing_page_tree_kids",
+                "Page tree /Pages node is missing required /Kids",
+            ),
+            (
+                "Count",
+                "missing_page_tree_count",
+                "Page tree /Pages node is missing required /Count",
+            ),
+        ] {
+            if pages_dict.contains_key(key) {
+                continue;
+            }
+            if !self.tolerant {
+                return Err(AstError::ParseError(message.to_string()));
+            }
+            self.record_diagnostic(
+                Some(obj_id),
+                None,
+                error_code,
+                "continued_with_missing_page_tree_field",
+                1.0,
+                0,
+                message,
+            )?;
+        }
         Ok(())
     }
 
