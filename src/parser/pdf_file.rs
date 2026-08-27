@@ -2257,7 +2257,6 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 stream.data.len()
             )));
         }
-        stream.data.truncate(length);
         Ok(())
     }
 
@@ -2896,7 +2895,7 @@ mod tests {
     use super::{PdfFileParser, XRefEntry};
     use crate::parser::ParseMode;
     use crate::performance::PerformanceLimits;
-    use crate::types::{ObjectId, PdfDictionary, PdfValue};
+    use crate::types::{ObjectId, PdfDictionary, PdfReference, PdfStream, PdfValue};
     use std::io::{BufReader, Cursor};
 
     #[test]
@@ -2947,6 +2946,40 @@ mod tests {
             panic!("expected stream");
         };
         assert_eq!(stream.raw_data(), Some(stream_data.as_slice()));
+    }
+
+    #[test]
+    fn indirect_stream_length_validation_preserves_observed_bytes() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let data = b"%PDF-1.7\n5 0 obj\n3\nendobj\n".to_vec();
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("parser should initialize");
+        parser.document.xref.entries.insert(
+            ObjectId::new(5, 0),
+            XRefEntry::InUse {
+                offset: 9,
+                generation: 0,
+            },
+        );
+
+        let length_ref = PdfReference::new(5, 0);
+        let mut dict = PdfDictionary::new();
+        dict.insert("Length", PdfValue::Reference(length_ref));
+        let mut stream = PdfStream::new(dict, b"abcd".to_vec());
+        parser
+            .resolve_indirect_stream_length(&mut stream)
+            .expect("declared length should validate");
+
+        assert_eq!(
+            stream.dict.get("Length"),
+            Some(&PdfValue::Reference(length_ref))
+        );
+        assert_eq!(stream.raw_data(), Some(b"abcd".as_slice()));
     }
 
     #[test]
