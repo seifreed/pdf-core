@@ -518,4 +518,17 @@ mod parser_tests {
             PdfValue::Integer(42)
         );
     }
+
+    #[test]
+    fn strict_single_value_rejects_trailing_tokens() {
+        assert!(PdfParser::strict().parse_value(b"42 trailing").is_err());
+        assert!(PdfParser::new().parse_value(b"42 trailing").is_ok());
+    }
+
+    #[test]
+    fn strict_indirect_object_rejects_trailing_tokens() {
+        assert!(PdfParser::strict()
+            .parse_object(b"7 2 obj\n42\nendobj trailing")
+            .is_err());
+    }
 }

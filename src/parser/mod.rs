@@ -201,9 +201,11 @@ impl PdfParser {
     /// # Errors
     /// Returns `AstError::ParseError` if the value cannot be parsed
     pub fn parse_value(&self, input: &[u8]) -> AstResult<PdfValue> {
-        object_parser::parse_value_with_max_depth(input, self.limits.max_depth)
-            .map(|(_, value)| value)
-            .map_err(|e| AstError::ParseError(format!("{:?}", e)))
+        let (remaining, value) =
+            object_parser::parse_value_with_max_depth(input, self.limits.max_depth)
+                .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
+        self.ensure_strictly_consumed(remaining)?;
+        Ok(value)
     }
 
     /// Parses a PDF object from bytes.
@@ -223,12 +225,13 @@ impl PdfParser {
         if self.mode == ParseMode::Strict
             && object_parser::parse_indirect_object_header(object_input).is_ok()
         {
-            return object_parser::parse_indirect_object_with_max_depth(
+            let (remaining, (_, value)) = object_parser::parse_indirect_object_with_max_depth(
                 object_input,
                 self.limits.max_depth,
             )
-            .map(|(_, (_, value))| value)
-            .map_err(|e| AstError::ParseError(format!("{:?}", e)));
+            .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
+            self.ensure_strictly_consumed(remaining)?;
+            return Ok(value);
         }
         if let Ok((_, (_, value))) =
             object_parser::parse_indirect_object_with_max_depth(object_input, self.limits.max_depth)
@@ -236,6 +239,21 @@ impl PdfParser {
             return Ok(value);
         }
         self.parse_value(input)
+    }
+
+    fn ensure_strictly_consumed(&self, remaining: &[u8]) -> AstResult<()> {
+        if self.mode == ParseMode::Strict {
+            let remaining = crate::parser::lexer::skip_whitespace_and_comments(remaining)
+                .map(|(remaining, _)| remaining)
+                .unwrap_or(remaining);
+            if !remaining.is_empty() {
+                return Err(AstError::ParseError(format!(
+                    "Trailing bytes after PDF value: {:?}",
+                    remaining
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Parses multiple consecutive PDF objects from bytes.
