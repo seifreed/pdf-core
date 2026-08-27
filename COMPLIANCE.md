@@ -25,7 +25,7 @@ and covers 205 negative fixtures with 95 distinct veraPDF rule IDs. The
 local rules, with eight exact veraPDF rule IDs. The positive evidence is
 document-level (`compliant=true`); veraPDF emits no passing rule summaries, so
 positive rule-level results remain unrecorded for the 95 mapped IDs.
-[`RULE-COVERAGE.json`](https://github.com/seifreed/pdf-core-corpus/blob/b3e6f34/RULE-COVERAGE.json)
+[`RULE-COVERAGE.json`](https://github.com/seifreed/pdf-core-corpus/blob/b3e6f3413cd6ee344b77f7fececfb8c2a7f2fe35/RULE-COVERAGE.json)
 contains the pair definitions and this limitation explicitly.
 clause-level ISO 32000 inventory is maintained in
 [ISO-32000-MATRIX.md](ISO-32000-MATRIX.md). It records implementation scope
