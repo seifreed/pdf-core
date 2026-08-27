@@ -81,6 +81,19 @@ impl<'a> StructTreeParser<'a> {
         role_map
     }
 
+    fn resolve_string(&self, value: &PdfValue) -> Option<String> {
+        match value {
+            PdfValue::String(string) => Some(string.to_string_lossy()),
+            PdfValue::Reference(reference) => self
+                .resolver
+                .get_node_id(&reference.id())
+                .and_then(|node_id| self.ast.get_node(node_id))
+                .and_then(|node| node.value.as_string())
+                .map(|string| string.to_string_lossy()),
+            _ => None,
+        }
+    }
+
     fn parse_class_map(&mut self, dict: &PdfDictionary) -> HashMap<String, NodeId> {
         let mut class_map = HashMap::new();
 
@@ -322,26 +335,33 @@ impl<'a> StructTreeParser<'a> {
         }
 
         // Extract language
-        if let Some(PdfValue::String(lang)) = elem_dict.get("Lang") {
+        if let Some(lang) = elem_dict
+            .get("Lang")
+            .and_then(|value| self.resolve_string(value))
+        {
             if let Some(node) = self.ast.get_node_mut(elem_id) {
-                node.metadata
-                    .set_property("language".to_string(), lang.to_string_lossy());
+                node.metadata.set_property("language".to_string(), lang);
             }
         }
 
         // Extract Alt text
-        if let Some(PdfValue::String(alt)) = elem_dict.get("Alt") {
+        if let Some(alt) = elem_dict
+            .get("Alt")
+            .and_then(|value| self.resolve_string(value))
+        {
             if let Some(node) = self.ast.get_node_mut(elem_id) {
-                node.metadata
-                    .set_property("alt_text".to_string(), alt.to_string_lossy());
+                node.metadata.set_property("alt_text".to_string(), alt);
             }
         }
 
         // Extract ActualText
-        if let Some(PdfValue::String(actual)) = elem_dict.get("ActualText") {
+        if let Some(actual) = elem_dict
+            .get("ActualText")
+            .and_then(|value| self.resolve_string(value))
+        {
             if let Some(node) = self.ast.get_node_mut(elem_id) {
                 node.metadata
-                    .set_property("actual_text".to_string(), actual.to_string_lossy());
+                    .set_property("actual_text".to_string(), actual);
             }
         }
 
@@ -686,6 +706,70 @@ mod tests {
             .parse_struct_tree_root(&root_dict)
             .expect("structure tree should parse");
         assert_eq!(ast.edge_count(), 1);
+    }
+
+    #[test]
+    fn struct_tree_parser_resolves_indirect_accessibility_strings() {
+        let mut ast = PdfAstGraph::new();
+        let element_id = ast.create_node(
+            NodeType::Object(ObjectId::new(1, 0)),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("S", PdfValue::Name(PdfName::new("Figure")));
+                dict.insert("Lang", PdfValue::Reference(PdfReference::new(2, 0)));
+                dict.insert("Alt", PdfValue::Reference(PdfReference::new(3, 0)));
+                dict.insert("ActualText", PdfValue::Reference(PdfReference::new(4, 0)));
+                dict
+            }),
+        );
+        let language_id = ast.create_node(
+            NodeType::Object(ObjectId::new(2, 0)),
+            PdfValue::String(crate::types::PdfString::new_literal(b"en-US")),
+        );
+        let alt_id = ast.create_node(
+            NodeType::Object(ObjectId::new(3, 0)),
+            PdfValue::String(crate::types::PdfString::new_literal(b"figure")),
+        );
+        let actual_id = ast.create_node(
+            NodeType::Object(ObjectId::new(4, 0)),
+            PdfValue::String(crate::types::PdfString::new_literal(b"actual")),
+        );
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), element_id);
+        resolver.insert(ObjectId::new(2, 0), language_id);
+        resolver.insert(ObjectId::new(3, 0), alt_id);
+        resolver.insert(ObjectId::new(4, 0), actual_id);
+
+        let mut root_dict = PdfDictionary::new();
+        root_dict.insert("ParentTree", PdfValue::Dictionary(PdfDictionary::new()));
+        root_dict.insert("K", PdfValue::Reference(PdfReference::new(1, 0)));
+        let mut parser = StructTreeParser::new(&mut ast, &resolver);
+        parser
+            .parse_struct_tree_root(&root_dict)
+            .expect("structure tree should parse");
+
+        let element = ast.get_node(element_id).expect("element should exist");
+        assert_eq!(
+            element
+                .metadata
+                .get_property("language")
+                .map(String::as_str),
+            Some("en-US")
+        );
+        assert_eq!(
+            element
+                .metadata
+                .get_property("alt_text")
+                .map(String::as_str),
+            Some("figure")
+        );
+        assert_eq!(
+            element
+                .metadata
+                .get_property("actual_text")
+                .map(String::as_str),
+            Some("actual")
+        );
     }
 
     #[test]
