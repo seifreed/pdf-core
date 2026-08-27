@@ -194,7 +194,7 @@ jobs:
 
       - name: Compile and run C smoke test
         run: |
-          cc -Iinclude tests/ffi_header_smoke.c target/release/libpdf_ast.so \
+          cc -Wall -Wextra -Werror -Iinclude tests/ffi_header_smoke.c target/release/libpdf_ast.so \
             -Wl,-rpath,"$GITHUB_WORKSPACE/target/release" \
             -o "$RUNNER_TEMP/pdf-ast-c-smoke"
           "$RUNNER_TEMP/pdf-ast-c-smoke"
