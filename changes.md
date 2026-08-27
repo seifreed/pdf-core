@@ -54,8 +54,10 @@ peor caso de expansión AES; `6a18db2` cobra la materialización de XML XMP;
 `77ddaf4` añade importación del grafo AST con presupuesto; y `d5f1df7` más
 `99a0571` hacen que las migraciones de esquema alcancen el target exacto y
 terminen ciclos sin progreso. `d8d9d36` corrige el sentinel de la regresion
-FFI para mantener Clippy estricto en verde. El ultimo SHA publicado es
-`d8d9d36`; sus workflows aun estan pendientes o en cola.
+FFI para mantener Clippy estricto en verde. `05c496e` unifica las 13
+comprobaciones PDF/A-1b en la misma colección de constraints que consume el
+registro, sin alterar sus códigos ni severidades. Sus workflows aun estan
+pendientes o en cola.
 
 Avance publicado en `f2e8a5f`: el smoke test de instalación JavaScript ejecuta
 la carga del addon nativo en un proceso hijo, evitando el bloqueo `EPERM` de
@@ -253,8 +255,9 @@ Pendientes actuales, en orden practico:
   confiables.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
-  convertirlo en cobertura normativa completa, fusionar las validaciones y
-  dejar PDF/A/PDF/UA fuera de estado experimental.
+  convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
+  estado experimental. PDF/A-1b ya comparte ahora la colección de constraints
+  del registro con el validador publico.
   La regla PDF/UA de metadata ahora exige estructuralmente `/Type /Metadata`
   y `/Subtype /XML`, con par sintetico y el par real `7.1-t08` del corpus
   verificado contra `ISO 14289-1:2014:7.1:8`; esto no cambia el estado
