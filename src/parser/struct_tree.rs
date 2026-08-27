@@ -163,6 +163,18 @@ impl<'a> StructTreeParser<'a> {
                         let class_id = self.ast.add_node(class_node);
                         class_map.insert(key.to_string(), class_id);
                     }
+                    PdfValue::Array(classes) => {
+                        if self.budget.consume_node().is_err() {
+                            continue;
+                        }
+                        let class_node = AstNode::new(
+                            self.ast.next_node_id(),
+                            NodeType::Unknown,
+                            PdfValue::Array(classes.clone()),
+                        );
+                        let class_id = self.ast.add_node(class_node);
+                        class_map.insert(key.to_string(), class_id);
+                    }
                     _ => {}
                 }
             }
@@ -820,6 +832,12 @@ mod tests {
             PdfValue::Dictionary({
                 let mut dict = PdfDictionary::new();
                 dict.insert("Layout", PdfValue::Reference(PdfReference::new(7, 0)));
+                dict.insert(
+                    "Multi",
+                    PdfValue::Array(PdfArray::from(vec![PdfValue::Dictionary(
+                        PdfDictionary::new(),
+                    )])),
+                );
                 dict
             }),
         );
@@ -870,6 +888,7 @@ mod tests {
             Some("Figure")
         );
         assert_eq!(tree.class_map.get("/Layout"), Some(&class_id));
+        assert!(tree.class_map.contains_key("/Multi"));
     }
 
     #[test]
