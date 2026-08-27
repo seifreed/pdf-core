@@ -76,7 +76,8 @@ jobs:
           PDF_EXTERNAL_MAX_FILES: "3000"
         run: |
           set -o pipefail
-          cargo test --test external_corpus_tests --locked -- --test-threads=1 --nocapture \
+          /usr/bin/time -v -o "$RUNNER_TEMP/external-corpus.resources" \
+            cargo test --test external_corpus_tests --locked -- --test-threads=1 --nocapture \
             2>&1 | tee "$RUNNER_TEMP/external-corpus.log"
 
       - name: Run veraPDF comparison
@@ -97,5 +98,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: external-corpus-evidence
-          path: ${{ runner.temp }}/external-corpus.log
+          path: |
+            ${{ runner.temp }}/external-corpus.log
+            ${{ runner.temp }}/external-corpus.resources
           if-no-files-found: error
