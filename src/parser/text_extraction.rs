@@ -1,6 +1,7 @@
 use crate::ast::{NodeId, PdfAstGraph};
 use crate::parser::cmap::{CMap, CMapParser};
 use crate::parser::content_stream::ContentOperator;
+use crate::parser::reference_resolver::ObjectNodeMap;
 use crate::types::{PdfDictionary, PdfValue};
 use std::collections::HashMap;
 
@@ -103,35 +104,208 @@ impl<'a> TextExtractor<'a> {
     }
 
     fn load_fonts(&mut self) {
-        if let Some(PdfValue::Dictionary(fonts)) = self.page_resources.get("Font") {
-            for (name, font_ref) in fonts.iter() {
-                if let PdfValue::Reference(_obj_id) = font_ref {
-                    // Get font node from AST
-                    // Parse font info
-                    let font_info = self.parse_font_info(name.as_str(), font_ref);
-                    self.fonts
-                        .insert(name.without_slash().to_string(), font_info);
+        let Some(PdfValue::Dictionary(fonts)) = self.page_resources.get("Font") else {
+            return;
+        };
+        let fonts: Vec<(String, PdfValue)> = fonts
+            .iter()
+            .map(|(name, value)| (name.without_slash().to_string(), value.clone()))
+            .collect();
+        for (name, font_value) in fonts {
+            let font_info = self.parse_font_info(&name, &font_value);
+            self.fonts.insert(name, font_info);
+        }
+    }
+
+    fn resolve_dict(&self, value: &PdfValue) -> Option<PdfDictionary> {
+        match value {
+            PdfValue::Dictionary(dict) => Some(dict.clone()),
+            PdfValue::Reference(reference) => self
+                .ast
+                .get_node_by_object(reference.id())
+                .and_then(|node| node.as_dict())
+                .cloned(),
+            _ => None,
+        }
+    }
+
+    fn resolve_stream(&self, value: &PdfValue) -> Option<crate::types::PdfStream> {
+        match value {
+            PdfValue::Stream(stream) => Some(stream.clone()),
+            PdfValue::Reference(reference) => self
+                .ast
+                .get_node_by_object(reference.id())
+                .and_then(|node| node.as_stream())
+                .cloned(),
+            _ => None,
+        }
+    }
+
+    fn effective_value<'b>(
+        primary: &'b PdfDictionary,
+        fallback: &'b PdfDictionary,
+        key: &str,
+    ) -> Option<&'b PdfValue> {
+        primary.get(key).or_else(|| fallback.get(key))
+    }
+
+    fn parse_font_info(&mut self, name: &str, font_value: &PdfValue) -> FontInfo {
+        let top_dict = self.resolve_dict(font_value).unwrap_or_default();
+        let descendant_dict = top_dict
+            .get("DescendantFonts")
+            .and_then(PdfValue::as_array)
+            .and_then(|fonts| fonts.iter().next())
+            .and_then(|value| self.resolve_dict(value))
+            .unwrap_or_default();
+        let effective_dict = if descendant_dict.is_empty() {
+            &top_dict
+        } else {
+            &descendant_dict
+        };
+
+        let font_type = top_dict
+            .get("Subtype")
+            .and_then(PdfValue::as_name)
+            .map(|value| value.without_slash().to_string())
+            .or_else(|| {
+                effective_dict
+                    .get("Subtype")
+                    .and_then(PdfValue::as_name)
+                    .map(|value| value.without_slash().to_string())
+            })
+            .unwrap_or_else(|| "Unknown".to_string());
+        let base_font = top_dict
+            .get("BaseFont")
+            .or_else(|| effective_dict.get("BaseFont"))
+            .and_then(PdfValue::as_name)
+            .map(|value| value.without_slash().to_string())
+            .unwrap_or_else(|| name.to_string());
+        let encoding = match top_dict.get("Encoding") {
+            Some(PdfValue::Name(value)) => value.without_slash().to_string(),
+            Some(PdfValue::Dictionary(dict)) => dict
+                .get("BaseEncoding")
+                .and_then(PdfValue::as_name)
+                .map(|value| value.without_slash().to_string())
+                .unwrap_or_else(|| "StandardEncoding".to_string()),
+            _ => "StandardEncoding".to_string(),
+        };
+
+        let mut width_map = HashMap::new();
+        Self::parse_simple_widths(&top_dict, &mut width_map);
+        if !descendant_dict.is_empty() {
+            Self::parse_cid_widths(&descendant_dict, &mut width_map);
+        }
+        let default_width =
+            Self::number_value(Self::effective_value(&top_dict, effective_dict, "DW"))
+                .unwrap_or(1000.0);
+        let font_matrix = Self::parse_font_matrix(Self::effective_value(
+            &top_dict,
+            effective_dict,
+            "FontMatrix",
+        ))
+        .unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
+
+        let to_unicode = top_dict.get("ToUnicode").and_then(|value| match value {
+            PdfValue::Reference(reference) => self
+                .ast
+                .get_node_by_object(reference.id())
+                .map(|node| node.id),
+            _ => None,
+        });
+        if let Some(to_unicode_value) = top_dict.get("ToUnicode") {
+            if let Some(stream) = self.resolve_stream(to_unicode_value) {
+                let mut cmap_ast = PdfAstGraph::new();
+                let resolver = ObjectNodeMap::new();
+                if let Some((_, cmap)) =
+                    CMapParser::new(&mut cmap_ast, &resolver).parse_cmap_stream(&stream)
+                {
+                    self.cmaps.insert(name.to_string(), cmap);
                 }
+            }
+        }
+
+        FontInfo {
+            font_type,
+            base_font,
+            encoding,
+            to_unicode,
+            width_map,
+            default_width,
+            font_matrix,
+        }
+    }
+
+    fn number_value(value: Option<&PdfValue>) -> Option<f64> {
+        value.and_then(PdfValue::as_real)
+    }
+
+    fn parse_simple_widths(dict: &PdfDictionary, width_map: &mut HashMap<u32, f64>) {
+        let Some(first_char) = dict.get("FirstChar").and_then(PdfValue::as_integer) else {
+            return;
+        };
+        let Some(PdfValue::Array(widths)) = dict.get("Widths") else {
+            return;
+        };
+        for (index, width) in widths.iter().enumerate() {
+            let Ok(code) = u32::try_from(first_char.saturating_add(index as i64)) else {
+                continue;
+            };
+            if let Some(width) = Self::number_value(Some(width)) {
+                width_map.insert(code, width);
             }
         }
     }
 
-    fn parse_font_info(&mut self, name: &str, _font_value: &PdfValue) -> FontInfo {
-        // Default font info
-
-        // Parse font dictionary if available
-        // This would need access to the actual font object
-        // For now, return default
-
-        FontInfo {
-            font_type: "Type1".to_string(),
-            base_font: name.to_string(),
-            encoding: "StandardEncoding".to_string(),
-            to_unicode: None,
-            width_map: HashMap::new(),
-            default_width: 1000.0,
-            font_matrix: [0.001, 0.0, 0.0, 0.001, 0.0, 0.0],
+    fn parse_cid_widths(dict: &PdfDictionary, width_map: &mut HashMap<u32, f64>) {
+        let Some(PdfValue::Array(widths)) = dict.get("W") else {
+            return;
+        };
+        let mut index = 0;
+        while index < widths.len() {
+            let Some(start) = widths[index]
+                .as_integer()
+                .and_then(|value| u32::try_from(value).ok())
+            else {
+                index += 1;
+                continue;
+            };
+            let Some(next) = widths.get(index + 1) else {
+                break;
+            };
+            if let Some(values) = next.as_array() {
+                for (offset, width) in values.iter().enumerate() {
+                    if let Some(width) = Self::number_value(Some(width)) {
+                        if let Some(code) = start.checked_add(offset as u32) {
+                            width_map.insert(code, width);
+                        }
+                    }
+                }
+                index += 2;
+            } else if let (Some(end), Some(width)) = (
+                next.as_integer()
+                    .and_then(|value| u32::try_from(value).ok()),
+                widths
+                    .get(index + 2)
+                    .and_then(|value| Self::number_value(Some(value))),
+            ) {
+                for code in start..=end {
+                    width_map.insert(code, width);
+                }
+                index += 3;
+            } else {
+                index += 1;
+            }
         }
+    }
+
+    fn parse_font_matrix(value: Option<&PdfValue>) -> Option<[f64; 6]> {
+        let PdfValue::Array(values) = value? else {
+            return None;
+        };
+        let numbers: Vec<f64> = values.iter().filter_map(PdfValue::as_real).collect();
+        (numbers.len() == 6)
+            .then(|| numbers.try_into().ok())
+            .flatten()
     }
 
     fn process_operator(&mut self, op: &ContentOperator) {
@@ -150,8 +324,10 @@ impl<'a> TextExtractor<'a> {
                 self.graphics_state.font_size = *size;
 
                 // Update current font
-                if let Some(font_info) = self.fonts.get(name) {
+                let resource_name = name.trim_start_matches('/');
+                if let Some(font_info) = self.fonts.get(resource_name) {
                     self.text_state.current_font = Some(font_info.clone());
+                    self.text_state.current_cmap = self.cmaps.get(resource_name).cloned();
                 }
             }
 
@@ -511,5 +687,82 @@ impl TextLine {
             .map(|s| s.text.as_str())
             .collect::<Vec<_>>()
             .join(" ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{AstNode, NodeType};
+    use crate::types::{ObjectId, PdfArray, PdfName, PdfStream};
+
+    #[test]
+    fn extracts_indirect_font_with_tounicode_and_widths() {
+        let cmap = b"begincmap\n/CMapName /Test def\n1 begincodespacerange\n<00> <FF>\nendcodespacerange\n1 beginbfchar\n<41> <0041>\nendbfchar\nendcmap";
+
+        let mut ast = PdfAstGraph::new();
+        let mut font = PdfDictionary::new();
+        font.insert("Subtype", PdfValue::Name(PdfName::new("Type0")));
+        font.insert("BaseFont", PdfValue::Name(PdfName::new("Test")));
+        font.insert("Encoding", PdfValue::Name(PdfName::new("Identity-H")));
+        font.insert(
+            "ToUnicode",
+            PdfValue::Reference(crate::types::PdfReference::new(2, 0)),
+        );
+        font.insert(
+            "DescendantFonts",
+            PdfValue::Array(PdfArray::from(vec![PdfValue::Reference(
+                crate::types::PdfReference::new(3, 0),
+            )])),
+        );
+        ast.add_node(AstNode::new(
+            NodeId::new(1),
+            NodeType::Object(ObjectId::new(1, 0)),
+            PdfValue::Dictionary(font),
+        ));
+
+        let mut cmap_dict = PdfDictionary::new();
+        cmap_dict.insert("Length", PdfValue::Integer(cmap.len() as i64));
+        ast.add_node(AstNode::new(
+            NodeId::new(2),
+            NodeType::Object(ObjectId::new(2, 0)),
+            PdfValue::Stream(PdfStream::new(cmap_dict, cmap.to_vec())),
+        ));
+
+        let mut descendant = PdfDictionary::new();
+        descendant.insert("Subtype", PdfValue::Name(PdfName::new("CIDFontType0")));
+        descendant.insert("DW", PdfValue::Integer(500));
+        descendant.insert(
+            "W",
+            PdfValue::Array(PdfArray::from(vec![
+                PdfValue::Integer(65),
+                PdfValue::Array(PdfArray::from(vec![PdfValue::Integer(600)])),
+            ])),
+        );
+        ast.add_node(AstNode::new(
+            NodeId::new(3),
+            NodeType::Object(ObjectId::new(3, 0)),
+            PdfValue::Dictionary(descendant),
+        ));
+
+        let mut fonts = PdfDictionary::new();
+        fonts.insert(
+            "F1",
+            PdfValue::Reference(crate::types::PdfReference::new(1, 0)),
+        );
+        let mut resources = PdfDictionary::new();
+        resources.insert("Font", PdfValue::Dictionary(fonts));
+
+        let operators = [
+            ContentOperator::BeginText,
+            ContentOperator::SetFont("/F1".to_string(), 10.0),
+            ContentOperator::ShowText(vec![0x41]),
+            ContentOperator::EndText,
+        ];
+        let spans = TextExtractor::new(&ast, &resources).extract_text(&operators);
+
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].text, "A");
+        assert!((spans[0].width - 6.0).abs() < f64::EPSILON);
     }
 }
