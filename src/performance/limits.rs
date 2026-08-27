@@ -369,8 +369,8 @@ impl PerformanceGuard {
     }
 
     pub fn check_file_size(&self, size_bytes: usize) -> Result<(), PerformanceViolation> {
-        let size_mb = size_bytes / (1024 * 1024);
-        if size_mb > self.limits.max_file_size_mb {
+        let size_mb = size_bytes.div_ceil(1024 * 1024);
+        if size_bytes > self.limits.max_file_size_mb.saturating_mul(1024 * 1024) {
             return Err(PerformanceViolation::FileTooLarge(
                 size_mb,
                 self.limits.max_file_size_mb,
@@ -380,8 +380,8 @@ impl PerformanceGuard {
     }
 
     pub fn check_object_size(&self, size_bytes: usize) -> Result<(), PerformanceViolation> {
-        let size_mb = size_bytes / (1024 * 1024);
-        if size_mb > self.limits.max_object_size_mb {
+        let size_mb = size_bytes.div_ceil(1024 * 1024);
+        if size_bytes > self.limits.max_object_size_mb.saturating_mul(1024 * 1024) {
             return Err(PerformanceViolation::ObjectTooLarge(
                 size_mb,
                 self.limits.max_object_size_mb,
@@ -456,14 +456,14 @@ impl PerformanceGuard {
         }
 
         if let Ok(mut usage) = self.memory_usage.lock() {
-            *usage += bytes;
-            let usage_mb = *usage / (1024 * 1024);
-            if usage_mb > self.limits.max_memory_mb {
+            let next_usage = usage.saturating_add(bytes);
+            if next_usage > self.limits.max_memory_mb.saturating_mul(1024 * 1024) {
                 return Err(PerformanceViolation::ExcessiveMemory(
-                    usage_mb,
+                    next_usage.div_ceil(1024 * 1024),
                     self.limits.max_memory_mb,
                 ));
             }
+            *usage = next_usage;
         }
         Ok(())
     }
@@ -661,6 +661,36 @@ mod tests {
 
         thread::sleep(Duration::from_millis(20));
         assert!(guard.check_parse_timeout().is_err());
+    }
+
+    #[test]
+    fn byte_limits_reject_partial_megabytes() {
+        let limits = PerformanceLimits {
+            max_file_size_mb: 1,
+            max_object_size_mb: 1,
+            ..Default::default()
+        };
+        let guard = PerformanceGuard::new(limits, "test");
+        let one_mb = 1024 * 1024;
+
+        assert!(guard.check_file_size(one_mb).is_ok());
+        assert!(guard.check_file_size(one_mb + 1).is_err());
+        assert!(guard.check_object_size(one_mb).is_ok());
+        assert!(guard.check_object_size(one_mb + 1).is_err());
+    }
+
+    #[test]
+    fn rejected_memory_allocation_is_not_recorded() {
+        let limits = PerformanceLimits {
+            max_memory_mb: 1,
+            ..Default::default()
+        };
+        let guard = PerformanceGuard::new(limits, "test");
+        let one_mb = 1024 * 1024;
+
+        guard.track_memory_allocation(one_mb).unwrap();
+        assert!(guard.track_memory_allocation(1).is_err());
+        assert_eq!(guard.get_stats().memory_usage_mb, 1);
     }
 
     #[test]

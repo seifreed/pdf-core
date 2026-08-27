@@ -88,6 +88,9 @@ validacion y smoke test para documentos PDF 2.0.
 Los trailers asociados a tablas xref tambien se decodifican con el presupuesto
 compartido, y la ruta documental rechaza entradas residuales antes de
 `trailer`, con regresiones dedicadas.
+`PerformanceGuard` compara ahora los limites de fichero, objeto y memoria en
+bytes exactos, rechaza `1 MiB + 1 byte` con un limite de `1 MiB` y no registra
+asignaciones de memoria rechazadas.
 
 Pendientes actuales, en orden practico:
 
