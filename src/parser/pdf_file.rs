@@ -2220,7 +2220,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                         }
                     }
 
-                    if let Some(kids_value) = pages_dict.get("Kids") {
+                    if let Some(kids_value) = pages_dict.get("Kids").cloned() {
+                        let kids_value = match kids_value {
+                            PdfValue::Reference(reference) => self.load_object(&reference.id())?,
+                            value => value,
+                        };
                         match kids_value {
                             PdfValue::Array(kids) => {
                                 for kid in kids.iter() {

@@ -288,6 +288,14 @@ mod integration_tests {
     }
 
     #[test]
+    fn indirect_page_tree_kids_are_resolved() {
+        let document = PdfParser::strict()
+            .parse_bytes(&create_pdf_with_indirect_page_tree_kids())
+            .expect("strict mode should resolve an indirect /Kids array");
+        assert_eq!(document.ast.find_nodes_by_type(NodeType::Page).len(), 1);
+    }
+
+    #[test]
     fn invalid_catalog_pages_root_is_strict_error_or_tolerant_diagnostic() {
         let pdf = create_pdf_with_invalid_catalog_pages_root();
 
@@ -741,6 +749,31 @@ startxref
         }
         pdf.extend_from_slice(
             format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_indirect_page_tree_kids() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids 4 0 R /Count 1 >>\nendobj\n".as_slice(),
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>\nendobj\n".as_slice(),
+            b"4 0 obj\n[3 0 R]\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 5\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
                 .as_bytes(),
         );
         pdf
