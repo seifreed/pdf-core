@@ -129,14 +129,7 @@ fn parse_xfa_packet(
     stream: &PdfStream,
     budget: &ResourceBudget,
 ) -> Result<Option<XfaPacket>, String> {
-    let data = match stream.decode_with_budget(budget) {
-        Ok(decoded) => decoded,
-        Err(_) => stream
-            .raw_data()
-            .filter(|data| budget.consume_decoded(data.len() as u64).is_ok())
-            .map(|data| data.to_vec())
-            .unwrap_or_default(),
-    };
+    let data = stream.decode_with_budget(budget)?;
     parse_xfa_from_bytes_with_budget(name, &data, budget)
 }
 

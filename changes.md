@@ -122,6 +122,9 @@ Los fallos de decodificación o XML de XMP ya no se silencian en `Strict`;
 `Tolerant` los registra como `xmp_decode`/`xmp_parse` y conserva el stream.
 La API `XmpMetadata::parse_from_stream_with_budget` cobra el buffer de bytes
 antes de convertirlo a texto, evitando una materialización fuera del límite.
+XFA ya no interpreta como XML raw un stream cuya decodificación de filtros
+falló; el error se propaga al modo estricto y se registra mediante la ruta
+tolerante de diagnóstico.
 El parser incremental de `streaming` acepta ahora un `ResourceBudget` compartido:
 cobra cabecera, chunks y nodos, reutiliza el presupuesto al parsear objetos y
 propaga los excesos en lugar de tratarlos como chunks malformados recuperables.
