@@ -417,6 +417,15 @@ mod parser_tests {
     }
 
     #[test]
+    fn object_stream_offsets_respect_entry_budget() {
+        use object_parser::parse_object_stream_offsets_with_budget;
+        use pdf_ast::performance::ResourceBudget;
+
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 1, 10, 10, 8);
+        assert!(parse_object_stream_offsets_with_budget(b"1 0 2 3 data", 2, 4, &budget).is_err());
+    }
+
+    #[test]
     fn parser_modes_are_explicit() {
         assert_eq!(PdfParser::strict().mode(), ParseMode::Strict);
         assert_eq!(PdfParser::new().mode(), ParseMode::Tolerant);

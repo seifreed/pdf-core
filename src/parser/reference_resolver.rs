@@ -870,7 +870,12 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             return Err("Object stream index out of range".to_string());
         }
 
-        let offsets = object_parser::parse_object_stream_offsets(data, n, first)?;
+        let offsets = object_parser::parse_object_stream_offsets_with_budget(
+            data,
+            n,
+            first,
+            &self.limits.budget,
+        )?;
         let start = offsets[index];
         let next_offset = offsets
             .iter()

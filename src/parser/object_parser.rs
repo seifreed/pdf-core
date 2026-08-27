@@ -1,4 +1,5 @@
 use crate::parser::lexer::*;
+use crate::performance::ResourceBudget;
 use crate::types::*;
 use nom::{
     branch::alt,
@@ -343,8 +344,20 @@ pub fn parse_object_stream_offsets(
     object_count: usize,
     first: usize,
 ) -> Result<Vec<usize>, String> {
+    parse_object_stream_offsets_with_budget(data, object_count, first, &ResourceBudget::default())
+}
+
+pub fn parse_object_stream_offsets_with_budget(
+    data: &[u8],
+    object_count: usize,
+    first: usize,
+    budget: &ResourceBudget,
+) -> Result<Vec<usize>, String> {
     if object_count == 0 || first == 0 {
         return Err("Invalid object stream header".to_string());
+    }
+    if object_count > budget.max_objects {
+        return Err("resource budget exceeded: object stream entry count".to_string());
     }
     let header = data
         .get(..first)
@@ -353,6 +366,7 @@ pub fn parse_object_stream_offsets(
     let mut offsets = Vec::new();
 
     for _ in 0..object_count {
+        budget.consume_object().map_err(|error| error.to_string())?;
         let _object_number = next_decimal(header, &mut cursor)?;
         let relative_offset = next_decimal(header, &mut cursor)?;
         let absolute_offset = first

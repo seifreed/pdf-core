@@ -2378,8 +2378,13 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             return Ok(PdfValue::Null);
         }
 
-        let offsets = object_parser::parse_object_stream_offsets(data, n, first)
-            .map_err(AstError::ParseError)?;
+        let offsets = object_parser::parse_object_stream_offsets_with_budget(
+            data,
+            n,
+            first,
+            &self.limits.budget,
+        )
+        .map_err(AstError::ParseError)?;
 
         // Find the object at the requested index
         let obj_offset = offsets[index];
