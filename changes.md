@@ -94,6 +94,10 @@ regresion combinada de integracion y validacion pasa `51/51` y Clippy estricto.
 `ab1de0d` hace que la regla PDF/UA de idioma resuelva tambien un `/Lang`
 indirecto, evitando marcar como ausente un idioma valido; su regresion pasa
 `23/23` en la suite de validacion y Clippy estricto.
+`4178a95` hace que la regla PDF/UA de texto alternativo exija una cadena no
+vacia ni compuesta solo por espacios, y resuelva valores indirectos; su
+regresion pasa `24/24` en validacion, `53/53` en integracion y validacion
+combinadas, y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
