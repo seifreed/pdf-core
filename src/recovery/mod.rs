@@ -8,6 +8,7 @@ use crate::ast::{AstError, AstNode, AstResult, NodeId, NodeMetadata, NodeType, P
 use crate::parser::PdfParser;
 use crate::performance::ResourceBudget;
 use crate::types::PdfValue;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Cursor;
 use std::time::{Duration, Instant};
@@ -226,14 +227,14 @@ impl RecoveryParser {
     ) -> AstResult<(PdfDocument, RecoveryReport)> {
         let mut document = PdfDocument::new(crate::ast::PdfVersion { major: 1, minor: 4 });
         let mut recovery_actions = Vec::new();
-        let mut current_data = data.to_vec();
+        let mut current_data: Cow<'_, [u8]> = Cow::Borrowed(data);
 
         // Apply recovery strategies in order of preference
         for strategy in &self.recovery_strategies {
             self.check_timeout(start_time)?;
             let context = RecoveryContext {
                 original_data: data,
-                current_data: &current_data,
+                current_data: current_data.as_ref(),
                 document: &document,
                 config: &self.recovery_config,
                 error_log: &self.error_log,
@@ -250,7 +251,9 @@ impl RecoveryParser {
                     });
 
                     if result.data_changed {
-                        current_data = result.modified_data.unwrap_or(current_data);
+                        if let Some(modified_data) = result.modified_data {
+                            current_data = Cow::Owned(modified_data);
+                        }
                     }
 
                     if result.document_changed {
@@ -275,12 +278,15 @@ impl RecoveryParser {
 
         // Final parsing attempt with recovered data
         self.check_timeout(start_time)?;
-        let final_document = match self.base_parser.parse(&mut Cursor::new(&current_data)) {
+        let final_document = match self
+            .base_parser
+            .parse(&mut Cursor::new(current_data.as_ref()))
+        {
             Ok(doc) => doc,
             Err(error) if is_resource_limit_error(&error) => return Err(error),
             Err(_) => {
                 // If all recovery failed, return best-effort document
-                self.create_best_effort_document(&current_data)?
+                self.create_best_effort_document(current_data.as_ref())?
             }
         };
 

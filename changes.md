@@ -163,6 +163,8 @@ que `PerformanceLimits` conserve máximos contradictorios.
 `RecoveryParser` acepta el mismo presupuesto y trata los excesos de tamaño,
 memoria o contadores como errores terminales; ya no intenta recuperar ni
 construir un documento best-effort después de cruzar un límite de seguridad.
+La fase de recovery conserva ahora el buffer original prestado hasta que una
+estrategia produce datos modificados, eliminando la copia inicial completa.
 El timeout configurado en `RecoveryConfig` se comprueba antes de cada
 estrategia y antes del parseo final, evitando recuperaciones sin límite
 temporal.
