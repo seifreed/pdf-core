@@ -51,7 +51,7 @@ lzw = "0.10"
 
 # Image filters
 jpeg-decoder = "0.3"
-png = "0.17"
+png = "0.18"
 
 # CCITT fax decoding (for CCITT filter)
 tiff = "0.9"
