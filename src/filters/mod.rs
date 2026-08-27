@@ -567,7 +567,10 @@ fn decode_dct(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterErr
         Ok(_) => Err(FilterError::DecompressionError(
             "JPEG output exceeds limit".to_string(),
         )),
-        Err(jpeg_decoder::Error::Format(_)) => Ok(data.to_vec()),
+        Err(jpeg_decoder::Error::Format(error)) => Err(FilterError::ImageDecodeError(format!(
+            "JPEG format error: {:?}",
+            error
+        ))),
         Err(e) => Err(FilterError::ImageDecodeError(format!(
             "JPEG decode error: {:?}",
             e
@@ -646,5 +649,12 @@ mod tests {
         let error = decode_stream_with_limits(b"uuuuu", &[StreamFilter::ASCII85Decode], 16, 10)
             .expect_err("an ASCII85 tuple must fit in u32");
         assert!(error.to_string().contains("ASCII85 tuple overflow"));
+    }
+
+    #[test]
+    fn rejects_invalid_dct_data_instead_of_returning_raw_bytes() {
+        let error = decode_stream_with_limits(b"not a jpeg", &[StreamFilter::DCTDecode], 1024, 10)
+            .expect_err("invalid DCT data must be reported");
+        assert!(error.to_string().contains("JPEG"));
     }
 }

@@ -104,6 +104,8 @@ propagan en `Strict` en lugar de descartarse silenciosamente; el resolver usa
 la misma validación al cargar object streams, content streams, xref streams y
 perfiles ICC. `DecodeParms` con tipos inválidos también se rechaza en lugar de
 convertirse silenciosamente en parámetros por defecto.
+`DCTDecode` ya no devuelve datos JPEG inválidos como si fueran bytes raw; los
+errores de formato se propagan al límite de decodificación.
 
 Pendientes actuales, en orden practico:
 
