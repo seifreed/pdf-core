@@ -22,15 +22,22 @@ log y las metricas de memoria como artefacto, y ejecuta el corpus externo
 completo. Los workflows de CI y ClusterFuzzLite sobre `44dd805` siguen en
 curso; hasta que terminen no se debe contar esta evidencia como verde.
 
+Avance local adicional: el parser `Strict` rechaza tokens no consumidos en
+`parse_value` y `parse_object`; `PdfAstGraph` y `NameTreeParser` terminan sus
+recorridos aunque el grafo tenga ciclos; y los helpers publicos legacy de
+`PageTreeParser` y `OutputIntentsParser` usan el mismo `ResourceBudget` para
+decodificar perfiles ICC. Cada punto tiene regresion y pasa Clippy estricto.
+
 Pendientes actuales, en orden practico:
 
 * **Evidencia remota:** faltan ejecuciones verdes y repetidas del CI completo,
   corpus/differential, ClusterFuzzLite y los seis smoke tests de bindings. Las
   ejecuciones actuales son CI `33023949387` sobre `926ed37`, bindings
   `33023738374` sobre `1d508a7` y fuzzing `33023545057` sobre `2d2974d`.
-* **Parser endurecido:** falta hacer completamente estrictos los modos de
-  error/recuperacion y demostrar que el `ResourceBudget` cubre toda operacion
-  publica de parseo, resolucion, recorrido, decodificacion y serializacion.
+* **Parser endurecido:** strict y varios recorridos ya tienen guardas, pero
+  falta hacer completamente estrictos los modos de error/recuperacion y
+  demostrar que `ResourceBudget` cubre toda operacion publica de parseo,
+  resolucion, recorrido, decodificacion y serializacion.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa, fusionar las validaciones y
