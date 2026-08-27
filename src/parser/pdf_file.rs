@@ -1549,6 +1549,9 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             PdfValue::Reference(open_action_ref) => {
                 let action_value = self.load_object(&open_action_ref.id())?;
                 let action_id = self.add_to_ast(action_value, NodeType::Action)?;
+                self.document
+                    .ast
+                    .register_object_node(open_action_ref.id(), action_id);
                 self.add_edge(catalog_id, action_id, crate::ast::EdgeType::Reference)?;
             }
             PdfValue::Dictionary(_) => {
@@ -1572,6 +1575,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             PdfValue::Dictionary(d) => d,
             _ => return Ok(()),
         };
+        let names_id = self.add_to_ast(names_value.clone(), NodeType::NameTree)?;
+        self.document
+            .ast
+            .register_object_node(names_ref.id(), names_id);
 
         if let Some(embedded_ref) = names_dict
             .get("EmbeddedFiles")
@@ -1599,6 +1606,9 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             None => return Ok(()),
         };
 
+        let acroform_object_id = acroform_value
+            .as_reference()
+            .map(|reference| reference.id());
         let acroform_loaded = match acroform_value {
             PdfValue::Reference(acro_ref) => Some(self.load_object(&acro_ref.id())?),
             PdfValue::Dictionary(_) => Some(acroform_value.clone()),
@@ -1619,6 +1629,9 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         let acro_id =
             self.add_to_ast(PdfValue::Dictionary(acro_dict.clone()), NodeType::AcroForm)?;
+        if let Some(object_id) = acroform_object_id {
+            self.document.ast.register_object_node(object_id, acro_id);
+        }
         self.add_edge(catalog_id, acro_id, crate::ast::EdgeType::Child)?;
 
         self.parse_form_fields(&acro_dict, acro_id)?;
@@ -2976,12 +2989,20 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         metadata_value: &PdfValue,
         catalog_id: crate::ast::NodeId,
     ) -> AstResult<()> {
+        let metadata_object_id = metadata_value
+            .as_reference()
+            .map(|reference| reference.id());
         let stream = match self.resolve_metadata_stream(metadata_value)? {
             Some(s) => s,
             None => return Ok(()),
         };
 
         let metadata_id = self.create_xmp_stream_node(&stream, catalog_id)?;
+        if let Some(object_id) = metadata_object_id {
+            self.document
+                .ast
+                .register_object_node(object_id, metadata_id);
+        }
 
         let decoded = match self.decode_xmp_stream(&stream) {
             Ok(data) => data,

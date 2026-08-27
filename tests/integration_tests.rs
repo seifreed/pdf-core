@@ -400,6 +400,25 @@ mod integration_tests {
         );
     }
 
+    #[test]
+    fn indirect_catalog_entries_remain_resolvable_after_parsing() {
+        let document = PdfParser::new()
+            .parse_bytes(&create_pdf_with_indirect_catalog_entries())
+            .expect("indirect catalog entries should parse");
+        let validator = pdf_ast::validation::pdfa::PdfA1bValidator::new().with_strict_mode(false);
+        let report = validator.validate(&document);
+
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.code == "PDF_A_JAVASCRIPT"));
+        assert!(report.issues.iter().any(|issue| issue.code == "PDF_A_XFA"));
+        assert!(!report
+            .issues
+            .iter()
+            .any(|issue| issue.code == "PDF_A_XMP_METADATA"));
+    }
+
     /// Test malformed PDF handling
     #[test]
     fn test_malformed_pdf_handling() {
@@ -530,6 +549,33 @@ startxref
         }
         pdf.extend_from_slice(
             format!("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_indirect_catalog_entries() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R /OpenAction 4 0 R /AcroForm 5 0 R /Metadata 6 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".as_slice(),
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>\nendobj\n".as_slice(),
+            b"4 0 obj\n<< /S /JavaScript /JS (app.alert) >>\nendobj\n".as_slice(),
+            b"5 0 obj\n<< /XFA (xfa) >>\nendobj\n".as_slice(),
+            b"6 0 obj\n<< /Type /Metadata /Subtype /XML /Length 13 >>\nstream\n<x:xmpmeta/>\nendstream\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 7\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
                 .as_bytes(),
         );
         pdf
