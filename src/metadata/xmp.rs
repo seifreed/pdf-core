@@ -14,6 +14,21 @@ pub fn parse_xmp_with_budget(xml: &str, budget: &ResourceBudget) -> Result<XmpMe
         .consume_input(xml.len() as u64)
         .map_err(|error| error.to_string())?;
 
+    parse_xmp_unbudgeted(xml)
+}
+
+pub(crate) fn parse_xmp_bytes_with_budget(
+    data: &[u8],
+    budget: &ResourceBudget,
+) -> Result<XmpMetadata, String> {
+    budget
+        .consume_input(data.len() as u64)
+        .map_err(|error| error.to_string())?;
+    let xml = String::from_utf8_lossy(data);
+    parse_xmp_unbudgeted(&xml)
+}
+
+fn parse_xmp_unbudgeted(xml: &str) -> Result<XmpMetadata, String> {
     let mut metadata = XmpMetadata::new();
     metadata.raw_xml = xml.to_string();
 
@@ -2581,5 +2596,13 @@ mod tests {
 
         let namespace_info = metadata.get_namespace_info();
         assert!(namespace_info.len() >= 2);
+    }
+
+    #[test]
+    fn byte_parser_rejects_input_before_materializing_xml() {
+        let budget = ResourceBudget::new(1, 1024, 1024, 10, 10, 10, 10, 8);
+        let error = super::parse_xmp_bytes_with_budget(b"<x", &budget)
+            .expect_err("input budget must be checked before XML parsing");
+        assert!(error.contains("InputBytes"));
     }
 }

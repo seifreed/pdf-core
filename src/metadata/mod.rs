@@ -64,8 +64,7 @@ impl XmpMetadata {
         data: &[u8],
         budget: &ResourceBudget,
     ) -> Result<Self, String> {
-        let xml_string = String::from_utf8_lossy(data).to_string();
-        xmp::parse_xmp_with_budget(&xml_string, budget)
+        xmp::parse_xmp_bytes_with_budget(data, budget)
     }
 
     pub fn get_property(&self, namespace: &str, property: &str) -> Option<&String> {
