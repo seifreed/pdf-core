@@ -2357,6 +2357,31 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             )?;
         }
 
+        if *node_type == NodeType::Pages {
+            let count = match pages_dict.get("Count") {
+                Some(PdfValue::Reference(reference)) => Some(self.load_object(&reference.id())?),
+                Some(value) => Some(value.clone()),
+                None => None,
+            };
+            if let Some(count) = count {
+                if !matches!(count, PdfValue::Integer(value) if value >= 0) {
+                    let message = "Page tree /Pages node /Count must be a non-negative integer";
+                    if !self.tolerant {
+                        return Err(AstError::ParseError(message.to_string()));
+                    }
+                    self.record_diagnostic(
+                        Some(obj_id),
+                        None,
+                        "invalid_page_tree_count",
+                        "continued_with_invalid_page_tree_count",
+                        1.0,
+                        0,
+                        message,
+                    )?;
+                }
+            }
+        }
+
         if *node_type == NodeType::Page
             && !matches!(pages_dict.get("Parent"), Some(PdfValue::Reference(_)))
         {

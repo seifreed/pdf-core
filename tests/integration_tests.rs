@@ -248,6 +248,26 @@ mod integration_tests {
     }
 
     #[test]
+    fn page_tree_count_must_be_a_non_negative_integer() {
+        let pdf = create_pdf_with_invalid_page_tree_count();
+
+        let error = PdfParser::strict()
+            .parse_bytes(&pdf)
+            .expect_err("strict mode must reject an invalid /Count");
+        assert!(error
+            .to_string()
+            .contains("/Count must be a non-negative integer"));
+
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant mode should retain a diagnostic");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "invalid_page_tree_count"));
+    }
+
+    #[test]
     fn page_parent_must_be_an_indirect_reference() {
         let pdf = create_pdf_with_invalid_page_parent();
 
@@ -699,6 +719,29 @@ startxref
         let objects = [
             b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
             b"2 0 obj\n<< /Type /Pages >>\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 3\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_invalid_page_tree_count() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids [] /Count /one >>\nendobj\n".as_slice(),
         ];
         let mut offsets = vec![0usize];
         for object in objects {
