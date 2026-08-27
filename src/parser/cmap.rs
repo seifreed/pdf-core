@@ -1,6 +1,6 @@
 use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
 use crate::parser::reference_resolver::ObjectNodeMap;
-use crate::performance::ResourceBudget;
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::types::{PdfStream, PdfValue};
 use std::collections::HashMap;
 
@@ -562,6 +562,18 @@ impl<'a> CMapParser<'a> {
 
     /// Decode a text byte sequence using the CMap code-space widths.
     pub fn decode_bytes(&self, cmap: &CMap, text: &[u8]) -> String {
+        self.decode_bytes_with_budget(cmap, text, &ResourceBudget::default())
+            .unwrap_or_default()
+    }
+
+    /// Decode a text byte sequence while charging input and decoded output.
+    pub fn decode_bytes_with_budget(
+        &self,
+        cmap: &CMap,
+        text: &[u8],
+        budget: &ResourceBudget,
+    ) -> Result<String, ResourceBudgetError> {
+        budget.consume_input(text.len() as u64)?;
         let mut lengths: Vec<usize> = cmap
             .code_space_ranges
             .iter()
@@ -602,14 +614,17 @@ impl<'a> CMapParser<'a> {
             }
 
             if let Some(unicode) = decoded {
+                budget.consume_decoded(unicode.len() as u64)?;
                 result.push_str(&unicode);
                 offset += consumed;
             } else {
-                result.push(text[offset] as char);
+                let character = text[offset] as char;
+                budget.consume_decoded(character.len_utf8() as u64)?;
+                result.push(character);
                 offset += 1;
             }
         }
-        result
+        Ok(result)
     }
 
     fn in_range(&self, code: &[u8], start: &[u8], end: &[u8]) -> bool {
@@ -706,6 +721,7 @@ mod tests {
     use super::{CMapMappings, CMapParser};
     use crate::ast::PdfAstGraph;
     use crate::parser::reference_resolver::ObjectNodeMap;
+    use crate::performance::ResourceBudgetError;
     use crate::types::{PdfDictionary, PdfStream};
 
     #[test]
@@ -729,6 +745,33 @@ mod tests {
         let cmap = parser.parse_cmap_data(data).expect("CMap should parse");
 
         assert_eq!(parser.decode_bytes(&cmap, b"\x01\x02"), "AB");
+    }
+
+    #[test]
+    fn cmap_decode_charges_input_and_output() {
+        let data = b"/CMapName /Test def\n1 begincodespacerange\n<01> <01>\nendcodespacerange\n1 beginbfchar\n<01> <0041>\nendbfchar";
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let parser = CMapParser::new(&mut ast, &resolver);
+        let cmap = parser.parse_cmap_data(data).expect("CMap should parse");
+
+        let input_budget =
+            crate::performance::ResourceBudget::new(0, 1024, 1024, 100, 10, 10, 10, 10);
+        assert_eq!(
+            parser
+                .decode_bytes_with_budget(&cmap, b"\x01", &input_budget)
+                .expect_err("text input must respect the budget"),
+            ResourceBudgetError::InputBytes
+        );
+
+        let output_budget =
+            crate::performance::ResourceBudget::new(1024, 0, 1024, 100, 10, 10, 10, 10);
+        assert_eq!(
+            parser
+                .decode_bytes_with_budget(&cmap, b"\x01", &output_budget)
+                .expect_err("decoded output must respect the budget"),
+            ResourceBudgetError::DecodedBytes
+        );
     }
 
     #[test]
