@@ -77,6 +77,11 @@ hojas `/Page`; `b6a14f0` expone consultas de paginas con `ResourceBudget`; y
 PDF/A de JavaScript, XFA y metadata. Todos tienen regresiones y pasan Clippy.
 `e0339df` conserva tambien esos `ObjectId` al crear los nodos indirectos reales
 de `OpenAction`, `Names`, `AcroForm` y `Metadata` durante el parseo.
+`1e378c9` rechaza ademas que el objeto apuntado por `/Catalog /Pages` sea una
+hoja `/Page` en vez del nodo raiz `/Pages`; `84ebab3` mantiene el fixture de
+ciclos con la estructura minima necesaria. Las nuevas regresiones dejan
+`25/25` integraciones y `21/21` validaciones locales en verde; el smoke aislado
+de veraPDF pasa `1/1` con el corpus local.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
