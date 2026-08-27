@@ -70,7 +70,10 @@ impl<'a> StructTreeParser<'a> {
     fn parse_role_map(&self, dict: &PdfDictionary) -> HashMap<String, String> {
         let mut role_map = HashMap::new();
 
-        if let Some(PdfValue::Dictionary(rm)) = dict.get("RoleMap") {
+        if let Some(rm) = dict
+            .get("RoleMap")
+            .and_then(|value| self.resolve_dict(value))
+        {
             for (key, value) in rm.iter() {
                 if let PdfValue::Name(mapped) = value {
                     role_map.insert(key.to_string(), mapped.without_slash().to_string());
@@ -102,6 +105,19 @@ impl<'a> StructTreeParser<'a> {
                 .get_node_id(&reference.id())
                 .and_then(|node_id| self.ast.get_node(node_id))
                 .and_then(|node| node.value.as_array())
+                .cloned(),
+            _ => None,
+        }
+    }
+
+    fn resolve_dict(&self, value: &PdfValue) -> Option<PdfDictionary> {
+        match value {
+            PdfValue::Dictionary(dict) => Some(dict.clone()),
+            PdfValue::Reference(reference) => self
+                .resolver
+                .get_node_id(&reference.id())
+                .and_then(|node_id| self.ast.get_node(node_id))
+                .and_then(|node| node.value.as_dict())
                 .cloned(),
             _ => None,
         }
@@ -756,17 +772,27 @@ mod tests {
             NodeType::Object(ObjectId::new(4, 0)),
             PdfValue::String(crate::types::PdfString::new_literal(b"actual")),
         );
+        let role_map_id = ast.create_node(
+            NodeType::Object(ObjectId::new(5, 0)),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Figure", PdfValue::Name(PdfName::new("Figure")));
+                dict
+            }),
+        );
         let mut resolver = ObjectNodeMap::new();
         resolver.insert(ObjectId::new(1, 0), element_id);
         resolver.insert(ObjectId::new(2, 0), language_id);
         resolver.insert(ObjectId::new(3, 0), alt_id);
         resolver.insert(ObjectId::new(4, 0), actual_id);
+        resolver.insert(ObjectId::new(5, 0), role_map_id);
 
         let mut root_dict = PdfDictionary::new();
         root_dict.insert("ParentTree", PdfValue::Dictionary(PdfDictionary::new()));
         root_dict.insert("K", PdfValue::Reference(PdfReference::new(1, 0)));
+        root_dict.insert("RoleMap", PdfValue::Reference(PdfReference::new(5, 0)));
         let mut parser = StructTreeParser::new(&mut ast, &resolver);
-        parser
+        let tree = parser
             .parse_struct_tree_root(&root_dict)
             .expect("structure tree should parse");
 
@@ -791,6 +817,10 @@ mod tests {
                 .get_property("actual_text")
                 .map(String::as_str),
             Some("actual")
+        );
+        assert_eq!(
+            tree.role_map.get("/Figure").map(String::as_str),
+            Some("Figure")
         );
     }
 
