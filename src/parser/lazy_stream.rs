@@ -277,10 +277,10 @@ impl LazyStream {
     /// Convert to regular PdfStream by loading data
     pub fn to_stream(&self) -> Result<PdfStream, String> {
         let data = self.load()?;
-        Ok(PdfStream {
-            dict: self.dict.clone(),
-            data: crate::types::stream::StreamData::Decoded(data),
-        })
+        Ok(PdfStream::from_data(
+            self.dict.clone(),
+            crate::types::stream::StreamData::Decoded(data),
+        ))
     }
 }
 

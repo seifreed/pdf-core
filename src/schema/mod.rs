@@ -2,7 +2,6 @@ use crate::ast::{NodeId, NodeType, PdfAstGraph};
 use crate::serialization::{edge_type_name, node_type_name};
 use crate::types::{
     ObjectId, PdfArray, PdfDictionary, PdfName, PdfReference, PdfStream, PdfString, PdfValue,
-    StreamData,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -367,10 +366,7 @@ fn parse_stream_value(value: &Value) -> Result<PdfValue, String> {
         }
     }
 
-    let stream = PdfStream {
-        dict,
-        data: StreamData::Raw(Vec::new()),
-    };
+    let stream = PdfStream::new(dict, Vec::new());
     Ok(PdfValue::Stream(stream))
 }
 

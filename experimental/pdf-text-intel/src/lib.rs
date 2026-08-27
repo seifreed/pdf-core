@@ -405,7 +405,7 @@ mod tests {
     #[test]
     fn extracts_text_from_a_real_content_stream() {
         use pdf_ast::ast::NodeType;
-        use pdf_ast::types::{ObjectId, PdfName, PdfReference, PdfStream, StreamData};
+        use pdf_ast::types::{ObjectId, PdfName, PdfReference, PdfStream};
 
         let mut document = PdfDocument::new(PdfVersion::new(1, 7));
         let mut font = PdfDictionary::new();
@@ -424,10 +424,10 @@ mod tests {
         page.insert("Resources", PdfValue::Dictionary(resources));
         page.insert(
             "Contents",
-            PdfValue::Stream(PdfStream {
-                dict: PdfDictionary::new(),
-                data: StreamData::Raw(b"BT /F1 12 Tf 10 10 Td (Hello) Tj ET".to_vec()),
-            }),
+            PdfValue::Stream(PdfStream::new(
+                PdfDictionary::new(),
+                b"BT /F1 12 Tf 10 10 Td (Hello) Tj ET".to_vec(),
+            )),
         );
         document
             .ast

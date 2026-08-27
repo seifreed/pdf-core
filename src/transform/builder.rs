@@ -120,14 +120,14 @@ impl DocumentBuilder {
     pub fn add_content_stream(&mut self, content: &str) -> &mut Self {
         if let Some(page_id) = self.current_page {
             let content_data = content.as_bytes().to_vec();
-            let stream = crate::types::PdfStream {
-                dict: {
+            let stream = crate::types::PdfStream::new(
+                {
                     let mut dict = PdfDictionary::new();
                     dict.insert("Length", PdfValue::Integer(content_data.len() as i64));
                     dict
                 },
-                data: crate::types::StreamData::Raw(content_data),
-            };
+                content_data,
+            );
 
             let stream_id = self
                 .graph

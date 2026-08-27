@@ -343,6 +343,16 @@ pub enum SerializableValue {
         lazy: Option<crate::types::StreamReference>,
         #[serde(default)]
         decoded: bool,
+        #[serde(default)]
+        original_bytes: Option<Vec<u8>>,
+        #[serde(default)]
+        declared_length: Option<u64>,
+        #[serde(default)]
+        observed_length: Option<usize>,
+        #[serde(default)]
+        parse_errors: Vec<String>,
+        #[serde(default)]
+        recovery_actions: Vec<String>,
     },
     Reference {
         object_id: u32,
@@ -489,6 +499,11 @@ impl GraphSerializer {
                         _ => None,
                     },
                     decoded: matches!(stream.data, crate::types::StreamData::Decoded(_)),
+                    original_bytes: stream.lossless.original_bytes.clone(),
+                    declared_length: stream.lossless.declared_length,
+                    observed_length: Some(stream.lossless.observed_length),
+                    parse_errors: stream.lossless.parse_errors.clone(),
+                    recovery_actions: stream.lossless.recovery_actions.clone(),
                 }
             }
             PdfValue::Reference(r) => SerializableValue::Reference {
@@ -738,24 +753,31 @@ impl GraphDeserializer {
                 data,
                 lazy,
                 decoded,
+                original_bytes,
+                declared_length,
+                observed_length,
+                parse_errors,
+                recovery_actions,
             } => {
                 let mut dict = crate::types::PdfDictionary::new();
                 for (key, val) in dictionary {
                     dict.insert(key.as_str(), Self::deserialize_value(val)?);
                 }
-                let stream = if let Some(reference) = lazy {
+                let mut stream = if let Some(reference) = lazy {
                     crate::types::PdfStream::new_lazy(dict, reference.clone())
                 } else if *decoded {
-                    crate::types::PdfStream {
+                    crate::types::PdfStream::from_data(
                         dict,
-                        data: crate::types::StreamData::Decoded(data.clone()),
-                    }
+                        crate::types::StreamData::Decoded(data.clone()),
+                    )
                 } else {
-                    crate::types::PdfStream {
-                        dict,
-                        data: crate::types::StreamData::Raw(data.clone()),
-                    }
+                    crate::types::PdfStream::new(dict, data.clone())
                 };
+                stream.lossless.original_bytes = original_bytes.clone();
+                stream.lossless.declared_length = *declared_length;
+                stream.lossless.observed_length = observed_length.unwrap_or(stream.data.len());
+                stream.lossless.parse_errors = parse_errors.clone();
+                stream.lossless.recovery_actions = recovery_actions.clone();
                 Ok(PdfValue::Stream(stream))
             }
             SerializableValue::Reference {
@@ -1378,9 +1400,16 @@ mod tests {
         dictionary.insert("Length", PdfValue::Integer(3));
         let stream_id = ast.create_node(
             NodeType::ContentStream,
-            PdfValue::Stream(crate::types::PdfStream {
-                dict: dictionary,
-                data: crate::types::StreamData::Decoded(b"abc".to_vec()),
+            PdfValue::Stream({
+                let mut stream = crate::types::PdfStream::from_data(
+                    dictionary,
+                    crate::types::StreamData::Decoded(b"abc".to_vec()),
+                );
+                stream.lossless.original_bytes = Some(b"raw".to_vec());
+                stream.lossless.observed_length = 3;
+                stream.lossless.parse_errors = vec!["decode failed".to_string()];
+                stream.lossless.recovery_actions = vec!["stream_decode_skipped".to_string()];
+                stream
             }),
         );
         ast.set_root(stream_id);
@@ -1400,6 +1429,13 @@ mod tests {
             stream.data,
             crate::types::StreamData::Decoded(ref data) if data == b"abc"
         ));
+        assert_eq!(stream.original_data(), Some(b"raw".as_slice()));
+        assert_eq!(stream.lossless.observed_length, 3);
+        assert_eq!(stream.lossless.parse_errors, vec!["decode failed"]);
+        assert_eq!(
+            stream.lossless.recovery_actions,
+            vec!["stream_decode_skipped"]
+        );
     }
 
     #[test]

@@ -1042,7 +1042,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         if let Some(raw) = stream.raw_data() {
             let filters = stream.get_filters_with_params();
             if let Ok(decoded) = decode_stream_with_budget(raw, &filters, &self.limits.budget) {
-                stream.data = StreamData::Decoded(decoded);
+                stream.set_decoded(decoded);
             }
         }
         dict.insert("JBIG2Globals", PdfValue::Stream(stream));
@@ -1157,6 +1157,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
     ) {
         if let Some(node) = ast.get_node_mut(stream_node_id) {
             let offset = node.metadata.offset;
+            if let PdfValue::Stream(stream) = &mut node.value {
+                stream.record_parse_error(message.clone());
+                stream.record_recovery(recovery);
+            }
             node.metadata.errors.push(crate::ast::ParseError {
                 code,
                 message: message.clone(),

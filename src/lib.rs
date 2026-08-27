@@ -95,6 +95,7 @@ pub use serialization::{GraphDeserializer, SerializableGraph};
 pub use traversal::{AstWalker, GraphWalker, TimelineWalker};
 pub use types::{
     ObjectId, PdfArray, PdfDictionary, PdfName, PdfReference, PdfStream, PdfString, PdfValue,
+    StreamLosslessState,
 };
 pub use visitor::{QueryBuilder, Visitor, VisitorAction};
 

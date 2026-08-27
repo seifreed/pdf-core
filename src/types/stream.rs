@@ -7,6 +7,20 @@ use std::fmt;
 pub struct PdfStream {
     pub dict: PdfDictionary,
     pub data: StreamData,
+    pub lossless: StreamLosslessState,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct StreamLosslessState {
+    #[serde(default)]
+    pub original_bytes: Option<Vec<u8>>,
+    #[serde(default)]
+    pub declared_length: Option<u64>,
+    pub observed_length: usize,
+    #[serde(default)]
+    pub parse_errors: Vec<String>,
+    #[serde(default)]
+    pub recovery_actions: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -147,17 +161,63 @@ pub enum CryptFilterParams {
 
 impl PdfStream {
     pub fn new(dict: PdfDictionary, data: Vec<u8>) -> Self {
-        PdfStream {
-            dict,
-            data: StreamData::Raw(data),
-        }
+        Self::from_data(dict, StreamData::Raw(data))
     }
 
     pub fn new_lazy(dict: PdfDictionary, reference: StreamReference) -> Self {
+        Self::from_data(dict, StreamData::Lazy(reference))
+    }
+
+    pub fn from_data(dict: PdfDictionary, data: StreamData) -> Self {
+        let original_bytes = match &data {
+            StreamData::Raw(bytes) => Some(bytes.clone()),
+            _ => None,
+        };
+        let observed_length = match &data {
+            StreamData::Lazy(_) => 0,
+            _ => data.len(),
+        };
+        let declared_length = match dict.get("Length") {
+            Some(PdfValue::Integer(length)) if *length >= 0 => u64::try_from(*length).ok(),
+            _ => None,
+        };
         PdfStream {
             dict,
-            data: StreamData::Lazy(reference),
+            data,
+            lossless: StreamLosslessState {
+                original_bytes,
+                declared_length,
+                observed_length,
+                ..StreamLosslessState::default()
+            },
         }
+    }
+
+    pub fn original_data(&self) -> Option<&[u8]> {
+        self.lossless.original_bytes.as_deref()
+    }
+
+    pub fn decode_state(&self) -> &'static str {
+        match self.data {
+            StreamData::Raw(_) => "raw",
+            StreamData::Decoded(_) => "decoded",
+            StreamData::Lazy(_) => "lazy",
+        }
+    }
+
+    pub fn set_decoded(&mut self, data: Vec<u8>) {
+        if self.lossless.original_bytes.is_none() {
+            self.lossless.original_bytes = self.raw_data().map(ToOwned::to_owned);
+        }
+        self.data = StreamData::Decoded(data);
+    }
+
+    pub fn record_parse_error(&mut self, message: impl Into<String>) {
+        self.lossless.parse_errors.push(message.into());
+    }
+
+    pub fn record_recovery(&mut self, action: impl Into<String>) {
+        self.lossless.recovery_actions.push(action.into());
     }
 
     pub fn raw_data(&self) -> Option<&[u8]> {
@@ -452,5 +512,25 @@ mod tests {
         assert!(stream.get(0).is_none());
         assert_eq!(StreamData::Raw(vec![7]).get(0), Some(&7));
         assert!(StreamData::Raw(vec![7]).get(1).is_none());
+    }
+
+    #[test]
+    fn decoded_stream_retains_lossless_state() {
+        let mut dict = PdfDictionary::new();
+        dict.insert("Length", PdfValue::Integer(4));
+        let mut stream = PdfStream::new(dict, b"raw!".to_vec());
+        stream.set_decoded(b"decoded".to_vec());
+        stream.record_parse_error("malformed operator");
+        stream.record_recovery("content_stream_skipped");
+
+        assert_eq!(stream.original_data(), Some(b"raw!".as_slice()));
+        assert_eq!(stream.lossless.declared_length, Some(4));
+        assert_eq!(stream.lossless.observed_length, 4);
+        assert_eq!(stream.decode_state(), "decoded");
+        assert_eq!(stream.lossless.parse_errors, vec!["malformed operator"]);
+        assert_eq!(
+            stream.lossless.recovery_actions,
+            vec!["content_stream_skipped"]
+        );
     }
 }

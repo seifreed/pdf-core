@@ -279,7 +279,7 @@ mod parser_tests {
     #[test]
     fn test_linearization_parsing() {
         use pdf_ast::parser::xref::parse_linearization_dict;
-        use pdf_ast::types::{PdfDictionary, PdfStream, StreamData};
+        use pdf_ast::types::{PdfDictionary, PdfStream};
 
         let mut dict = PdfDictionary::new();
         dict.insert("Linearized", PdfValue::Real(1.0));
@@ -296,10 +296,7 @@ mod parser_tests {
         dict.insert("E", PdfValue::Integer(800));
         dict.insert("T", PdfValue::Integer(200));
 
-        let stream = PdfStream {
-            dict,
-            data: StreamData::Raw(vec![]),
-        };
+        let stream = PdfStream::new(dict, vec![]);
 
         let result = parse_linearization_dict(&stream);
         assert!(result.is_ok());
