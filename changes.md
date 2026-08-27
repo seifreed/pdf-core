@@ -130,6 +130,8 @@ cobran sus buffers de entrada, `JBIG2Globals` y la salida decodificada antes de
 devolverla; las APIs legacy conservan límites por defecto.
 `CcittDecoder::decode_with_budget` aplica el presupuesto compartido junto con
 el límite configurado del decoder y cobra la entrada y la imagen resultante.
+`PredictorDecoder::decode_with_budget` cobra la entrada y la salida TIFF/PNG y
+rechaza antes de decodificar cuando la salida máxima posible no cabe.
 El parser documental de xref streams rechaza ahora en `Strict` tipos de
 entrada desconocidos en lugar de convertirlos silenciosamente en entradas
 libres; `Tolerant` conserva la recuperación anterior.
