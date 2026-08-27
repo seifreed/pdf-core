@@ -60,8 +60,10 @@ try {
     require(path.join(appDir, "node_modules", packageName, "package.json")).name,
     packageName,
   );
-  const installed = require(path.join(appDir, "node_modules", "pdf-ast"));
-  const document = installed.parseDocument(Buffer.from(`%PDF-1.4
+  const smokeScript = path.join(appDir, "smoke.js");
+  fs.writeFileSync(smokeScript, `const assert = require("node:assert/strict");
+const installed = require("pdf-ast");
+const document = installed.parseDocument(Buffer.from(\`%PDF-1.4
 1 0 obj
 << /Type /Catalog >>
 endobj
@@ -74,8 +76,10 @@ trailer
 startxref
 58
 %%EOF
-`));
-  assert.equal(typeof document.getStatistics, "function");
+\`));
+assert.equal(typeof document.getStatistics, "function");
+`);
+  run(process.execPath, [smokeScript], appDir);
   console.log("JavaScript packaged install smoke test passed");
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
