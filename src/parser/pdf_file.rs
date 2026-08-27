@@ -1343,33 +1343,92 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn parse_document_structure(&mut self) -> AstResult<()> {
-        // Parse catalog
-        if let Some(root_ref) = self
-            .document
-            .trailer
-            .get("Root")
-            .and_then(|v| v.as_reference())
-        {
-            let catalog_value = self.load_object(&root_ref.id())?;
-            let catalog_id = self.add_to_ast(catalog_value, NodeType::Catalog)?;
-            self.document.set_catalog(catalog_id);
-
-            // Parse catalog sub-structures
-            self.parse_catalog_references(catalog_id)?;
-
-            // Parse page tree
-            let pages_ref = if let Some(catalog_node) = self.document.ast.get_node(catalog_id) {
-                catalog_node
-                    .as_dict()
-                    .and_then(|dict| dict.get("Pages"))
-                    .and_then(|v| v.as_reference())
-                    .cloned()
-            } else {
+        let root_ref = match self.document.trailer.get("Root").cloned() {
+            Some(root_value) => match root_value.as_reference().cloned() {
+                Some(root_ref) => Some(root_ref),
+                None if self.tolerant => {
+                    self.record_diagnostic(
+                        None,
+                        None,
+                        "invalid_root",
+                        "skipped_catalog",
+                        1.0,
+                        0,
+                        "Trailer /Root is not an indirect reference",
+                    )?;
+                    None
+                }
+                None => {
+                    return Err(AstError::ParseError(
+                        "Trailer /Root is not an indirect reference".to_string(),
+                    ));
+                }
+            },
+            None if self.tolerant => {
+                self.record_diagnostic(
+                    None,
+                    None,
+                    "missing_root",
+                    "skipped_catalog",
+                    1.0,
+                    0,
+                    "Trailer does not contain a /Root reference",
+                )?;
                 None
+            }
+            None => {
+                return Err(AstError::ParseError(
+                    "Trailer does not contain a /Root reference".to_string(),
+                ));
+            }
+        };
+
+        // Parse catalog
+        if let Some(root_ref) = root_ref {
+            let catalog_value = self.load_object(&root_ref.id())?;
+            let catalog_id = match catalog_value {
+                PdfValue::Dictionary(_) => {
+                    let catalog_id = self.add_to_ast(catalog_value, NodeType::Catalog)?;
+                    self.document.set_catalog(catalog_id);
+                    Some(catalog_id)
+                }
+                _ if self.tolerant => {
+                    self.record_diagnostic(
+                        Some(root_ref.id()),
+                        None,
+                        "invalid_catalog",
+                        "skipped_catalog",
+                        1.0,
+                        0,
+                        "Trailer /Root does not resolve to a dictionary",
+                    )?;
+                    None
+                }
+                _ => {
+                    return Err(AstError::ParseError(
+                        "Trailer /Root does not resolve to a dictionary".to_string(),
+                    ));
+                }
             };
 
-            if let Some(pages_ref) = pages_ref {
-                self.parse_page_tree(&pages_ref, catalog_id)?;
+            if let Some(catalog_id) = catalog_id {
+                // Parse catalog sub-structures
+                self.parse_catalog_references(catalog_id)?;
+
+                // Parse page tree
+                let pages_ref = if let Some(catalog_node) = self.document.ast.get_node(catalog_id) {
+                    catalog_node
+                        .as_dict()
+                        .and_then(|dict| dict.get("Pages"))
+                        .and_then(|v| v.as_reference())
+                        .cloned()
+                } else {
+                    None
+                };
+
+                if let Some(pages_ref) = pages_ref {
+                    self.parse_page_tree(&pages_ref, catalog_id)?;
+                }
             }
         }
 
@@ -3544,6 +3603,35 @@ mod tests {
             .parse_form_field_value(&value, root, 0)
             .expect_err("strict form parsing must reject excessive depth");
         assert!(error.to_string().contains("Maximum form field depth"));
+    }
+
+    #[test]
+    fn strict_document_structure_requires_valid_root_reference() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("strict parser should initialize");
+        let error = parser
+            .parse_document_structure()
+            .expect_err("strict parsing must reject a missing /Root");
+        assert!(error.to_string().contains("does not contain a /Root"));
+
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("strict parser should initialize");
+        parser.document.trailer.insert("Root", PdfValue::Integer(1));
+        let error = parser
+            .parse_document_structure()
+            .expect_err("strict parsing must reject a non-reference /Root");
+        assert!(error.to_string().contains("not an indirect reference"));
     }
 
     #[test]
