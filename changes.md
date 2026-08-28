@@ -24,9 +24,11 @@ experimental.
 Actualizacion 2026-08-28: `2dc820d` anade un fixture PDF/UA derivado que
 rompe deliberadamente el nombre del diccionario de metadata, con evidencia
 veraPDF exacta para `ISO 14289-1:2014:7.1:8`; el corpus reproducible queda en
-`2.810` PDFs y la suite de mapeo pasa `6/6` con once pares locales, diez de
-ellos con ID veraPDF exacto. El descargador y los workflows quedan fijados a
-`2dc820d0205d088e1bd36c50b55da480918796c1`.
+`2.810` PDFs y la suite de mapeo pasa `6/6` con doce pares locales, once de
+ellos con ID veraPDF exacto. El mapeo de `PDF_A_OUTPUT_INTENT` queda enlazado
+al par normativo `6.2.2`. `b147600` publica ese mapeo en el manifiesto del
+corpus. El descargador y los workflows quedan fijados a
+`b14760045fb16d5475e1cd11aadd68eba7b238c0`.
 
 Actualizacion posterior: `b410aa5` deduplica referencias repetidas durante la
 resolucion y reutiliza nodos semanticos ya asociados a `ObjectId`; `62adb2a`
