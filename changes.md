@@ -486,6 +486,7 @@ Pendientes actuales, en orden practico:
   confiables. `4cfc786` evita además que los errores de presupuesto al resolver
   objetos indirectos se conviertan silenciosamente en referencias ausentes;
   `636c571` aplica la misma garantía a la detección de linealización;
+  `8517d21` la conserva también durante la recuperación de objetos malformados;
   queda extenderla a las rutas de parseo y resolución que aún usan
   recuperaciones parciales.
 * **Conformidad:** ya existe el inventario publico por clausula en
