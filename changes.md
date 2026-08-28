@@ -489,7 +489,8 @@ Pendientes actuales, en orden practico:
   `8517d21` la conserva también durante la recuperación de objetos malformados;
   `9203503` la propaga además al escaneo de recuperación de xref; queda
   extenderla a las rutas de parseo y resolución que aún usan recuperaciones
-  parciales.
+  parciales. `0302f79` completa esta garantía en trailer y xref streams,
+  incluidas sus rutas tolerantes de decode y recuperación cercana.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
