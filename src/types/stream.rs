@@ -174,7 +174,7 @@ impl PdfStream {
             _ => None,
         };
         let observed_length = match &data {
-            StreamData::Lazy(_) => 0,
+            StreamData::Lazy(reference) => reference.length,
             _ => data.len(),
         };
         let declared_length = match dict.get("Length") {
@@ -568,6 +568,21 @@ mod tests {
             stream.lossless.recovery_actions,
             vec!["content_stream_skipped"]
         );
+    }
+
+    #[test]
+    fn lazy_stream_records_known_observed_length() {
+        let stream = PdfStream::new_lazy(
+            PdfDictionary::new(),
+            StreamReference {
+                offset: 12,
+                length: 7,
+                filters: Vec::new(),
+            },
+        );
+
+        assert_eq!(stream.lossless.observed_length, 7);
+        assert_eq!(stream.decode_state(), "lazy");
     }
 
     #[test]
