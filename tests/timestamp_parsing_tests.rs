@@ -1,3 +1,4 @@
+#[cfg(feature = "crypto")]
 use pdf_ast::crypto::timestamp;
 
 #[cfg(feature = "crypto")]

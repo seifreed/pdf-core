@@ -54,6 +54,4 @@ fn test_rsa_signature_verification_with_cert_der() {
 
 #[cfg(not(feature = "crypto"))]
 #[test]
-fn test_rsa_signature_verification_no_crypto() {
-    assert!(true);
-}
+fn test_rsa_signature_verification_no_crypto() {}

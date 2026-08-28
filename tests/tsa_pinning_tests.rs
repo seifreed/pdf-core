@@ -1,5 +1,8 @@
+#[cfg(feature = "crypto")]
 use pdf_ast::crypto::certificates::parse_der_certificate;
+#[cfg(feature = "crypto")]
 use pdf_ast::crypto::signature_verification::check_tsa_pinning_for_test;
+#[cfg(feature = "crypto")]
 use pdf_ast::crypto::CryptoConfig;
 
 #[cfg(feature = "crypto")]

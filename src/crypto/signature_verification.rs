@@ -5,6 +5,7 @@ use crate::crypto::certificates::{
 };
 use crate::crypto::chrono::{DateTime, Utc};
 use crate::crypto::pkcs7::{SignedData, SignerInfo};
+#[cfg(feature = "crypto")]
 use crate::crypto::timestamp;
 use crate::crypto::CryptoConfig;
 use crate::types::{PdfDictionary, PdfValue};
@@ -336,11 +337,12 @@ impl SignatureVerifier {
         // - Commitment type indication
     }
 
+    #[allow(unreachable_code)]
     fn verify_timestamp(
         &mut self,
         info: &mut SignatureInfo,
         contents: &[u8],
-        reader: &mut dyn ReadSeek,
+        _reader: &mut dyn ReadSeek,
     ) {
         // Parse RFC 3161 TimeStampToken
         let tst = match self.parse_timestamp_token(contents) {
@@ -383,7 +385,7 @@ impl SignatureVerifier {
         info.timestamp = Some(timestamp_info);
 
         // Compute document digest
-        let document_digest = match self.compute_document_digest(info, reader, &digest_algorithm) {
+        let document_digest = match self.compute_document_digest(info, _reader, &digest_algorithm) {
             Ok(d) => d,
             Err(_) => {
                 info.validity = SignatureValidity::Invalid("Failed to compute digest".to_string());
@@ -458,7 +460,7 @@ impl SignatureVerifier {
         reader: &mut dyn ReadSeek,
         algorithm: &str,
     ) -> Result<Vec<u8>, String> {
-        let bytes = self.read_byte_ranges(info, reader)?;
+        let _bytes = self.read_byte_ranges(info, reader)?;
         #[cfg(feature = "crypto")]
         {
             let md = match algorithm.to_ascii_uppercase().as_str() {
@@ -468,7 +470,7 @@ impl SignatureVerifier {
                 "SHA-512" | "SHA512" | "2.16.840.1.101.3.4.2.3" => MessageDigest::sha512(),
                 _ => return Err("Unsupported digest algorithm".to_string()),
             };
-            hash(md, &bytes)
+            hash(md, &_bytes)
                 .map(|digest| digest.to_vec())
                 .map_err(|e| format!("Digest error: {}", e))
         }

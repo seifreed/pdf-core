@@ -1,3 +1,5 @@
+#![allow(clippy::items_after_test_module)]
+
 use super::{CertificateChainResult, CertificateInfo, CryptoConfig, CryptoError, CryptoResult};
 
 pub type X509Certificate = CertificateInfo;
@@ -440,6 +442,7 @@ impl CertificateChainValidator {
         self.check_crl_status_details(chain, chain_raw).0
     }
 
+    #[allow(clippy::needless_return)]
     fn check_crl_status_details(
         &self,
         chain: &[CertificateInfo],
@@ -592,6 +595,7 @@ impl CertificateChainValidator {
         self.check_ocsp_status_details(chain, chain_raw).0
     }
 
+    #[allow(clippy::needless_return)]
     fn check_ocsp_status_details(
         &self,
         chain: &[CertificateInfo],
@@ -1658,9 +1662,9 @@ impl<'a> SimpleDerParser<'a> {
                 self.pos += oid_len;
 
                 match oid_bytes {
-                    &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B] => "SHA256withRSA",
-                    &[0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x05] => "SHA1withRSA",
-                    &[0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02] => "SHA256withECDSA",
+                    [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B] => "SHA256withRSA",
+                    [0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x05] => "SHA1withRSA",
+                    [0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02] => "SHA256withECDSA",
                     _ => "Unknown",
                 }
             } else {
@@ -1720,12 +1724,12 @@ impl<'a> SimpleDerParser<'a> {
                                     self.pos += value_len;
 
                                     let attr_name = match oid_bytes {
-                                        &[0x55, 0x04, 0x03] => "CN",
-                                        &[0x55, 0x04, 0x06] => "C",
-                                        &[0x55, 0x04, 0x07] => "L",
-                                        &[0x55, 0x04, 0x08] => "ST",
-                                        &[0x55, 0x04, 0x0A] => "O",
-                                        &[0x55, 0x04, 0x0B] => "OU",
+                                        [0x55, 0x04, 0x03] => "CN",
+                                        [0x55, 0x04, 0x06] => "C",
+                                        [0x55, 0x04, 0x07] => "L",
+                                        [0x55, 0x04, 0x08] => "ST",
+                                        [0x55, 0x04, 0x0A] => "O",
+                                        [0x55, 0x04, 0x0B] => "OU",
                                         _ => "Unknown",
                                     };
 
@@ -1802,7 +1806,7 @@ impl<'a> SimpleDerParser<'a> {
     fn parse_extensions(&mut self) -> CryptoResult<(Vec<String>, Vec<String>, bool)> {
         let mut key_usage = Vec::new();
         let mut ext_key_usage = Vec::new();
-        let mut is_ca = false;
+        let is_ca = false;
 
         if self.pos < self.data.len() && self.data[self.pos] == 0xA3 {
             self.pos += 1;

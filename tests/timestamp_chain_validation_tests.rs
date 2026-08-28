@@ -1,4 +1,6 @@
+#[cfg(feature = "crypto")]
 use pdf_ast::crypto::certificates::CertificateChainValidator;
+#[cfg(feature = "crypto")]
 use pdf_ast::crypto::CryptoConfig;
 
 #[cfg(feature = "crypto")]

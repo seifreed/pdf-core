@@ -73,6 +73,4 @@ fn test_certificate_fingerprint_matches_sha256() {
 
 #[cfg(not(feature = "crypto"))]
 #[test]
-fn test_certificate_fingerprint_matches_sha256_no_crypto() {
-    assert!(true);
-}
+fn test_certificate_fingerprint_matches_sha256_no_crypto() {}

@@ -67,6 +67,4 @@ fn test_ocsp_and_crl_url_extraction() {
 
 #[cfg(not(feature = "crypto"))]
 #[test]
-fn test_ocsp_and_crl_url_extraction_no_crypto() {
-    assert!(true);
-}
+fn test_ocsp_and_crl_url_extraction_no_crypto() {}

@@ -52,6 +52,4 @@ fn test_crypto_provider_aes_256_roundtrip() {
 
 #[cfg(not(feature = "crypto"))]
 #[test]
-fn test_crypto_provider_roundtrip_no_crypto() {
-    assert!(true);
-}
+fn test_crypto_provider_roundtrip_no_crypto() {}

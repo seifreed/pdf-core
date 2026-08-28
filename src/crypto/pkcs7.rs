@@ -400,7 +400,7 @@ impl Pkcs7Handler {
     fn verify_simple(
         &self,
         pkcs7_info: &Pkcs7Info,
-        signed_data: &[u8],
+        _signed_data: &[u8],
     ) -> CryptoResult<SignatureVerificationResult> {
         // Extract signer certificate
         let signer_cert = if !pkcs7_info.certificates.is_empty() {
