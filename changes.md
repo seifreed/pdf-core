@@ -530,6 +530,9 @@ Pendientes actuales, en orden practico:
   `ba189dd` rechaza bytes residuales después de la última caja JP2; la suite
   de entradas inválidas JPX pasa `4/4` y Clippy estricto. Esto endurece el
   límite estructural sin convertir JPX en soporte completo del estándar.
+  `6653e25` conserva el valor real de booleanos al materializar parámetros de
+  operandos de imágenes inline; la regresión focalizada pasa `3/3` y Clippy
+  estricto.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
