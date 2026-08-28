@@ -556,6 +556,8 @@ Pendientes actuales, en orden practico:
   `ae4f9d1` permite que el modo tolerante recupere offsets de objetos fuera
   del fichero como `Null` diagnosticado, mientras strict conserva el error;
   la regresión de offsets inválidos pasa `1/1`.
+  `d65d6c3` rechaza tokens hexadecimales inválidos y arrays sin cierre en
+  destinos `bfrange`; la suite de CMap pasa `15/15`.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
