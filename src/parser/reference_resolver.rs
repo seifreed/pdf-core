@@ -479,7 +479,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 for (cs_name, cs_value) in colorspaces.iter() {
                     let mut parser =
                         ColorSpaceParser::new_with_limits(ast, &resolver_map, &self.limits);
-                    if let Some(cs_id) = parser.parse_colorspace(cs_value) {
+                    let cs_id = parser
+                        .parse_colorspace_with_budget(cs_value)
+                        .map_err(|error| error.to_string())?;
+                    if let Some(cs_id) = cs_id {
                         self.add_edge(ast, node_id, cs_id, EdgeType::Resource)?;
                         if let Some(cs_node) = ast.get_node_mut(cs_id) {
                             cs_node

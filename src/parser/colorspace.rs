@@ -2,7 +2,7 @@ use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
 use crate::filters::decode_stream_with_budget;
 use crate::metadata::icc::parse_icc_profile;
 use crate::parser::reference_resolver::ObjectNodeMap;
-use crate::performance::PerformanceLimits;
+use crate::performance::{PerformanceLimits, ResourceBudgetError};
 use crate::types::primitive::PdfName;
 use crate::types::{PdfArray, PdfDictionary, PdfValue};
 
@@ -10,6 +10,7 @@ pub struct ColorSpaceParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
     limits: PerformanceLimits,
+    budget_error: Option<ResourceBudgetError>,
 }
 
 impl<'a> ColorSpaceParser<'a> {
@@ -26,10 +27,27 @@ impl<'a> ColorSpaceParser<'a> {
             ast,
             resolver,
             limits: limits.clone(),
+            budget_error: None,
         }
     }
 
     pub fn parse_colorspace(&mut self, value: &PdfValue) -> Option<NodeId> {
+        self.parse_colorspace_with_budget(value).ok().flatten()
+    }
+
+    pub fn parse_colorspace_with_budget(
+        &mut self,
+        value: &PdfValue,
+    ) -> Result<Option<NodeId>, ResourceBudgetError> {
+        self.budget_error = None;
+        let result = self.parse_colorspace_inner(value);
+        match self.budget_error.take() {
+            Some(error) => Err(error),
+            None => Ok(result),
+        }
+    }
+
+    fn parse_colorspace_inner(&mut self, value: &PdfValue) -> Option<NodeId> {
         match value {
             PdfValue::Name(name) => {
                 // Device color space
@@ -144,7 +162,7 @@ impl<'a> ColorSpaceParser<'a> {
 
         let alt_id = dict
             .get("Alternate")
-            .and_then(|alt| self.parse_colorspace(alt));
+            .and_then(|alt| self.parse_colorspace_inner(alt));
 
         // Now update the node
         if let Some(node) = self.ast.get_node_mut(node_id) {
@@ -418,7 +436,10 @@ impl<'a> ColorSpaceParser<'a> {
         let sep_id = self.add_node(node)?;
 
         // Link to alternate color space
-        if let Some(alt_id) = arr.get(2).and_then(|value| self.parse_colorspace(value)) {
+        if let Some(alt_id) = arr
+            .get(2)
+            .and_then(|value| self.parse_colorspace_inner(value))
+        {
             self.add_edge(sep_id, alt_id, crate::ast::EdgeType::Reference);
         }
 
@@ -476,7 +497,10 @@ impl<'a> ColorSpaceParser<'a> {
         let devn_id = self.add_node(node)?;
 
         // Link to alternate color space
-        if let Some(alt_id) = arr.get(2).and_then(|value| self.parse_colorspace(value)) {
+        if let Some(alt_id) = arr
+            .get(2)
+            .and_then(|value| self.parse_colorspace_inner(value))
+        {
             self.add_edge(devn_id, alt_id, crate::ast::EdgeType::Reference);
         }
 
@@ -560,7 +584,10 @@ impl<'a> ColorSpaceParser<'a> {
         let indexed_id = self.add_node(node)?;
 
         // Link to base color space
-        if let Some(base_id) = arr.get(1).and_then(|value| self.parse_colorspace(value)) {
+        if let Some(base_id) = arr
+            .get(1)
+            .and_then(|value| self.parse_colorspace_inner(value))
+        {
             self.add_edge(indexed_id, base_id, crate::ast::EdgeType::Reference);
         }
 
@@ -606,7 +633,10 @@ impl<'a> ColorSpaceParser<'a> {
 
         // Link to underlying color space if present
         if arr.len() > 1 {
-            if let Some(underlying_id) = arr.get(1).and_then(|value| self.parse_colorspace(value)) {
+            if let Some(underlying_id) = arr
+                .get(1)
+                .and_then(|value| self.parse_colorspace_inner(value))
+            {
                 self.add_edge(pattern_id, underlying_id, crate::ast::EdgeType::Reference);
             }
         }
@@ -615,12 +645,19 @@ impl<'a> ColorSpaceParser<'a> {
     }
 
     fn add_node(&mut self, node: AstNode) -> Option<NodeId> {
-        self.limits.budget.consume_node().ok()?;
+        if let Err(error) = self.limits.budget.consume_node() {
+            self.budget_error = Some(error);
+            return None;
+        }
         Some(self.ast.add_node(node))
     }
 
     fn add_edge(&mut self, from: NodeId, to: NodeId, edge_type: crate::ast::EdgeType) -> bool {
-        self.limits.budget.consume_edge().is_ok() && self.ast.add_edge(from, to, edge_type)
+        if let Err(error) = self.limits.budget.consume_edge() {
+            self.budget_error = Some(error);
+            return false;
+        }
+        self.ast.add_edge(from, to, edge_type)
     }
 
     fn array_to_string(&self, arr: &PdfArray) -> String {
@@ -645,6 +682,7 @@ impl<'a> ColorSpaceParser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::performance::ResourceBudget;
 
     #[test]
     fn malformed_color_space_arrays_are_rejected_without_panicking() {
@@ -670,5 +708,21 @@ mod tests {
         for value in malformed {
             assert!(parser.parse_colorspace(&value).is_none());
         }
+    }
+
+    #[test]
+    fn reports_color_space_budget_exhaustion() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let limits = PerformanceLimits {
+            budget: ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 8),
+            ..PerformanceLimits::default()
+        };
+        let mut parser = ColorSpaceParser::new_with_limits(&mut ast, &resolver, &limits);
+
+        let error = parser
+            .parse_colorspace_with_budget(&PdfValue::Name(PdfName::new("DeviceRGB")))
+            .expect_err("color space node budget must propagate");
+        assert_eq!(error, ResourceBudgetError::Nodes);
     }
 }
