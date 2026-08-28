@@ -36,6 +36,9 @@ el paquete nativo localmente con Node 26.7.0. Esto no sustituye los seis jobs
 multiplataforma ni la publicación en registros.
 El smoke del ABI C también pasa en macOS arm64 compilando `tests/ffi_header_smoke.c`
 contra `libpdf_ast.dylib`, con salida `pdf-ast 0.2.0-alpha.1: nodes=5 root=0`.
+`cargo semver-checks check-release --package pdf-ast --baseline-version 0.1.0`
+también pasa localmente: no requiere cambio SemVer y deja `254` checks omitidos
+por tratarse de un salto mayor alpha; esto no estabiliza todavía la API pública.
 
 Actualizacion posterior: `b410aa5` deduplica referencias repetidas durante la
 resolucion y reutiliza nodos semanticos ya asociados a `ObjectId`; `62adb2a`
