@@ -993,13 +993,20 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 let absolute_pos = pos + obj_pos;
                 self.record_forensic_residual(covered_end, absolute_pos);
                 if let Ok((_, obj_id)) = Self::parse_object_header(&content[absolute_pos..]) {
-                    let object_end = object_parser::parse_indirect_object_with_budget(
+                    let object_end = match object_parser::parse_indirect_object_with_budget(
                         &content[absolute_pos..],
                         &self.limits.budget,
-                    )
-                    .ok()
-                    .map(|(remaining, _)| content.len() - remaining.len())
-                    .unwrap_or_else(|| absolute_pos.saturating_add(1));
+                    ) {
+                        Ok((remaining, _)) => content.len() - remaining.len(),
+                        Err(nom::Err::Failure(error))
+                            if error.code == nom::error::ErrorKind::TooLarge =>
+                        {
+                            return Err(AstError::ParseError(
+                                "resource budget exceeded: xref recovery parser".to_string(),
+                            ));
+                        }
+                        Err(_) => absolute_pos.saturating_add(1),
+                    };
                     let entry = XRefEntry::InUse {
                         offset: absolute_pos as u64,
                         generation: obj_id.generation,
@@ -3865,6 +3872,28 @@ mod tests {
             result,
             Err(error) if error.contains("resource budget exceeded")
         ));
+    }
+
+    #[test]
+    fn xref_recovery_object_budget_exhaustion_is_propagated() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let data = b"%PDF-1.7\n2 0 obj\nnull\nendobj\n".to_vec();
+        let limits = PerformanceLimits {
+            budget: ResourceBudget::new(1024, 1024, 1024, 10, 0, 10, 10, 8),
+            ..PerformanceLimits::default()
+        };
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Tolerant,
+            10,
+            limits,
+        )
+        .expect("parser should initialize");
+
+        let error = parser
+            .recover_xref_by_scan()
+            .expect_err("xref recovery object budget must propagate");
+        assert!(error.to_string().contains("resource budget exceeded"));
     }
 
     #[test]
