@@ -544,21 +544,12 @@ construye y prepara, pero la publicación en registros sigue deshabilitada.
 
 Pendientes actuales, en orden practico:
 
-* **Evidencia remota:** ya existe una ejecucion verde completa del CI,
-  corpus/differential, fuzzing, ClusterFuzzLite y API Stability en `6a63d85`,
-  y cuatro de seis smoke tests de bindings. Faltan los dos jobs Windows de
-  `33075200753` y ejecuciones verdes repetidas para considerar la evidencia
-  sostenida. Los workflows ya no cancelan runs anteriores del mismo ref,
-  porque esa politica impedia obtener evidencia completa tras cada push; los
-  IDs y estados se consultan con `gh run list` para evitar referencias
-  obsoletas.
-  En el PR `#23`, `33165897719` deja verde el corpus externo completo:
-  `2.809` archivos, `2.809` hashes, `1.859` errores controlados,
-  `peak_rss_kib=228824` y percentiles `0/12/80 ms` (`p50/p95/p99`).
-  `33165897723` deja verde el diferencial completo: `2.809` archivos,
-  `386` divergencias (`385` desacuerdos entre referencias y `1` de consenso),
-  `peak_rss_kib=253592` y percentiles `11/81/241 ms`; esa medicion historica
-  precede al corpus actual y a la matriz de clasificacion.
+* **Evidencia remota:** la tanda final del commit `c3247eb` queda verde en
+  `CI`, `Bindings`, `API Stability Audit`, `Fuzzing`, `ClusterFuzzLite`,
+  `Differential Corpus` y `External PDF Corpus`; los IDs están registrados
+  arriba. Sigue faltando repetir esta evidencia en el tiempo para convertirla
+  en una garantía sostenida, y explicar semánticamente todos los grupos
+  diferenciales.
 * **Parser endurecido:** strict y varios recorridos ya tienen guardas, incluido
   el árbol de páginas y sus referencias obligatorias, y los streams conservan
   ahora estado lossless explícito. Las APIs públicas de
