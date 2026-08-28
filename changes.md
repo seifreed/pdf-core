@@ -565,6 +565,9 @@ Pendientes actuales, en orden practico:
   `ad096ce` hace que la inspección de XMP PDF/UA use el `ResourceBudget` del
   documento; el caso con presupuesto de decode agotado produce
   `METADATA_DECODE_FAILED`, y la suite focalizada pasa `3/3`.
+  `4a606ad` valida orden, tamaño y correspondencia de destinos en arrays
+  `bfrange`, evitando mapeos parciales; la suite de CMap se mantiene en
+  `15/15`.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
