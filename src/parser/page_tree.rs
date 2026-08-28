@@ -842,8 +842,21 @@ mod tests {
     fn page_tree_parser_reports_depth_budget_exhaustion() {
         let mut ast = PdfAstGraph::new();
         let root_id = ast.add_node(AstNode::new(NodeId(0), NodeType::Catalog, PdfValue::Null));
-        let page_id = ast.add_node(AstNode::new(
+        let nested_pages_id = ast.add_node(AstNode::new(
             NodeId(1),
+            NodeType::Pages,
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Type", PdfValue::Name(PdfName::new("Pages")));
+                dict.insert(
+                    "Kids",
+                    PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(2, 0))].into()),
+                );
+                dict
+            }),
+        ));
+        let page_id = ast.add_node(AstNode::new(
+            NodeId(2),
             NodeType::Page,
             PdfValue::Dictionary({
                 let mut dict = PdfDictionary::new();
@@ -857,7 +870,8 @@ mod tests {
             PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(1, 0))].into()),
         );
         let mut resolver = ObjectNodeMap::new();
-        resolver.insert(ObjectId::new(1, 0), page_id);
+        resolver.insert(ObjectId::new(1, 0), nested_pages_id);
+        resolver.insert(ObjectId::new(2, 0), page_id);
         let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 10, 10, 0);
         let mut parser = PageTreeParser::new_with_budget(&mut ast, &resolver, &budget);
 

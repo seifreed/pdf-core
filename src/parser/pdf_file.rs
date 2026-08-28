@@ -83,6 +83,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 limits.max_file_size_mb
             )));
         }
+        if file_size > limits.budget.max_decoded_bytes_total {
+            return Err(AstError::ParseError(
+                crate::performance::ResourceBudgetError::DecodedBytes.to_string(),
+            ));
+        }
         limits
             .budget
             .consume_input(file_size)
