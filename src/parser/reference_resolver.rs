@@ -1023,6 +1023,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         for (node_id, length) in updates {
             if let Some(node) = ast.get_node_mut(node_id) {
                 if let PdfValue::Stream(ref mut stream) = node.value {
+                    stream.lossless.declared_length = Some(length as u64);
                     node.metadata
                         .properties
                         .insert("resolved_length".to_string(), length.to_string());
@@ -1763,7 +1764,7 @@ mod tests {
     }
 
     #[test]
-    fn resolves_indirect_length_without_mutating_lossless_stream_state() {
+    fn resolves_indirect_length_preserving_lossless_stream_state() {
         let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
         let mut resolver = ReferenceResolver::from_document(
             Cursor::new(b"2 0 obj\n3\nendobj\n".to_vec()),
@@ -1792,6 +1793,8 @@ mod tests {
             Some(&PdfValue::Reference(length_ref))
         );
         assert_eq!(stream.raw_data(), Some(b"abcd".as_slice()));
+        assert_eq!(stream.lossless.declared_length, Some(3));
+        assert_eq!(stream.lossless.observed_length, 4);
         assert_eq!(
             node.metadata.properties.get("resolved_length"),
             Some(&"3".to_string())
