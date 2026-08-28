@@ -142,16 +142,44 @@ fn decode_single_filter(
 
 fn decode_ascii_hex(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
     let mut result = Vec::new();
-    let mut chars = data.iter().filter(|&&c| !c.is_ascii_whitespace());
     let mut saw_eod = false;
+    let mut index = 0;
 
-    while let Some(&c1) = chars.next() {
+    while index < data.len() {
+        while data
+            .get(index)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            index += 1;
+        }
+        let Some(&c1) = data.get(index) else {
+            break;
+        };
         if c1 == b'>' {
             saw_eod = true;
+            index += 1;
             break;
         }
+        index += 1;
 
-        let c2 = chars.next().copied().unwrap_or(b'0');
+        while data
+            .get(index)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            index += 1;
+        }
+        let c2 = match data.get(index).copied() {
+            Some(b'>') => {
+                saw_eod = true;
+                index += 1;
+                b'0'
+            }
+            Some(byte) => {
+                index += 1;
+                byte
+            }
+            None => break,
+        };
 
         let hex_str = format!("{}{}", c1 as char, c2 as char);
         let byte = u8::from_str_radix(&hex_str, 16)
@@ -162,11 +190,20 @@ fn decode_ascii_hex(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, Fil
             ));
         }
         result.push(byte);
+
+        if saw_eod {
+            break;
+        }
     }
 
     if !saw_eod {
         return Err(FilterError::InvalidData(
             "ASCIIHex data is missing the EOD marker".to_string(),
+        ));
+    }
+    if data[index..].iter().any(|byte| !byte.is_ascii_whitespace()) {
+        return Err(FilterError::InvalidData(
+            "ASCIIHex data has trailing bytes after the EOD marker".to_string(),
         ));
     }
 
@@ -193,6 +230,14 @@ fn decode_ascii85(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, Filte
                 ));
             }
             saw_eod = true;
+            if data[index + 2..]
+                .iter()
+                .any(|tail| !tail.is_ascii_whitespace())
+            {
+                return Err(FilterError::InvalidData(
+                    "ASCII85 data has trailing bytes after the EOD marker".to_string(),
+                ));
+            }
             break;
         }
 
@@ -690,6 +735,25 @@ mod tests {
     }
 
     #[test]
+    fn accepts_odd_ascii_hex_nibble_and_rejects_trailing_bytes() {
+        assert_eq!(
+            decode_stream_with_limits(b"3>", &[StreamFilter::ASCIIHexDecode], 16, 10)
+                .expect("ASCIIHex may pad an odd final nibble"),
+            vec![0x30]
+        );
+
+        let hex_error =
+            decode_stream_with_limits(b"3031>garbage", &[StreamFilter::ASCIIHexDecode], 16, 10)
+                .expect_err("ASCIIHex must reject bytes after EOD");
+        assert!(hex_error.to_string().contains("trailing bytes"));
+
+        let ascii85_error =
+            decode_stream_with_limits(b"z~>garbage", &[StreamFilter::ASCII85Decode], 16, 10)
+                .expect_err("ASCII85 must reject bytes after EOD");
+        assert!(ascii85_error.to_string().contains("trailing bytes"));
+    }
+
+    #[test]
     fn rejects_overflowing_ascii85_tuples() {
         let error = decode_stream_with_limits(b"uuuuu", &[StreamFilter::ASCII85Decode], 16, 10)
             .expect_err("an ASCII85 tuple must fit in u32");
@@ -709,6 +773,21 @@ mod tests {
         assert!(shorthand_in_tuple
             .to_string()
             .contains("must start a tuple"));
+    }
+
+    #[test]
+    fn decodes_ascii85_partial_tuples_once() {
+        for (encoded, expected) in [
+            (b"!!~>".as_slice(), vec![0]),
+            (b"!!!~>".as_slice(), vec![0, 0]),
+            (b"!!!!~>".as_slice(), vec![0, 0, 0]),
+        ] {
+            assert_eq!(
+                super::decode_stream_with_limits(encoded, &[StreamFilter::ASCII85Decode], 16, 10,)
+                    .expect("partial ASCII85 tuple should decode"),
+                expected
+            );
+        }
     }
 
     #[test]
