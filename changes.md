@@ -185,6 +185,9 @@ Clippy estricto.
 `PdfStream.lossless.declared_length`, sin mutar el diccionario ni perder
 `observed_length`; la suite de reference resolver pasa `14/14` y Clippy
 estricto.
+La comprobacion local posterior pasa `279` tests en `7` suites de libreria con
+`cargo test --workspace --locked --lib -- --test-threads=1`; el CI remoto sigue
+encolado y esta cifra no sustituye la evidencia de corpus completo.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
