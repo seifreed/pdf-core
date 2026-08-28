@@ -579,13 +579,17 @@ construye y prepara, pero la publicación en registros sigue deshabilitada.
 
 Pendientes actuales, en orden practico:
 
-* **Evidencia remota:** sobre `6098ac6`, `External PDF Corpus`
-  (`33195920560`) y `Differential Corpus` (`33195920543`) quedan verdes.
-  `API Stability Audit` (`33195920549`) sigue bloqueado instalando
-  `cargo-semver-checks`, mientras `CI`, `Bindings`, `Fuzzing` y
-  `ClusterFuzzLite` continúan en cola. Sigue faltando repetir esta evidencia
-  en el tiempo para convertirla en una garantía sostenida, y explicar
-  semánticamente todos los grupos diferenciales.
+* **Evidencia remota:** la tanda anterior sobre `6098ac6` dejó verdes
+  `External PDF Corpus` (`33195920560`) y `Differential Corpus`
+  (`33195920543`), pero `API Stability Audit` (`33195920549`) quedó bloqueado
+  instalando `cargo-semver-checks`. El commit `8fb8e9c` añade el cobro de
+  memoria al buffer de nodos lazy del parser streaming y ha disparado la tanda
+  `33198158274` (corpus), `33198158295` (diferencial), `33198158319` (CI),
+  `33198158301` (API), `33198158280` (ClusterFuzzLite), `33198158283`
+  (bindings) y `33198158287` (fuzzing); al redactar esta entrada siguen en
+  ejecución o en cola, por lo que no se cuentan como verdes. Sigue faltando
+  repetir esta evidencia en el tiempo para convertirla en una garantía
+  sostenida, y explicar semánticamente todos los grupos diferenciales.
 * **Parser endurecido:** strict y varios recorridos ya tienen guardas, incluido
   el árbol de páginas y sus referencias obligatorias, y los streams conservan
   ahora estado lossless explícito. Las APIs públicas de
