@@ -155,6 +155,9 @@ y `4/4`, respectivamente, con Clippy estricto.
 `1b56b79` resuelve arrays indirectos `Names`, `Kids` y `Limits` en name trees,
 incluido `IDTree`; las suites de name trees y estructura pasan `5/5` y `6/6`,
 respectivamente, con Clippy estricto.
+`2bfd6f4` resuelve entradas `Nums` indirectas que contienen arrays de padres y
+recorre niveles anidados de `Kids` en `ParentTree`; la suite de estructura pasa
+`8/8` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
