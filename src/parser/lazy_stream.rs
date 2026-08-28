@@ -140,7 +140,7 @@ impl LazyStream {
                 let parent_data = self.load_parent_stream_with_budget(parent_loader, budget)?;
 
                 // Parse object stream to extract specific object
-                let data = self.extract_from_object_stream(&parent_data, *index)?;
+                let data = self.extract_from_object_stream(&parent_data, *index, budget)?;
                 budget
                     .consume_decoded(data.len() as u64)
                     .map_err(|error| error.to_string())?;
@@ -198,9 +198,12 @@ impl LazyStream {
         }
     }
 
-    fn extract_from_object_stream(&self, data: &[u8], index: u32) -> Result<Vec<u8>, String> {
-        // Parse object stream format
-        // First parse the offset table
+    fn extract_from_object_stream(
+        &self,
+        data: &[u8],
+        index: u32,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<u8>, String> {
         let n = self
             .dict
             .get("N")
@@ -223,54 +226,18 @@ impl LazyStream {
             ));
         }
 
-        // Parse offset table (simplified - would need proper parsing)
-        let _offset_entry_size = 16; // Approximate size of "objnum offset" entry
-        let offset_table_end = first;
-
-        if offset_table_end > data.len() {
-            return Err("Invalid First offset in object stream".to_string());
-        }
-
-        // Find object offset in stream
-        let offset_table = data
-            .get(..offset_table_end)
-            .ok_or("Invalid First offset in object stream")?;
-        let entries: Vec<&str> = std::str::from_utf8(offset_table)
-            .map_err(|e| format!("Invalid offset table: {}", e))?
-            .split_whitespace()
-            .collect();
-
-        let entry_index = index
-            .checked_mul(2)
-            .and_then(|value| value.checked_add(1))
-            .ok_or("Object stream entry index overflow")?;
-        let obj_offset = entries
-            .get(entry_index)
-            .ok_or("Insufficient entries in offset table")?
-            .parse::<usize>()
-            .map_err(|e| format!("Invalid offset: {}", e))?;
-
-        let absolute_offset = first
-            .checked_add(obj_offset)
-            .ok_or("Object stream offset overflow")?;
-
-        // Find next object offset to determine length
-        let next_offset = if let Some(next_index) = index.checked_add(1).filter(|next| *next < n) {
-            let next_entry_index = next_index
-                .checked_mul(2)
-                .and_then(|value| value.checked_add(1))
-                .ok_or("Object stream entry index overflow")?;
-            let next_obj_offset = entries
-                .get(next_entry_index)
-                .ok_or("Insufficient entries in offset table")?
-                .parse::<usize>()
-                .map_err(|e| format!("Invalid next offset: {}", e))?;
-            first
-                .checked_add(next_obj_offset)
-                .ok_or("Object stream offset overflow")?
-        } else {
-            data.len()
-        };
+        let offsets = crate::parser::object_parser::parse_object_stream_offsets_with_budget(
+            data, n, first, budget,
+        )?;
+        let absolute_offset = *offsets
+            .get(index)
+            .ok_or("Object stream index out of range")?;
+        let next_offset = offsets
+            .iter()
+            .copied()
+            .filter(|candidate| *candidate > absolute_offset)
+            .min()
+            .unwrap_or(data.len());
 
         if absolute_offset >= data.len()
             || next_offset > data.len()
@@ -279,7 +246,9 @@ impl LazyStream {
             return Err("Object offset out of bounds".to_string());
         }
 
-        Ok(data[absolute_offset..next_offset].to_vec())
+        data.get(absolute_offset..next_offset)
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| "Object offset out of bounds".to_string())
     }
 
     /// Get dictionary without loading stream data
@@ -538,5 +507,20 @@ mod tests {
         );
 
         assert!(stream.load().is_err());
+    }
+
+    #[test]
+    fn object_stream_uses_next_greater_offset_not_next_index() {
+        let mut dict = PdfDictionary::new();
+        dict.insert("N", PdfValue::Integer(2));
+        dict.insert("First", PdfValue::Integer(9));
+        let stream = LazyStream::new_object_stream(
+            dict,
+            ObjectId::new(1, 0),
+            0,
+            StreamLoader::Inline(b"10 5 20 0xxxxxABCDE".to_vec()),
+        );
+
+        assert_eq!(stream.load().expect("object stream entry"), b"ABCDE");
     }
 }
