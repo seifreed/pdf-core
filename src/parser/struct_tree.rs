@@ -220,9 +220,9 @@ impl<'a> StructTreeParser<'a> {
         {
             for kid in &kids_array {
                 if let PdfValue::Reference(obj_id) = kid {
-                    self.parse_parent_tree_intermediate(&obj_id.id(), &mut parent_tree);
+                    self.parse_parent_tree_intermediate(&obj_id.id(), &mut parent_tree, 0);
                 } else if let PdfValue::Dictionary(kid_dict) = kid {
-                    self.parse_parent_tree_intermediate_dict(kid_dict, &mut parent_tree);
+                    self.parse_parent_tree_intermediate_dict(kid_dict, &mut parent_tree, 0);
                 }
             }
         }
@@ -251,45 +251,46 @@ impl<'a> StructTreeParser<'a> {
             if let (Some(PdfValue::Integer(page_obj_num)), Some(parent_value)) =
                 (nums_array.get(i), nums_array.get(i + 1))
             {
-                match parent_value {
-                    PdfValue::Reference(parent_obj_id) => {
-                        if let Some(parent_node_id) = self.resolver.get_node_id(&parent_obj_id.id())
-                        {
-                            parent_tree.add_parent_entry(
-                                *page_obj_num as u32,
-                                ParentTreeEntry::Single(parent_node_id),
-                            );
-                        }
+                let page_obj_num = *page_obj_num as u32;
+                if let Some(parent_array) = self.resolve_array(parent_value) {
+                    let parents = parent_array
+                        .iter()
+                        .filter_map(|parent_ref| match parent_ref {
+                            PdfValue::Reference(obj_id) => self.resolver.get_node_id(&obj_id.id()),
+                            _ => None,
+                        })
+                        .collect::<Vec<_>>();
+                    if !parents.is_empty() {
+                        parent_tree
+                            .add_parent_entry(page_obj_num, ParentTreeEntry::Multiple(parents));
                     }
-                    PdfValue::Array(parent_array) => {
-                        let mut parents = Vec::new();
-                        for parent_ref in parent_array.iter() {
-                            if let PdfValue::Reference(obj_id) = parent_ref {
-                                if let Some(node_id) = self.resolver.get_node_id(&obj_id.id()) {
-                                    parents.push(node_id);
-                                }
-                            }
-                        }
-                        if !parents.is_empty() {
-                            parent_tree.add_parent_entry(
-                                *page_obj_num as u32,
-                                ParentTreeEntry::Multiple(parents),
-                            );
-                        }
+                } else if let PdfValue::Reference(parent_obj_id) = parent_value {
+                    if let Some(parent_node_id) = self.resolver.get_node_id(&parent_obj_id.id()) {
+                        parent_tree.add_parent_entry(
+                            page_obj_num,
+                            ParentTreeEntry::Single(parent_node_id),
+                        );
                     }
-                    _ => {}
                 }
             }
             i += 2;
         }
     }
 
-    fn parse_parent_tree_intermediate(&mut self, obj_id: &ObjectId, parent_tree: &mut ParentTree) {
+    fn parse_parent_tree_intermediate(
+        &mut self,
+        obj_id: &ObjectId,
+        parent_tree: &mut ParentTree,
+        depth: usize,
+    ) {
+        if depth >= self.budget.max_depth || self.budget.consume_object().is_err() {
+            return;
+        }
         if let Some(node_id) = self.resolver.get_node_id(obj_id) {
             if let Some(node) = self.ast.get_node(node_id) {
                 if let PdfValue::Dictionary(dict) = &node.value {
                     let dict_clone = dict.clone();
-                    self.parse_parent_tree_intermediate_dict(&dict_clone, parent_tree);
+                    self.parse_parent_tree_intermediate_dict(&dict_clone, parent_tree, depth);
                 }
             }
         }
@@ -299,10 +300,30 @@ impl<'a> StructTreeParser<'a> {
         &mut self,
         dict: &PdfDictionary,
         parent_tree: &mut ParentTree,
+        depth: usize,
     ) {
-        // Parse Nums array directly instead of recursive call
         if let Some(nums_array) = dict.get("Nums").and_then(|value| self.resolve_array(value)) {
             self.parse_parent_tree_nums(&nums_array, parent_tree);
+        }
+
+        if let Some(kids_array) = dict.get("Kids").and_then(|value| self.resolve_array(value)) {
+            for kid in &kids_array {
+                match kid {
+                    PdfValue::Reference(obj_id) => {
+                        self.parse_parent_tree_intermediate(&obj_id.id(), parent_tree, depth + 1);
+                    }
+                    PdfValue::Dictionary(kid_dict) => {
+                        if depth + 1 < self.budget.max_depth {
+                            self.parse_parent_tree_intermediate_dict(
+                                kid_dict,
+                                parent_tree,
+                                depth + 1,
+                            );
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -961,6 +982,125 @@ mod tests {
             Some(ParentTreeEntry::Single(id)) if *id == element_id
         ));
         assert_eq!(tree.parent_tree.limits, Some((7, 7)));
+    }
+
+    #[test]
+    fn struct_tree_parser_resolves_indirect_parent_tree_entry_array() {
+        let mut ast = PdfAstGraph::new();
+        let first_id = ast.create_node(
+            NodeType::Object(ObjectId::new(1, 0)),
+            PdfValue::Dictionary(PdfDictionary::new()),
+        );
+        let second_id = ast.create_node(
+            NodeType::Object(ObjectId::new(2, 0)),
+            PdfValue::Dictionary(PdfDictionary::new()),
+        );
+        let parents_id = ast.create_node(
+            NodeType::Object(ObjectId::new(5, 0)),
+            PdfValue::Array(PdfArray::from(vec![
+                PdfValue::Reference(PdfReference::new(1, 0)),
+                PdfValue::Reference(PdfReference::new(2, 0)),
+            ])),
+        );
+        let nums_id = ast.create_node(
+            NodeType::Object(ObjectId::new(3, 0)),
+            PdfValue::Array(PdfArray::from(vec![
+                PdfValue::Integer(9),
+                PdfValue::Reference(PdfReference::new(5, 0)),
+            ])),
+        );
+        let parent_tree_id = ast.create_node(
+            NodeType::Object(ObjectId::new(4, 0)),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Nums", PdfValue::Reference(PdfReference::new(3, 0)));
+                dict
+            }),
+        );
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), first_id);
+        resolver.insert(ObjectId::new(2, 0), second_id);
+        resolver.insert(ObjectId::new(3, 0), nums_id);
+        resolver.insert(ObjectId::new(4, 0), parent_tree_id);
+        resolver.insert(ObjectId::new(5, 0), parents_id);
+
+        let mut root_dict = PdfDictionary::new();
+        root_dict.insert("ParentTree", PdfValue::Reference(PdfReference::new(4, 0)));
+        let mut parser = StructTreeParser::new(&mut ast, &resolver);
+        let tree = parser
+            .parse_struct_tree_root(&root_dict)
+            .expect("structure tree should parse");
+
+        assert!(matches!(
+            tree.parent_tree.get_parents(9),
+            Some(ParentTreeEntry::Multiple(ids)) if ids == &vec![first_id, second_id]
+        ));
+    }
+
+    #[test]
+    fn struct_tree_parser_walks_nested_parent_tree_kids() {
+        let mut ast = PdfAstGraph::new();
+        let element_id = ast.create_node(
+            NodeType::Object(ObjectId::new(1, 0)),
+            PdfValue::Dictionary(PdfDictionary::new()),
+        );
+        let leaf_id = ast.create_node(
+            NodeType::Object(ObjectId::new(6, 0)),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert(
+                    "Nums",
+                    PdfValue::Array(PdfArray::from(vec![
+                        PdfValue::Integer(10),
+                        PdfValue::Reference(PdfReference::new(1, 0)),
+                    ])),
+                );
+                dict
+            }),
+        );
+        let middle_id = ast.create_node(
+            NodeType::Object(ObjectId::new(7, 0)),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert(
+                    "Kids",
+                    PdfValue::Array(PdfArray::from(vec![PdfValue::Reference(
+                        PdfReference::new(6, 0),
+                    )])),
+                );
+                dict
+            }),
+        );
+        let parent_tree_id = ast.create_node(
+            NodeType::Object(ObjectId::new(8, 0)),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert(
+                    "Kids",
+                    PdfValue::Array(PdfArray::from(vec![PdfValue::Reference(
+                        PdfReference::new(7, 0),
+                    )])),
+                );
+                dict
+            }),
+        );
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), element_id);
+        resolver.insert(ObjectId::new(6, 0), leaf_id);
+        resolver.insert(ObjectId::new(7, 0), middle_id);
+        resolver.insert(ObjectId::new(8, 0), parent_tree_id);
+
+        let mut root_dict = PdfDictionary::new();
+        root_dict.insert("ParentTree", PdfValue::Reference(PdfReference::new(8, 0)));
+        let mut parser = StructTreeParser::new(&mut ast, &resolver);
+        let tree = parser
+            .parse_struct_tree_root(&root_dict)
+            .expect("structure tree should parse");
+
+        assert!(matches!(
+            tree.parent_tree.get_parents(10),
+            Some(ParentTreeEntry::Single(id)) if *id == element_id
+        ));
     }
 
     #[test]
