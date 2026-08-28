@@ -354,24 +354,19 @@ impl PdfAstGraph {
         budget: &ResourceBudget,
     ) -> Result<Vec<EdgeInfo>, ResourceBudgetError> {
         let mut edges = Vec::new();
-        let mut node_id_reverse_map = HashMap::new();
-        for (&node_id, &index) in &self.node_map {
-            budget.consume_node()?;
-            node_id_reverse_map.insert(index, node_id);
-        }
-
         for edge_ref in self.graph.edge_references() {
-            if let (Some(&from_id), Some(&to_id)) = (
-                node_id_reverse_map.get(&edge_ref.source()),
-                node_id_reverse_map.get(&edge_ref.target()),
-            ) {
-                budget.consume_edge()?;
-                edges.push(EdgeInfo {
-                    from: from_id,
-                    to: to_id,
-                    edge_type: *edge_ref.weight(),
-                });
-            }
+            let (Some(from), Some(to)) = (
+                self.graph.node_weight(edge_ref.source()),
+                self.graph.node_weight(edge_ref.target()),
+            ) else {
+                continue;
+            };
+            budget.consume_edge()?;
+            edges.push(EdgeInfo {
+                from: from.id,
+                to: to.id,
+                edge_type: *edge_ref.weight(),
+            });
         }
 
         Ok(edges)

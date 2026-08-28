@@ -204,7 +204,7 @@ mod tests {
     #[test]
     fn edge_walk_uses_the_supplied_budget() {
         let graph = graph_with_edge();
-        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 10, 0, 10);
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 0, 0, 10);
         let error = graph
             .walk_edges_with_budget(|_| {}, &budget)
             .expect_err("edge traversal must stop at the supplied edge limit");
