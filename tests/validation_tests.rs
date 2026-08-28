@@ -268,6 +268,57 @@ mod validation_tests {
     }
 
     #[test]
+    fn pdfa_strict_metadata_sync_rejects_info_xmp_mismatch() {
+        fn document_with_metadata(title: &str, xmp_title: &str) -> PdfDocument {
+            let mut document = create_test_document();
+            let info_id = document.ast.create_node(
+                NodeType::Other,
+                PdfValue::Dictionary({
+                    let mut dict = PdfDictionary::new();
+                    dict.insert("Title", PdfValue::String(PdfString::from(title)));
+                    dict
+                }),
+            );
+            document.set_info(info_id);
+
+            let xmp = format!(
+                "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>{xmp_title}</dc:title></rdf:Description></rdf:RDF></x:xmpmeta>"
+            );
+            let metadata = PdfValue::Stream(PdfStream::new(
+                {
+                    let mut dict = PdfDictionary::new();
+                    dict.insert("Type", PdfValue::Name(PdfName::new("Metadata")));
+                    dict.insert("Subtype", PdfValue::Name(PdfName::new("XML")));
+                    dict
+                },
+                xmp.into_bytes(),
+            ));
+            let catalog_id = document.catalog.expect("catalog should exist");
+            document
+                .ast
+                .get_node_mut(catalog_id)
+                .expect("catalog node should exist")
+                .value
+                .as_dict_mut()
+                .expect("catalog should be a dictionary")
+                .insert("Metadata", metadata);
+            document
+        }
+
+        let validator = PdfA1bValidator::new();
+        let matching = validator.validate(&document_with_metadata("Same", "Same"));
+        assert!(!has_issue(&matching, "PDF_A_METADATA_SYNC"));
+
+        let mismatched = validator.validate(&document_with_metadata("Info", "XMP"));
+        assert!(has_issue(&mismatched, "PDF_A_METADATA_SYNC"));
+        assert!(mismatched.issues.iter().any(|issue| {
+            issue.code == "PDF_A_METADATA_SYNC"
+                && issue.severity == ValidationSeverity::Error
+                && issue.message.contains("Title")
+        }));
+    }
+
+    #[test]
     fn test_pdfa_image_validation() {
         let validator = PdfA1bValidator::new().with_strict_mode(false);
         let mut document = create_test_document();

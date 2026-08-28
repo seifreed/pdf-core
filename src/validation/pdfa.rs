@@ -802,16 +802,99 @@ impl PdfA1bValidator {
             });
         }
 
-        // Full XMP-Info synchronization requires parsing XMP content
         if self.strict_mode {
-            report.add_issue(ValidationIssue {
-                severity: ValidationSeverity::Warning,
-                code: "PDF_A_METADATA_SYNC".to_string(),
-                message: "Verify XMP metadata synchronization with Info dictionary".to_string(),
-                node_id: None,
-                location: Some("Metadata synchronization".to_string()),
-                suggestion: None,
-            });
+            let Some(info_dict) = document.get_info() else {
+                return;
+            };
+            let Some(metadata_stream) = metadata_stream else {
+                return;
+            };
+            let add_sync_issue = |report: &mut ValidationReport, message: String| {
+                report.add_issue(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    code: "PDF_A_METADATA_SYNC".to_string(),
+                    message,
+                    node_id: None,
+                    location: Some("Metadata synchronization".to_string()),
+                    suggestion: Some(
+                        "Synchronize the document Info dictionary and XMP metadata".to_string(),
+                    ),
+                });
+            };
+
+            let decoded = match metadata_stream.decode() {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    add_sync_issue(
+                        report,
+                        format!("XMP metadata could not be decoded: {error}"),
+                    );
+                    return;
+                }
+            };
+            let xmp = match crate::metadata::XmpMetadata::parse_from_stream(&decoded) {
+                Ok(xmp) => xmp,
+                Err(error) => {
+                    add_sync_issue(report, format!("XMP metadata could not be parsed: {error}"));
+                    return;
+                }
+            };
+            let info = crate::metadata::PdfInfo::from_dict(info_dict);
+            let fields = [
+                (
+                    "Title",
+                    info.title.as_deref(),
+                    xmp.title().map(String::as_str),
+                ),
+                (
+                    "Author",
+                    info.author.as_deref(),
+                    xmp.author().map(String::as_str),
+                ),
+                (
+                    "Subject",
+                    info.subject.as_deref(),
+                    xmp.subject().map(String::as_str),
+                ),
+                (
+                    "Keywords",
+                    info.keywords.as_deref(),
+                    xmp.keywords().map(String::as_str),
+                ),
+                (
+                    "Creator",
+                    info.creator.as_deref(),
+                    xmp.creator().map(String::as_str),
+                ),
+                (
+                    "Producer",
+                    info.producer.as_deref(),
+                    xmp.producer().map(String::as_str),
+                ),
+                (
+                    "CreationDate",
+                    info.creation_date.as_deref(),
+                    xmp.creation_date().map(String::as_str),
+                ),
+                (
+                    "ModDate",
+                    info.modification_date.as_deref(),
+                    xmp.modification_date().map(String::as_str),
+                ),
+            ];
+            let mismatches: Vec<&str> = fields
+                .iter()
+                .filter_map(|(name, info_value, xmp_value)| {
+                    (info_value != xmp_value && (info_value.is_some() || xmp_value.is_some()))
+                        .then_some(*name)
+                })
+                .collect();
+            if !mismatches.is_empty() {
+                add_sync_issue(
+                    report,
+                    format!("XMP/Info values differ for: {}", mismatches.join(", ")),
+                );
+            }
         }
     }
 

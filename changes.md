@@ -83,6 +83,12 @@ detectado por Clippy 1.98.0. La tanda remota final de ese commit queda verde:
 `CI` `33187348344`, `Bindings` `33187348418`, `API Stability Audit`
 `33187348323`, `Fuzzing` `33187348409`, `ClusterFuzzLite` `33187348364`,
 `Differential Corpus` `33187348399` y `External PDF Corpus` `33187348328`.
+`1e5bfbd` conserva además los bytes y la codificación literal/hexadecimal de
+`PdfString` en el esquema de serialización `1.2.0`, con migración compatible
+desde `1.1.0` y regresiones de round-trip. La validación PDF/A estricta ya
+comprueba la sincronización de `Title`, `Author`, `Subject`, `Keywords`,
+`Creator`, `Producer` y fechas entre Info y XMP; `PDF_A_METADATA_SYNC` deja de
+ser un warning genérico y reporta divergencias o errores de decode/parseo.
 
 Actualizacion posterior: `b410aa5` deduplica referencias repetidas durante la
 resolucion y reutiliza nodos semanticos ya asociados a `ObjectId`; `62adb2a`

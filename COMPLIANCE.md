@@ -53,6 +53,7 @@ version-incompatible profile, matching `validate_all`.
 | ISO 19005-1:2005 | 6.5.2 annotation types and 6.6.1 actions | Preflight | `PDF_A_MULTIMEDIA`, `PDF_A_JAVASCRIPT` |
 | ISO 14289-1:2014 / ISO 14289-2 | 7.1 structure tree | Preflight | `NO_TAGGED_STRUCTURE`, `STRUCT_ELEM_MISSING` |
 | ISO 14289-1:2014 | 7.2 document language | Preflight | `LANG_MISSING`, `LANG_EMPTY` |
+| ISO 19005-1:2005 | 6.7 metadata synchronization | Preflight | `PDF_A_METADATA_SYNC` compares selected Info/XMP fields in strict mode |
 | ISO 19005 / ISO 14289 | Full profile conformance | Not implemented | Requires rule-complete validation and veraPDF comparison |
 | ISO 32000-1/2 | JBIG2 pixel decoding | Partial | Bounded pure-Rust embedded/standalone decode with direct and parser-resolved indirect `/JBIG2Globals`; codec coverage remains incomplete |
 | ISO 32000-1/2 | JPX pixel decoding | Partial | Bounded pure-Rust JPEG 2000 decode; parser and codec edge coverage remains incomplete |
