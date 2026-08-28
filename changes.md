@@ -256,6 +256,8 @@ pasa `3/3` y Clippy estricto.
 La verificacion completa posterior pasa `274` tests del crate principal y
 `14` de crates auxiliares con `cargo test --workspace --locked --lib
 -- --test-threads=1`.
+Tras `PageTreeParser` y `ExtGStateParser`, la verificacion completa vuelve a
+pasar `276` tests del crate principal y `14` de crates auxiliares.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
