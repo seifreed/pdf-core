@@ -1,6 +1,6 @@
 use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
 use crate::parser::reference_resolver::ObjectNodeMap;
-use crate::performance::ResourceBudget;
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::types::{PdfDictionary, PdfValue};
 
 /// Parser for ExtGState (Extended Graphics State) parameters
@@ -8,6 +8,7 @@ pub struct ExtGStateParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
     budget: ResourceBudget,
+    budget_error: Option<ResourceBudgetError>,
 }
 
 impl<'a> ExtGStateParser<'a> {
@@ -24,10 +25,29 @@ impl<'a> ExtGStateParser<'a> {
             ast,
             resolver,
             budget: budget.clone(),
+            budget_error: None,
         }
     }
 
     pub fn parse_extgstate(&mut self, gs_dict: &PdfDictionary, gs_id: NodeId) {
+        self.budget_error = None;
+        self.parse_extgstate_inner(gs_dict, gs_id);
+    }
+
+    pub fn parse_extgstate_with_budget(
+        &mut self,
+        gs_dict: &PdfDictionary,
+        gs_id: NodeId,
+    ) -> Result<(), ResourceBudgetError> {
+        self.budget_error = None;
+        self.parse_extgstate_inner(gs_dict, gs_id);
+        match self.budget_error.take() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    fn parse_extgstate_inner(&mut self, gs_dict: &PdfDictionary, gs_id: NodeId) {
         // Extract values first to avoid borrow checker issues
         let line_width = gs_dict
             .get("LW")
@@ -218,7 +238,8 @@ impl<'a> ExtGStateParser<'a> {
             }
             Some(PdfValue::Dictionary(smask_dict)) => {
                 // Create soft mask node
-                if self.budget.consume_node().is_err() {
+                if let Err(error) = self.budget.consume_node() {
+                    self.budget_error = Some(error);
                     return;
                 }
                 let smask_node = AstNode::new(
@@ -433,7 +454,8 @@ impl<'a> ExtGStateParser<'a> {
             }
             Some(PdfValue::Dictionary(ht_dict)) => {
                 // Inline halftone dictionary
-                if self.budget.consume_node().is_err() {
+                if let Err(error) = self.budget.consume_node() {
+                    self.budget_error = Some(error);
                     return;
                 }
                 let ht_node = AstNode::new(
@@ -516,7 +538,9 @@ impl<'a> ExtGStateParser<'a> {
     }
 
     fn add_edge(&mut self, from: NodeId, to: NodeId, edge_type: crate::ast::EdgeType) {
-        if self.budget.consume_edge().is_ok() {
+        if let Err(error) = self.budget.consume_edge() {
+            self.budget_error = Some(error);
+        } else {
             self.ast.add_edge(from, to, edge_type);
         }
     }
@@ -545,6 +569,23 @@ mod tests {
         parser.parse_extgstate(&gs_dict, gs_id);
         assert_eq!(ast.node_count(), 2);
         assert_eq!(ast.edge_count(), 1);
+    }
+
+    #[test]
+    fn extgstate_parser_reports_node_budget_exhaustion() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 8);
+        let mut parser = ExtGStateParser::new_with_budget(&mut ast, &resolver, &budget);
+        let mut gs_dict = PdfDictionary::new();
+        gs_dict.insert("SMask", PdfValue::Dictionary(PdfDictionary::new()));
+
+        assert_eq!(
+            parser
+                .parse_extgstate_with_budget(&gs_dict, NodeId(0))
+                .expect_err("ExtGState node budget must propagate"),
+            ResourceBudgetError::Nodes
+        );
     }
 
     #[test]
