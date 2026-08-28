@@ -1431,7 +1431,7 @@ impl SchemaConstraint for AccessibilityMetadataConstraint {
             return;
         }
 
-        let bytes = match stream.decode() {
+        let bytes = match stream.decode_with_budget(&document.budget) {
             Ok(bytes) => bytes,
             Err(error) => {
                 report.add_issue(ValidationIssue {

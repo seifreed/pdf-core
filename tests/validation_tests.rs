@@ -607,6 +607,19 @@ mod validation_tests {
     }
 
     #[test]
+    fn pdfua_metadata_decode_respects_document_budget() {
+        let mut document = create_test_document();
+        add_pdfua_metadata(&mut document, true);
+        document.budget =
+            pdf_ast::performance::ResourceBudget::new(1024, 0, 1024, 10, 100, 100, 100, 8);
+
+        let report = SchemaRegistry::new()
+            .validate(&document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(has_issue(&report, "METADATA_DECODE_FAILED"));
+    }
+
+    #[test]
     fn pdfa_resolves_indirect_catalog_entries() {
         let mut document = create_test_document();
         let action_id = ObjectId::new(40, 0);
