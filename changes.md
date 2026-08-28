@@ -230,6 +230,9 @@ perfiles ICC, distinguiendolos de un perfil invalido; la suite de colores pasa
 `4330704` añade una regresion de la ruta `ReferenceResolver -> Page resources`
 que verifica la propagacion de `Nodes` para espacios de color; el caso pasa
 con Clippy estricto.
+`7f44c11` añade variantes presupuestadas a la construccion inicial de
+`NameTreeParser` y deja de ocultar agotamientos de nodos/objetos; la suite de
+name trees pasa `6/6` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
