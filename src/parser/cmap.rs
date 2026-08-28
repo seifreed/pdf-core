@@ -522,6 +522,13 @@ impl<'a> CMapParser<'a> {
         if parts.len() >= 3 {
             let start = self.hex_to_bytes(parts[0])?;
             let end = self.hex_to_bytes(parts[1])?;
+            if start.is_empty()
+                || start.len() != end.len()
+                || start.len() > 4
+                || !self.in_range(&start, &start, &end)
+            {
+                return None;
+            }
 
             // Check if destination is array
             if parts[2].starts_with('[') {
@@ -532,6 +539,13 @@ impl<'a> CMapParser<'a> {
 
                 for hex in array_content.split_whitespace() {
                     array_dests.push(self.hex_to_bytes(hex)?);
+                }
+                let expected = self
+                    .bytes_to_u32(&end)?
+                    .checked_sub(self.bytes_to_u32(&start)?)?
+                    .checked_add(1)?;
+                if usize::try_from(expected).ok()? != array_dests.len() {
+                    return None;
                 }
 
                 return Some(CharRangeMapping {
@@ -858,6 +872,7 @@ mod tests {
         let cases = [
             b"1 beginbfrange\n<01> <02> [<0041> <ZZZZ>]\nendbfrange".as_slice(),
             b"1 beginbfrange\n<01> <02> [<0041>\nendbfrange".as_slice(),
+            b"1 beginbfrange\n<01> <02> [<0041>]\nendbfrange".as_slice(),
         ];
         let mut ast = PdfAstGraph::new();
         let resolver = ObjectNodeMap::new();
