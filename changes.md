@@ -490,7 +490,9 @@ Pendientes actuales, en orden practico:
   `9203503` la propaga además al escaneo de recuperación de xref; queda
   extenderla a las rutas de parseo y resolución que aún usan recuperaciones
   parciales. `0302f79` completa esta garantía en trailer y xref streams,
-  incluidas sus rutas tolerantes de decode y recuperación cercana.
+  incluidas sus rutas tolerantes de decode y recuperación cercana. `a75bcd2`
+  propaga también los errores de decode ICC, nodos y aristas en
+  `OutputIntentsParser`.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
