@@ -23,7 +23,7 @@ a deprecation period and a documented migration note.
 
 ## AST Serialization
 
-The AST serialization schema is currently `1.1.0` and is experimental. The
+The AST serialization schema is currently `1.2.0` and is experimental. The
 deserializer migrates the historical `1.0` envelope when object identities are
 complete; unknown, inconsistent, or incomplete versions are rejected. Serialized
 object identities, node types, edge types, source offsets, source sizes,

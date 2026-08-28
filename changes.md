@@ -97,6 +97,11 @@ fixture PDF/A-1b `6.7.3-t01-pass-a`; veraPDF 1.30.2 confirma
 `RULE-COVERAGE.json` a `22` pares; la prueba de cobertura ejecuta la nueva regla
 en modo strict para no confundirla con los warnings de preflight tolerante.
 
+`12a746d` añade el mapeo del filtro LZW a `PDF_A_LZW_DECODE`, con el par
+PDF/A-1b positivo y el negativo Isartor que veraPDF identifica como
+`ISO 19005-1:2005:6.1.10:1`. `RULE-COVERAGE.json` queda en `23` pares y el
+descargador fija el nuevo SHA completo del corpus.
+
 Actualizacion posterior: `b410aa5` deduplica referencias repetidas durante la
 resolucion y reutiliza nodos semanticos ya asociados a `ObjectId`; `62adb2a`
 completa el cobro de memoria para objetos indirectos publicos. `da39970` y
@@ -674,7 +679,7 @@ Pendientes actuales, en orden practico:
   necesitan cobertura de casos limite. JBIG2 tiene decodificacion acotada,
   incluida la resolucion de `JBIG2Globals`, y JPX tiene decodificacion de
   pixeles acotada; ninguno constituye soporte completo del estandar.
-* **API y distribucion:** el esquema 1.1.0, visitors, C ABI y chequeo local de
+* **API y distribucion:** el esquema 1.2.0, visitors, C ABI y chequeo local de
   SemVer existen, pero la API/crates no estan estabilizados ni reorganizados
   para beta. No hay publicación firmada en crates.io, PyPI o npm, ni
   consumidores externos.
