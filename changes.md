@@ -49,6 +49,14 @@ presupuestada, en lugar de devolver una lista truncada sin error. La regresión
 focalizada, el formato y Clippy estricto pasan. El último push (`b74af07`)
 disparó de nuevo los siete workflows; al redactar esta entrada aún estaban
 pendientes o en cola, por lo que no se cuentan como evidencia remota verde.
+Los commits `37bbb6e`, `e4a9f3f`, `c9dbd0c`, `d58b174`, `79b4b98` y `e4903db`
+extienden `ResourceBudget` a la recursión de valores, objetos indirectos,
+prefijos de streams y lotes tolerantes, evitando que un `TooLarge` estructural
+se convierta en recuperación silenciosa. También se comprueba de forma
+temprana que el presupuesto pueda retener el documento lossless. El workspace
+queda en `514` tests verdes en `69` suites; esto endurece la frontera de parseo,
+pero no completa todavía todas las rutas de recuperación ni la conformidad
+normativa.
 La verificación local completa del corpus actualizado pasa `2.810/2.810`
 sin panics ni errores de parseo, con `2.810` hashes, `161281039` bytes,
 `peak_rss_kib=474480` y percentiles `3/57/178 ms`. La comparación veraPDF
