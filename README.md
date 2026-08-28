@@ -114,6 +114,7 @@ pdf-ast = {
 ```
 
 Available features:
+- The default build enables `parallel`; cryptographic verification is opt-in.
 - `crypto`: cryptographic support (signatures, encryption, timestamps, OCSP/CRL)
 - `parallel`: multi-threading with Rayon
 - `async`: async parsing with Tokio

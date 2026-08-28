@@ -120,6 +120,11 @@ reproducible queda en `2.812` PDFs y `RULE-COVERAGE.json` en `24` pares; la
 suite completa de mapping pasa `6/6` con veraPDF 1.30.2. `a9ec87d` fija las
 Actions mutables de CI, corpus, fuzzing, bindings y release a commits
 verificables.
+El build por defecto deja `crypto` como opt-in y conserva solo `parallel`,
+reduciendo la superficie y el coste de instalación para consumidores del
+parser. El fallback sin features pasa `338` tests, el perfil con `crypto`
+`339`, y ClusterFuzzLite queda verde en `33200470112` tras ejecutar los
+fuzzers modificados.
 
 La validación de fuentes PDF/A resuelve ahora también `/DescendantFonts` cuando
 apunta indirectamente a un array, manteniendo la detección de programas

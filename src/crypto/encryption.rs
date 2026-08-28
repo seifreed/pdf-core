@@ -915,8 +915,8 @@ mod tests {
         let key = b"key";
         let data = b"Hello, World!";
 
-        let encrypted = handler.rc4_simple(data, key).unwrap();
-        let decrypted = handler.rc4_simple(&encrypted, key).unwrap();
+        let encrypted = rc4_encrypt(data, key);
+        let decrypted = rc4_encrypt(&encrypted, key);
 
         assert_eq!(data, &decrypted[..]);
     }

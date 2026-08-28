@@ -113,7 +113,7 @@ sha2 = "0.10"
 hex = "0.4"
 
 [features]
-default = ["parallel", "crypto"]
+default = ["parallel"]
 async = ["tokio", "async-trait"]
 crypto = ["openssl", "ring", "x509-parser", "der-parser", "cms", "reqwest"]
 # extended = ["jbig2"]

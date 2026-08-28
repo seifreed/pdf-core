@@ -494,6 +494,7 @@ mod tests {
         assert_eq!(key1, key4); // Should be same as before (same derivation)
     }
 
+    #[cfg(feature = "crypto")]
     #[test]
     fn test_random_iv_generation() {
         let filter = CryptFilter::new();

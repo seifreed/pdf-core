@@ -1127,6 +1127,7 @@ mod tests {
         assert_eq!(sha512_result.unwrap().len(), 64); // SHA-512 produces 64 bytes
     }
 
+    #[cfg(feature = "crypto")]
     #[test]
     fn test_certificate_parsing_basic() {
         let handler = Pkcs7Handler::new();
