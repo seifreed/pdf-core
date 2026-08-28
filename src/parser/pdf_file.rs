@@ -150,6 +150,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         if let Some(linearization) =
             Self::try_parse_linearization_dict_with_budget(&buffer[pos..], &self.limits.budget)
+                .map_err(AstError::ParseError)?
         {
             self.document.set_linearization(linearization);
         }
@@ -172,32 +173,45 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         data: &[u8],
     ) -> Option<crate::ast::linearization::LinearizationInfo> {
         Self::try_parse_linearization_dict_with_budget(data, &ResourceBudget::default())
+            .ok()
+            .flatten()
     }
 
     fn try_parse_linearization_dict_with_budget(
         data: &[u8],
         budget: &ResourceBudget,
-    ) -> Option<crate::ast::linearization::LinearizationInfo> {
+    ) -> Result<Option<crate::ast::linearization::LinearizationInfo>, String> {
         let (_, (obj_id, value)) =
-            object_parser::parse_indirect_object_with_budget(data, budget).ok()?;
+            match object_parser::parse_indirect_object_with_budget(data, budget) {
+                Ok(parsed) => parsed,
+                Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                    return Err("resource budget exceeded: linearization parser".to_string());
+                }
+                Err(_) => return Ok(None),
+            };
 
         if obj_id != ObjectId::new(1, 0) {
-            return None;
+            return Ok(None);
         }
 
         let dict = match value {
             PdfValue::Dictionary(d) => d,
-            _ => return None,
+            _ => return Ok(None),
         };
 
         if !dict.contains_key("Linearized") {
-            return None;
+            return Ok(None);
         }
 
         let stream = PdfStream::new(dict, Vec::new());
-        let linearization = crate::parser::xref::parse_linearization_dict(&stream).ok()?;
-        linearization.validate().ok()?;
-        Some(linearization)
+        let linearization = match crate::parser::xref::parse_linearization_dict(&stream) {
+            Ok(linearization) => linearization,
+            Err(_) => return Ok(None),
+        };
+        if linearization.validate().is_err() {
+            return Ok(None);
+        }
+        Ok(Some(linearization))
     }
 
     fn read_header(reader: &mut R, tolerant: bool) -> AstResult<PdfVersion> {
@@ -3543,7 +3557,7 @@ mod tests {
     use super::{PdfFileParser, XRefEntry, MAX_FORM_FIELD_DEPTH};
     use crate::ast::NodeType;
     use crate::parser::ParseMode;
-    use crate::performance::PerformanceLimits;
+    use crate::performance::{PerformanceLimits, ResourceBudget};
     use crate::types::{ObjectId, PdfArray, PdfDictionary, PdfReference, PdfStream, PdfValue};
     use std::io::{BufReader, Cursor};
 
@@ -3836,6 +3850,21 @@ mod tests {
 
         assert!(Parser::try_parse_linearization_dict(negative_length).is_none());
         assert!(Parser::try_parse_linearization_dict(missing_length).is_none());
+    }
+
+    #[test]
+    fn linearization_budget_exhaustion_is_propagated() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let budget = ResourceBudget::new(0, 1024, 1024, 10, 10, 10, 10, 8);
+        let result = Parser::try_parse_linearization_dict_with_budget(
+            b"1 0 obj\n<< /Linearized 1.0 >>\nendobj\n",
+            &budget,
+        );
+
+        assert!(matches!(
+            result,
+            Err(error) if error.contains("resource budget exceeded")
+        ));
     }
 
     #[test]
