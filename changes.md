@@ -520,6 +520,8 @@ Pendientes actuales, en orden practico:
   `6a0f346` evita además ocultar esos límites durante la recuperación de
   revisiones xref, XFA y XMP. `a1f3b39` hace que la resolución transitiva de
   referencias tampoco salte errores de presupuesto en modo tolerante.
+  `46b1813` aplica la misma garantía a la resolución final de referencias del
+  documento, que antes convertía esos excesos en simples avisos tolerantes.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
