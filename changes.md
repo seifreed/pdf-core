@@ -188,6 +188,9 @@ estricto.
 La comprobacion local posterior pasa `279` tests en `7` suites de libreria con
 `cargo test --workspace --locked --lib -- --test-threads=1`; el CI remoto sigue
 encolado y esta cifra no sustituye la evidencia de corpus completo.
+`5b23a0b` hace que la ruta de produccion resuelva arrays `Annots` indirectos
+antes de procesar sus anotaciones; la suite de `pdf_file` pasa `21/21` y Clippy
+estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
