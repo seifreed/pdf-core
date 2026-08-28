@@ -387,9 +387,43 @@ pub fn parse_indirect_stream_prefix_with_max_depth_and_budget<'a>(
 ) -> IResult<&'a [u8], (ObjectId, PdfDictionary)> {
     charge_input(input, budget)?;
     charge_object(input, budget)?;
-    let parsed = parse_indirect_stream_prefix_with_max_depth_unbudgeted(input, max_depth)?;
+    let parsed = parse_indirect_stream_prefix_with_max_depth_budgeted(input, max_depth, budget)?;
     charge_value_memory(&PdfValue::Dictionary(parsed.1 .1.clone()), budget, input)?;
     Ok(parsed)
+}
+
+pub(crate) fn parse_indirect_stream_prefix_with_max_depth_budgeted<'a>(
+    input: &'a [u8],
+    max_depth: usize,
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], (ObjectId, PdfDictionary)> {
+    let (input, obj_num) = integer(input)?;
+    let (input, _) = skip_whitespace(input)?;
+    let (input, gen_num) = integer(input)?;
+    let (input, _) = skip_whitespace(input)?;
+    let (input, _) = tag(b"obj")(input)?;
+    if obj_num < 0 || gen_num < 0 || obj_num > u32::MAX as i64 || gen_num > u16::MAX as i64 {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Verify,
+        )));
+    }
+    let (input, _) = skip_whitespace_and_comments(input)?;
+    let (input, value) = parse_value_with_max_depth_budgeted_no_memory(input, max_depth, budget)?;
+    let dict = match value {
+        PdfValue::Dictionary(dict) => dict,
+        _ => {
+            return Err(nom::Err::Error(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::Tag,
+            )))
+        }
+    };
+    let (input, _) = skip_whitespace_and_comments(input)?;
+    let (input, _) = tag(b"stream")(input)?;
+    let (input, _) = alt((tag(b"\r\n"), tag(b"\n")))(input)?;
+
+    Ok((input, (ObjectId::new(obj_num as u32, gen_num as u16), dict)))
 }
 
 pub(crate) fn parse_indirect_stream_prefix_with_max_depth_unbudgeted(
@@ -467,7 +501,7 @@ pub fn parse_indirect_object_with_stream_length_and_max_depth_and_budget<'a>(
     charge_input(input, budget)?;
     charge_object(input, budget)?;
     let (input, (obj_id, dict)) =
-        parse_indirect_stream_prefix_with_max_depth_unbudgeted(input, max_depth)?;
+        parse_indirect_stream_prefix_with_max_depth_budgeted(input, max_depth, budget)?;
     let (input, data) = nom::bytes::complete::take(length)(input)?;
     let (input, _) = skip_whitespace(input)?;
     let (input, _) = tag(b"endstream")(input)?;
@@ -698,7 +732,8 @@ fn next_decimal(data: &[u8], cursor: &mut usize) -> Result<usize, String> {
 mod tests {
     use super::{
         parse_indirect_object, parse_indirect_object_with_max_depth_and_budget,
-        parse_indirect_object_with_stream_length, parse_indirect_stream_prefix, parse_value,
+        parse_indirect_object_with_stream_length, parse_indirect_stream_prefix,
+        parse_indirect_stream_prefix_with_max_depth_and_budget, parse_value,
     };
     use crate::performance::ResourceBudget;
     use crate::types::PdfValue;
@@ -741,6 +776,14 @@ mod tests {
         let budget = ResourceBudget::new(1024, 7, 1024, 100, 10, 10, 10, 10);
 
         let result = parse_indirect_object_with_max_depth_and_budget(data, 10, &budget);
+        assert!(matches!(result, Err(nom::Err::Failure(_))));
+    }
+
+    #[test]
+    fn stream_prefix_enforces_nested_node_budget() {
+        let data = b"1 0 obj\n<< /Nested [null] >>\nstream\n\n";
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 1, 10, 10);
+        let result = parse_indirect_stream_prefix_with_max_depth_and_budget(data, 10, &budget);
         assert!(matches!(result, Err(nom::Err::Failure(_))));
     }
 }
