@@ -29,6 +29,11 @@ ellos con ID veraPDF exacto. El mapeo de `PDF_A_OUTPUT_INTENT` queda enlazado
 al par normativo `6.2.2`. `b147600` publica ese mapeo en el manifiesto del
 corpus. El descargador y los workflows quedan fijados a
 `b14760045fb16d5475e1cd11aadd68eba7b238c0`.
+La evidencia local de bindings queda ampliada: wheel Python instalado en un
+entorno virtual y `python/test_bindings.py` pasan con CPython 3.14 en macOS
+arm64; el binding Node pasa `npm test` y `test/package-smoke.js` tras instalar
+el paquete nativo localmente con Node 26.7.0. Esto no sustituye los seis jobs
+multiplataforma ni la publicación en registros.
 
 Actualizacion posterior: `b410aa5` deduplica referencias repetidas durante la
 resolucion y reutiliza nodos semanticos ya asociados a `ObjectId`; `62adb2a`
