@@ -196,6 +196,9 @@ recursos indirectas durante la herencia, incluida `Font`; la suite de
 `pdf_file` pasa `22/22` y Clippy estricto.
 `b7a4ac2` conserva tambien la categoria heredada cuando la definicion hija es
 un diccionario vacio; la misma suite pasa `22/22` y Clippy estricto.
+`c47985d` añade variantes acotadas de CMap que distinguen sintaxis invalida de
+agotamiento de `ResourceBudget`, y propaga este ultimo en resolver y
+extraccion; las suites pasan `13/13`, `14/14` y `5/5`, con Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
