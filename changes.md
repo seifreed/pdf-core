@@ -246,6 +246,9 @@ de funciones pasa `3/3` y Clippy estricto.
 `19622f1` expone variantes presupuestadas para construir `OCProperties` y
 `OCMD`, preservando los wrappers legacy; la suite OCG pasa `2/2` y Clippy
 estricto.
+La verificacion completa posterior pasa `274` tests del crate principal y
+`14` de crates auxiliares con `cargo test --workspace --locked --lib
+-- --test-threads=1`.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
