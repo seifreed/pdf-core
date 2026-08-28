@@ -583,12 +583,13 @@ Pendientes actuales, en orden practico:
   `External PDF Corpus` (`33195920560`) y `Differential Corpus`
   (`33195920543`), pero `API Stability Audit` (`33195920549`) quedó bloqueado
   instalando `cargo-semver-checks`. `ffaeb1a` cambia ese paso por un binario
-  upstream verificado por SHA-256; la instalación ya termina, pero el análisis
-  y el resto de la tanda siguen pendientes. `8fb8e9c` y `fb94709` añaden el
-  cobro de memoria a los buffers lazy de streaming y a los streams ya
-  decodificados. Sigue faltando repetir esta evidencia en el tiempo para
-  convertirla en una garantía sostenida, y explicar semánticamente todos los
-  grupos diferenciales.
+  upstream verificado por SHA-256; la ejecución `33198452326` ya pasa el
+  análisis API. La tanda posterior (`33198939594` y sus jobs asociados) sigue
+  pendiente al redactar esta entrada. `8fb8e9c` y `fb94709` añaden el cobro de
+  memoria a los buffers lazy de streaming y a los streams ya decodificados.
+  Sigue faltando repetir esta evidencia en el tiempo para convertirla en una
+  garantía sostenida, y explicar semánticamente todos los grupos
+  diferenciales.
 * **Parser endurecido:** strict y varios recorridos ya tienen guardas, incluido
   el árbol de páginas y sus referencias obligatorias, y los streams conservan
   ahora estado lossless explícito. Las APIs públicas de
