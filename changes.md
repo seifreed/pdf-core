@@ -533,6 +533,10 @@ Pendientes actuales, en orden practico:
   `6653e25` conserva el valor real de booleanos al materializar parámetros de
   operandos de imágenes inline; la regresión focalizada pasa `3/3` y Clippy
   estricto.
+  `068cd0c` implementa las posiciones solicitadas por las operaciones de
+  insertar/mover hijos y mantiene sincronizadas las listas del AST al quitar
+  aristas o nodos. Las regresiones de transform y graph pasan `5/5`, Clippy
+  estricto queda limpio y el workspace completo pasa `306` tests.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
