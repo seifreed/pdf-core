@@ -562,6 +562,9 @@ Pendientes actuales, en orden practico:
   una tupla parcial; la suite de filtros pasa `9/9`.
   `4934ed1` exige también el terminador `>` de ASCIIHex; la suite de filtros
   pasa `10/10`.
+  `ad096ce` hace que la inspección de XMP PDF/UA use el `ResourceBudget` del
+  documento; el caso con presupuesto de decode agotado produce
+  `METADATA_DECODE_FAILED`, y la suite focalizada pasa `3/3`.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
