@@ -152,6 +152,9 @@ la regresion de extraccion pasa `5/5` y Clippy estricto.
 `ccd773b` conecta `IDTree` con el parser de name trees existente y conserva
 sus nombres y referencias; las suites de estructura y name trees pasan `6/6`
 y `4/4`, respectivamente, con Clippy estricto.
+`1b56b79` resuelve arrays indirectos `Names`, `Kids` y `Limits` en name trees,
+incluido `IDTree`; las suites de name trees y estructura pasan `5/5` y `6/6`,
+respectivamente, con Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
