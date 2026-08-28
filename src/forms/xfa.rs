@@ -114,7 +114,12 @@ fn parse_xfa_value(
 ) -> Result<Option<XfaPacket>, String> {
     match value {
         PdfValue::Stream(stream) => parse_xfa_packet(name, stream, budget),
-        PdfValue::String(s) => parse_xfa_from_bytes(name, s.as_bytes()),
+        PdfValue::String(s) => {
+            budget
+                .consume_decoded(s.as_bytes().len() as u64)
+                .map_err(|err| err.to_string())?;
+            parse_xfa_from_bytes_with_budget(name, s.as_bytes(), budget)
+        }
         _ => Ok(None),
     }
 }
@@ -124,24 +129,21 @@ fn parse_xfa_packet(
     stream: &PdfStream,
     budget: &ResourceBudget,
 ) -> Result<Option<XfaPacket>, String> {
-    let data = match stream.decode_with_budget(budget) {
-        Ok(decoded) => decoded,
-        Err(_) => stream
-            .raw_data()
-            .filter(|data| budget.consume_decoded(data.len() as u64).is_ok())
-            .map(|data| data.to_vec())
-            .unwrap_or_default(),
-    };
-    parse_xfa_from_bytes(name, &data)
+    let data = stream.decode_with_budget(budget)?;
+    parse_xfa_from_bytes_with_budget(name, &data, budget)
 }
 
-fn parse_xfa_from_bytes(name: &str, bytes: &[u8]) -> Result<Option<XfaPacket>, String> {
+fn parse_xfa_from_bytes_with_budget(
+    name: &str,
+    bytes: &[u8],
+    budget: &ResourceBudget,
+) -> Result<Option<XfaPacket>, String> {
     if bytes.is_empty() {
         return Ok(None);
     }
 
     let xml = String::from_utf8_lossy(bytes).to_string();
-    let root = parse_xml_root(&xml)?;
+    let root = parse_xml_root(&xml, budget)?;
 
     Ok(Some(XfaPacket {
         name: name.to_string(),
@@ -150,7 +152,7 @@ fn parse_xfa_from_bytes(name: &str, bytes: &[u8]) -> Result<Option<XfaPacket>, S
     }))
 }
 
-fn parse_xml_root(xml: &str) -> Result<XfaNode, String> {
+fn parse_xml_root(xml: &str, budget: &ResourceBudget) -> Result<XfaNode, String> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
@@ -159,8 +161,16 @@ fn parse_xml_root(xml: &str) -> Result<XfaNode, String> {
     let mut root: Option<XfaNode> = None;
 
     loop {
+        budget.check().map_err(|err| err.to_string())?;
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) => {
+                if stack.len() >= budget.max_depth {
+                    return Err(format!(
+                        "XFA XML nesting depth exceeds resource limit: {}",
+                        budget.max_depth
+                    ));
+                }
+                budget.consume_node().map_err(|err| err.to_string())?;
                 let node = XfaNode {
                     name: String::from_utf8_lossy(e.name().as_ref()).to_string(),
                     attributes: parse_attributes(&e)?,
@@ -170,6 +180,13 @@ fn parse_xml_root(xml: &str) -> Result<XfaNode, String> {
                 stack.push(node);
             }
             Ok(Event::Empty(e)) => {
+                if stack.len() >= budget.max_depth {
+                    return Err(format!(
+                        "XFA XML nesting depth exceeds resource limit: {}",
+                        budget.max_depth
+                    ));
+                }
+                budget.consume_node().map_err(|err| err.to_string())?;
                 let node = XfaNode {
                     name: String::from_utf8_lossy(e.name().as_ref()).to_string(),
                     attributes: parse_attributes(&e)?,
@@ -301,7 +318,7 @@ mod tests {
     #[test]
     fn parse_simple_xfa_xml() {
         let xml = r#"<xfa><form><field name="a">1</field></form></xfa>"#;
-        let root = parse_xml_root(xml).unwrap();
+        let root = parse_xml_root(xml, &ResourceBudget::default()).unwrap();
         assert_eq!(root.name, "xfa");
         assert_eq!(root.children.len(), 1);
     }
@@ -309,9 +326,10 @@ mod tests {
     #[test]
     fn parse_xfa_packet_from_string() {
         let xml = PdfString::new_literal(b"<xfa><data>ok</data></xfa>");
-        let packet = parse_xfa_from_bytes("form", xml.as_bytes())
-            .unwrap()
-            .unwrap();
+        let packet =
+            parse_xfa_from_bytes_with_budget("form", xml.as_bytes(), &ResourceBudget::default())
+                .unwrap()
+                .unwrap();
         assert_eq!(packet.name, "form");
         assert_eq!(packet.root.name, "xfa");
     }
@@ -321,14 +339,31 @@ mod tests {
         let xml = PdfString::new_literal(
             b"<xfa><form><event><script>app.alert('x')</script></event></form></xfa>",
         );
-        let packet = parse_xfa_from_bytes("form", xml.as_bytes())
-            .unwrap()
-            .unwrap();
+        let packet =
+            parse_xfa_from_bytes_with_budget("form", xml.as_bytes(), &ResourceBudget::default())
+                .unwrap()
+                .unwrap();
         let doc = XfaDocument {
             packets: vec![packet],
         };
         let stats = doc.script_stats();
         assert!(stats.has_scripts);
         assert!(stats.script_nodes >= 1);
+    }
+
+    #[test]
+    fn xfa_xml_consumes_node_budget() {
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 1, 2, 1, 10);
+        let error = parse_xml_root("<xfa><a/><b/></xfa>", &budget)
+            .expect_err("XFA XML nodes must consume the shared budget");
+        assert!(error.contains("Nodes"));
+    }
+
+    #[test]
+    fn xfa_xml_enforces_nesting_budget() {
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 1, 10, 1, 2);
+        let error = parse_xml_root("<xfa><form><field/></form></xfa>", &budget)
+            .expect_err("XFA XML nesting must respect the shared budget");
+        assert!(error.contains("nesting depth"));
     }
 }

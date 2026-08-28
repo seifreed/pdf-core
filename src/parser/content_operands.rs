@@ -1,4 +1,5 @@
 use crate::parser::content_stream::{ContentOperator, InlineImageInfo, TextArrayElement};
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use nom::{
     branch::alt,
     bytes::complete::{tag, take_while, take_while1},
@@ -48,6 +49,14 @@ impl Operand {
 
 /// Parse complete content stream with operands
 pub fn parse_content_stream(input: &[u8]) -> Vec<ContentOperator> {
+    parse_content_stream_with_budget(input, &ResourceBudget::default()).unwrap_or_default()
+}
+
+pub fn parse_content_stream_with_budget(
+    input: &[u8],
+    budget: &ResourceBudget,
+) -> Result<Vec<ContentOperator>, ResourceBudgetError> {
+    budget.consume_input(input.len() as u64)?;
     let mut operators = Vec::new();
     let mut operand_stack: Vec<Operand> = Vec::new();
     let mut remaining = input;
@@ -69,6 +78,7 @@ pub fn parse_content_stream(input: &[u8]) -> Vec<ContentOperator> {
         }
         // Try to parse operator
         else if let Ok((rest, op)) = parse_operator_with_operands(remaining, &mut operand_stack) {
+            budget.consume_node()?;
             operators.push(op);
             remaining = rest;
         }
@@ -78,7 +88,7 @@ pub fn parse_content_stream(input: &[u8]) -> Vec<ContentOperator> {
         }
     }
 
-    operators
+    Ok(operators)
 }
 
 #[derive(Debug, Clone)]
@@ -89,6 +99,15 @@ pub struct ContentOperatorWithOffset {
 
 /// Parse content stream and capture operator byte offsets.
 pub fn parse_content_stream_with_offsets(input: &[u8]) -> Vec<ContentOperatorWithOffset> {
+    parse_content_stream_with_offsets_with_budget(input, &ResourceBudget::default())
+        .unwrap_or_default()
+}
+
+pub fn parse_content_stream_with_offsets_with_budget(
+    input: &[u8],
+    budget: &ResourceBudget,
+) -> Result<Vec<ContentOperatorWithOffset>, ResourceBudgetError> {
+    budget.consume_input(input.len() as u64)?;
     let mut operators = Vec::new();
     let mut operand_stack: Vec<Operand> = Vec::new();
     let mut remaining = input;
@@ -106,6 +125,7 @@ pub fn parse_content_stream_with_offsets(input: &[u8]) -> Vec<ContentOperatorWit
             operand_stack.push(operand);
             remaining = rest;
         } else if let Ok((rest, op)) = parse_operator_with_operands(remaining, &mut operand_stack) {
+            budget.consume_node()?;
             let offset = base_len.saturating_sub(remaining.len());
             operators.push(ContentOperatorWithOffset {
                 operator: op,
@@ -117,7 +137,88 @@ pub fn parse_content_stream_with_offsets(input: &[u8]) -> Vec<ContentOperatorWit
         }
     }
 
-    operators
+    Ok(operators)
+}
+
+pub fn parse_content_stream_strict_with_budget(
+    input: &[u8],
+    budget: &ResourceBudget,
+) -> Result<Vec<ContentOperator>, String> {
+    parse_content_stream_with_offsets_strict_with_budget(input, budget).map(|operators| {
+        operators
+            .into_iter()
+            .map(|operator| operator.operator)
+            .collect()
+    })
+}
+
+pub fn parse_content_stream_with_offsets_strict_with_budget(
+    input: &[u8],
+    budget: &ResourceBudget,
+) -> Result<Vec<ContentOperatorWithOffset>, String> {
+    budget
+        .consume_input(input.len() as u64)
+        .map_err(|error| error.to_string())?;
+    let mut operators = Vec::new();
+    let mut operand_stack: Vec<Operand> = Vec::new();
+    let mut remaining = input;
+    let base_len = input.len();
+
+    while !remaining.is_empty() {
+        let (rest, _) = multispace0::<_, nom::error::Error<_>>(remaining)
+            .map_err(|error| format!("Invalid content stream whitespace: {error:?}"))?;
+        remaining = rest;
+        if remaining.is_empty() {
+            break;
+        }
+
+        if remaining.starts_with(b"BI")
+            && remaining
+                .get(2)
+                .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            let offset = base_len.saturating_sub(remaining.len());
+            let (rest, image) = parse_inline_image_after_input_budget(remaining, budget)
+                .map_err(|error| format!("Invalid inline image: {error:?}"))?;
+            for operator in [
+                ContentOperator::BeginInlineImage,
+                ContentOperator::InlineImageData(image.clone()),
+                ContentOperator::EndInlineImage,
+            ] {
+                budget.consume_node().map_err(|error| error.to_string())?;
+                operators.push(ContentOperatorWithOffset { operator, offset });
+            }
+            remaining = rest;
+            continue;
+        }
+
+        if let Ok((rest, operand)) = parse_operand(remaining) {
+            operand_stack.push(operand);
+            remaining = rest;
+            continue;
+        }
+
+        if let Ok((rest, operator)) = parse_operator_with_operands(remaining, &mut operand_stack) {
+            budget.consume_node().map_err(|error| error.to_string())?;
+            let offset = base_len.saturating_sub(remaining.len());
+            operators.push(ContentOperatorWithOffset { operator, offset });
+            remaining = rest;
+            continue;
+        }
+
+        let preview_len = remaining.len().min(16);
+        return Err(format!(
+            "Invalid content stream token at offset {}: {:?}",
+            base_len.saturating_sub(remaining.len()),
+            &remaining[..preview_len]
+        ));
+    }
+
+    if !operand_stack.is_empty() {
+        return Err("Content stream ended with unconsumed operands".to_string());
+    }
+
+    Ok(operators)
 }
 
 /// Parse a single operand
@@ -794,6 +895,34 @@ fn operand_to_pdf_value(op: Operand) -> crate::types::PdfValue {
 
 /// Parse inline image with dictionary and data
 pub fn parse_inline_image(input: &[u8]) -> IResult<&[u8], InlineImageInfo> {
+    parse_inline_image_with_budget(input, &ResourceBudget::default())
+}
+
+pub fn parse_inline_image_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], InlineImageInfo> {
+    if budget.consume_input(input.len() as u64).is_err() {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::TooLarge,
+        )));
+    }
+
+    parse_inline_image_impl(input, budget)
+}
+
+pub(crate) fn parse_inline_image_after_input_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], InlineImageInfo> {
+    parse_inline_image_impl(input, budget)
+}
+
+fn parse_inline_image_impl<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], InlineImageInfo> {
     // Skip BI
     let (input, _) = tag(b"BI")(input)?;
     let (input, _) = multispace0(input)?;
@@ -846,6 +975,12 @@ pub fn parse_inline_image(input: &[u8]) -> IResult<&[u8], InlineImageInfo> {
         }
     }
 
+    if budget.consume_decoded(data_end as u64).is_err() {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::TooLarge,
+        )));
+    }
     let data = remaining[..data_end].to_vec();
     let remaining = &remaining[data_end..];
 
@@ -965,7 +1100,9 @@ fn pdf_value_to_content_operand(
         crate::types::PdfValue::Name(n) => {
             crate::parser::content_stream::Operand::Name(n.without_slash().to_string())
         }
-        crate::types::PdfValue::Boolean(_) => crate::parser::content_stream::Operand::Integer(1), // Simplified
+        crate::types::PdfValue::Boolean(value) => {
+            crate::parser::content_stream::Operand::Integer(i64::from(value))
+        }
         crate::types::PdfValue::Null => crate::parser::content_stream::Operand::Integer(0), // Simplified
         crate::types::PdfValue::Array(arr) => {
             let operands: Vec<_> = arr
@@ -975,5 +1112,46 @@ fn pdf_value_to_content_operand(
             crate::parser::content_stream::Operand::Array(operands)
         }
         _ => crate::parser::content_stream::Operand::Integer(0), // Default for unsupported types
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        parse_content_stream_strict_with_budget, parse_inline_image_with_budget,
+        pdf_value_to_content_operand,
+    };
+    use crate::performance::ResourceBudget;
+    use crate::types::PdfValue;
+
+    #[test]
+    fn inline_image_parser_respects_input_budget() {
+        let budget = ResourceBudget::new(3, 1024, 1024, 10, 10, 10, 10, 8);
+        assert!(parse_inline_image_with_budget(b"BI ID x EI", &budget).is_err());
+    }
+
+    #[test]
+    fn strict_content_parser_rejects_residual_tokens() {
+        let budget = ResourceBudget::default();
+        assert!(parse_content_stream_strict_with_budget(b"1 0 m", &budget).is_ok());
+        assert!(parse_content_stream_strict_with_budget(b"1", &budget).is_err());
+        assert!(parse_content_stream_strict_with_budget(b"q @", &budget).is_err());
+        assert!(parse_content_stream_strict_with_budget(
+            b"BI /W 1 /H 1 /BPC 8 /CS /G ID 00 EI",
+            &budget
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn pdf_boolean_operand_preserves_false_value() {
+        assert_eq!(
+            pdf_value_to_content_operand(PdfValue::Boolean(false)),
+            crate::parser::content_stream::Operand::Integer(0)
+        );
+        assert_eq!(
+            pdf_value_to_content_operand(PdfValue::Boolean(true)),
+            crate::parser::content_stream::Operand::Integer(1)
+        );
     }
 }

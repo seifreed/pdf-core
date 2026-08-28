@@ -72,6 +72,43 @@ fn test_incremental_xref_chain() {
         .contains(&ObjectId::new(4, 0)));
 }
 
+#[test]
+fn invalid_prev_is_an_error_in_strict_mode_and_a_diagnostic_in_tolerant_mode() {
+    let pdf = build_incremental_pdf();
+    let old_prev = format!("/Prev {}", pdf.xref1_offset);
+    let new_prev = "/Prev -1";
+    let mut text = String::from_utf8(pdf.data).expect("test PDF should be UTF-8");
+    text = text.replace(&old_prev, new_prev);
+    let data = text.into_bytes();
+
+    assert!(PdfParser::strict().parse_bytes(&data).is_err());
+    let document = PdfParser::new()
+        .parse_bytes(&data)
+        .expect("tolerant parser should retain the current revision");
+    assert!(document
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.error_code == "invalid_prev"));
+}
+
+#[test]
+fn invalid_prev_type_is_an_error_in_strict_mode_and_a_diagnostic_in_tolerant_mode() {
+    let pdf = build_incremental_pdf();
+    let old_prev = format!("/Prev {}", pdf.xref1_offset);
+    let mut text = String::from_utf8(pdf.data).expect("test PDF should be UTF-8");
+    text = text.replace(&old_prev, "/Prev (invalid)");
+    let data = text.into_bytes();
+
+    assert!(PdfParser::strict().parse_bytes(&data).is_err());
+    let document = PdfParser::new()
+        .parse_bytes(&data)
+        .expect("tolerant parser should retain the current revision");
+    assert!(document
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.error_code == "invalid_prev_type"));
+}
+
 fn build_hybrid_pdf() -> (Vec<u8>, u64, u64) {
     let mut pdf = b"%PDF-1.5\n".to_vec();
     let objects = [
@@ -130,4 +167,26 @@ fn test_hybrid_xref_table_and_stream() {
         .iter()
         .any(|stream| stream.object_id == ObjectId::new(4, 0)));
     assert!(data.len() > xref_stream_offset as usize);
+}
+
+#[test]
+fn invalid_xref_stream_offset_is_an_error_in_strict_mode_and_a_diagnostic_in_tolerant_mode() {
+    let (data, xref_stream_offset, _) = build_hybrid_pdf();
+    let marker = format!("/XRefStm {}", xref_stream_offset);
+    let replacement = b"/XRefStm (invalid)";
+    let mut data = data;
+    let start = data
+        .windows(marker.len())
+        .position(|window| window == marker.as_bytes())
+        .expect("hybrid trailer should contain XRefStm");
+    data.splice(start..start + marker.len(), replacement.iter().copied());
+
+    assert!(PdfParser::strict().parse_bytes(&data).is_err());
+    let document = PdfParser::new()
+        .parse_bytes(&data)
+        .expect("tolerant parser should retain the classic xref table");
+    assert!(document
+        .diagnostics
+        .iter()
+        .any(|diagnostic| diagnostic.error_code == "invalid_xref_stm_type"));
 }

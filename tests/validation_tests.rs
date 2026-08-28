@@ -46,6 +46,25 @@ mod validation_tests {
     }
 
     #[test]
+    fn pdfa_1b_rejects_cross_reference_streams() {
+        let validator = PdfA1bValidator::new().with_strict_mode(false);
+        let mut document = create_test_document();
+        document.xref.streams.push(pdf_ast::ast::XRefStream {
+            object_id: ObjectId::new(8, 0),
+            dict: PdfDictionary::new(),
+            entries: Vec::new(),
+        });
+
+        let report = validator.validate(&document);
+        let issue = report
+            .issues
+            .iter()
+            .find(|issue| issue.code == "PDF_A_XREF_FORMAT")
+            .expect("PDF/A-1b should reject cross-reference streams");
+        assert_eq!(issue.severity, ValidationSeverity::Error);
+    }
+
+    #[test]
     fn test_pdfa_color_space_validation() {
         let validator = PdfA1bValidator::new().with_strict_mode(false);
         let mut document = create_test_document();
@@ -75,6 +94,32 @@ mod validation_tests {
     }
 
     #[test]
+    fn test_pdfa_color_space_validation_follows_inherited_page_resources() {
+        let validator = PdfA1bValidator::new().with_strict_mode(false);
+        let mut document = create_test_document();
+        let pages_id = document
+            .ast
+            .find_nodes_by_type(NodeType::Pages)
+            .into_iter()
+            .next()
+            .expect("test document should have a Pages node");
+        let pages = document
+            .ast
+            .get_node_mut(pages_id)
+            .expect("Pages node should exist");
+        if let PdfValue::Dictionary(dict) = &mut pages.value {
+            let mut resources = PdfDictionary::new();
+            let mut colorspaces = PdfDictionary::new();
+            colorspaces.insert("CS1", PdfValue::Name(PdfName::new("DeviceRGB")));
+            resources.insert("ColorSpace", PdfValue::Dictionary(colorspaces));
+            dict.insert("Resources", PdfValue::Dictionary(resources));
+        }
+
+        let report = validator.validate(&document);
+        assert!(has_issue(&report, "PDF_A_COLOR_SPACE"));
+    }
+
+    #[test]
     fn test_pdfa_font_validation() {
         let validator = PdfA1bValidator::new().with_strict_mode(false);
         let mut document = create_test_document();
@@ -100,6 +145,101 @@ mod validation_tests {
             .iter()
             .any(|issue| issue.code == "PDF_A_FONT_EMBEDDING");
         assert!(has_embed_error);
+    }
+
+    #[test]
+    fn test_pdfa_cid_font_descriptor_embedding() {
+        let validator = PdfA1bValidator::new().with_strict_mode(false);
+        let mut document = create_test_document();
+        document.ast.create_node(
+            NodeType::Object(ObjectId::new(99, 0)),
+            PdfValue::Stream(PdfStream::new(PdfDictionary::new(), vec![0x01])),
+        );
+        let descriptor = PdfValue::Dictionary({
+            let mut dict = PdfDictionary::new();
+            dict.insert("FontFile2", PdfValue::Reference(PdfReference::new(99, 0)));
+            dict
+        });
+        let cid_font = PdfValue::Dictionary({
+            let mut dict = PdfDictionary::new();
+            dict.insert("Type", PdfValue::Name(PdfName::new("Font")));
+            dict.insert(
+                "DescendantFonts",
+                PdfValue::Array(
+                    vec![PdfValue::Dictionary({
+                        let mut descendant = PdfDictionary::new();
+                        descendant.insert("FontDescriptor", descriptor);
+                        descendant
+                    })]
+                    .into(),
+                ),
+            );
+            dict
+        });
+        document.ast.create_node(NodeType::CIDFont, cid_font);
+
+        let report = validator.validate(&document);
+        assert!(!has_issue(&report, "PDF_A_FONT_EMBEDDING"));
+    }
+
+    #[test]
+    fn pdfa_cid_font_resolves_indirect_descendant_fonts_array() {
+        let validator = PdfA1bValidator::new().with_strict_mode(false);
+        let mut document = create_test_document();
+        document.ast.create_node(
+            NodeType::Object(ObjectId::new(100, 0)),
+            PdfValue::Stream(PdfStream::new(PdfDictionary::new(), vec![0x01])),
+        );
+        document.ast.create_node(
+            NodeType::Object(ObjectId::new(101, 0)),
+            PdfValue::Array(
+                vec![PdfValue::Dictionary({
+                    let mut descendant = PdfDictionary::new();
+                    descendant.insert(
+                        "FontDescriptor",
+                        PdfValue::Dictionary({
+                            let mut descriptor = PdfDictionary::new();
+                            descriptor.insert(
+                                "FontFile2",
+                                PdfValue::Reference(PdfReference::new(100, 0)),
+                            );
+                            descriptor
+                        }),
+                    );
+                    descendant
+                })]
+                .into(),
+            ),
+        );
+        let mut cid_font = PdfDictionary::new();
+        cid_font.insert("Type", PdfValue::Name(PdfName::new("Font")));
+        cid_font.insert(
+            "DescendantFonts",
+            PdfValue::Reference(PdfReference::new(101, 0)),
+        );
+        document
+            .ast
+            .create_node(NodeType::CIDFont, PdfValue::Dictionary(cid_font));
+
+        let report = validator.validate(&document);
+        assert!(!has_issue(&report, "PDF_A_FONT_EMBEDDING"));
+    }
+
+    #[test]
+    fn pdfa_font_file_key_must_reference_a_stream() {
+        let validator = PdfA1bValidator::new().with_strict_mode(false);
+        let mut document = create_test_document();
+        let font = PdfValue::Dictionary({
+            let mut dict = PdfDictionary::new();
+            dict.insert("Type", PdfValue::Name(PdfName::new("Font")));
+            dict.insert("BaseFont", PdfValue::Name(PdfName::new("TestFont")));
+            dict.insert("FontFile", PdfValue::Null);
+            dict
+        });
+        document.ast.create_node(NodeType::Font, font);
+
+        let report = validator.validate(&document);
+        assert!(has_issue(&report, "PDF_A_FONT_EMBEDDING"));
     }
 
     #[test]
@@ -190,6 +330,65 @@ mod validation_tests {
     }
 
     #[test]
+    fn pdfa_strict_metadata_sync_rejects_info_xmp_mismatch() {
+        fn document_with_metadata(title: &str, xmp_title: &str) -> PdfDocument {
+            let mut document = create_test_document();
+            let info_id = document.ast.create_node(
+                NodeType::Other,
+                PdfValue::Dictionary({
+                    let mut dict = PdfDictionary::new();
+                    dict.insert("Title", PdfValue::String(PdfString::from(title)));
+                    dict.insert(
+                        "CreationDate",
+                        PdfValue::String(PdfString::from("D:20240101120000+01'00'")),
+                    );
+                    dict.insert(
+                        "ModDate",
+                        PdfValue::String(PdfString::from("D:20240101120000+01'00'")),
+                    );
+                    dict
+                }),
+            );
+            document.set_info(info_id);
+
+            let xmp = format!(
+                "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>{xmp_title}</dc:title></rdf:Description><rdf:Description xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmp:CreateDate=\"2024-01-01T12:00:00+01:00\" xmp:ModifyDate=\"2024-01-01T12:00:00+01:00\"/></rdf:RDF></x:xmpmeta>"
+            );
+            let metadata = PdfValue::Stream(PdfStream::new(
+                {
+                    let mut dict = PdfDictionary::new();
+                    dict.insert("Type", PdfValue::Name(PdfName::new("Metadata")));
+                    dict.insert("Subtype", PdfValue::Name(PdfName::new("XML")));
+                    dict
+                },
+                xmp.into_bytes(),
+            ));
+            let catalog_id = document.catalog.expect("catalog should exist");
+            document
+                .ast
+                .get_node_mut(catalog_id)
+                .expect("catalog node should exist")
+                .value
+                .as_dict_mut()
+                .expect("catalog should be a dictionary")
+                .insert("Metadata", metadata);
+            document
+        }
+
+        let validator = PdfA1bValidator::new();
+        let matching = validator.validate(&document_with_metadata("Same", "Same"));
+        assert!(!has_issue(&matching, "PDF_A_METADATA_SYNC"));
+
+        let mismatched = validator.validate(&document_with_metadata("Info", "XMP"));
+        assert!(has_issue(&mismatched, "PDF_A_METADATA_SYNC"));
+        assert!(mismatched.issues.iter().any(|issue| {
+            issue.code == "PDF_A_METADATA_SYNC"
+                && issue.severity == ValidationSeverity::Error
+                && issue.message.contains("Title")
+        }));
+    }
+
+    #[test]
     fn test_pdfa_image_validation() {
         let validator = PdfA1bValidator::new().with_strict_mode(false);
         let mut document = create_test_document();
@@ -276,6 +475,7 @@ mod validation_tests {
     #[test]
     fn test_pdfx_colorspace_constraint_detects_device_rgb() {
         let mut document = create_test_document();
+        document.version = PdfVersion::new(1, 3);
         add_page_with_resource_colorspace(&mut document, "/DeviceRGB");
 
         let registry = SchemaRegistry::new();
@@ -359,6 +559,75 @@ mod validation_tests {
     }
 
     #[test]
+    fn pdfua_rejects_empty_alt_text_and_resolves_indirect_alt_text() {
+        let registry = SchemaRegistry::new();
+
+        let mut empty = create_test_document();
+        add_marked_struct_tree(&mut empty);
+        add_struct_elem_figure(&mut empty, true);
+        let elem_id = empty.ast.find_nodes_by_type(NodeType::StructElem)[0];
+        if let Some(node) = empty.ast.get_node_mut(elem_id) {
+            if let PdfValue::Dictionary(dict) = &mut node.value {
+                dict.insert("Alt", PdfValue::String(PdfString::new_literal(b"   ")));
+            }
+        }
+        let empty = registry
+            .validate(&empty, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(has_issue(&empty, "ALT_TEXT_MISSING"));
+
+        let mut indirect = create_test_document();
+        add_marked_struct_tree(&mut indirect);
+        add_struct_elem_figure(&mut indirect, false);
+        indirect.ast.create_node(
+            NodeType::Object(ObjectId::new(900, 0)),
+            PdfValue::String(PdfString::new_literal(b"indirect figure description")),
+        );
+        let elem_id = indirect.ast.find_nodes_by_type(NodeType::StructElem)[0];
+        if let Some(node) = indirect.ast.get_node_mut(elem_id) {
+            if let PdfValue::Dictionary(dict) = &mut node.value {
+                dict.insert("Alt", PdfValue::Reference(PdfReference::new(900, 0)));
+            }
+        }
+        let indirect = registry
+            .validate(&indirect, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(!has_issue(&indirect, "ALT_TEXT_MISSING"));
+    }
+
+    #[test]
+    fn pdfua_tagged_structure_resolves_indirect_catalog_entries() {
+        let mut document = create_test_document();
+        let catalog_id = document.catalog.expect("Catalog should exist");
+        document.ast.create_node(
+            NodeType::Object(ObjectId::new(901, 0)),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Marked", PdfValue::Boolean(true));
+                dict
+            }),
+        );
+        document.ast.create_node(
+            NodeType::Object(ObjectId::new(902, 0)),
+            PdfValue::Dictionary(PdfDictionary::new()),
+        );
+        if let Some(catalog) = document.ast.get_node_mut(catalog_id) {
+            if let PdfValue::Dictionary(dict) = &mut catalog.value {
+                dict.insert("MarkInfo", PdfValue::Reference(PdfReference::new(901, 0)));
+                dict.insert(
+                    "StructTreeRoot",
+                    PdfValue::Reference(PdfReference::new(902, 0)),
+                );
+            }
+        }
+
+        let report = SchemaRegistry::new()
+            .validate(&document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(!has_issue(&report, "NO_TAGGED_STRUCTURE"));
+    }
+
+    #[test]
     fn fixture_pdfua_language_rule_has_positive_and_negative_cases() {
         let registry = SchemaRegistry::new();
 
@@ -374,6 +643,19 @@ mod validation_tests {
             .expect("PDF/UA-1 report should be produced");
         assert!(has_issue(&empty, "LANG_EMPTY"));
 
+        set_catalog_lang(&mut empty_document, b"   ");
+        let whitespace = registry
+            .validate(&empty_document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(has_issue(&whitespace, "LANG_EMPTY"));
+
+        let mut invalid_document = create_test_document();
+        set_catalog_lang(&mut invalid_document, b"en_US");
+        let invalid = registry
+            .validate(&invalid_document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(has_issue(&invalid, "LANG_INVALID"));
+
         let mut valid_document = create_test_document();
         set_catalog_lang(&mut valid_document, b"en-US");
         let valid = registry
@@ -381,6 +663,211 @@ mod validation_tests {
             .expect("PDF/UA-1 report should be produced");
         assert!(!has_issue(&valid, "LANG_MISSING"));
         assert!(!has_issue(&valid, "LANG_EMPTY"));
+        assert!(!has_issue(&valid, "LANG_INVALID"));
+
+        let mut utf16_document = create_test_document();
+        set_catalog_lang(&mut utf16_document, b"\xFE\xFF\x00e\x00n\x00-\x00U\x00S");
+        let utf16 = registry
+            .validate(&utf16_document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(!has_issue(&utf16, "LANG_INVALID"));
+    }
+
+    #[test]
+    fn fixture_pdfua_metadata_rule_has_positive_and_negative_cases() {
+        let registry = SchemaRegistry::new();
+
+        let mut valid_document = create_test_document();
+        add_pdfua_metadata(&mut valid_document, true);
+        let valid = registry
+            .validate(&valid_document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(!has_issue(&valid, "METADATA_STREAM_INVALID"));
+
+        let mut invalid_document = create_test_document();
+        add_pdfua_metadata(&mut invalid_document, false);
+        let invalid = registry
+            .validate(&invalid_document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(has_issue(&invalid, "METADATA_STREAM_INVALID"));
+    }
+
+    #[test]
+    fn pdfua_metadata_rule_decodes_filtered_xmp_before_inspection() {
+        use flate2::{write::ZlibEncoder, Compression};
+        use std::io::Write;
+
+        let mut document = create_test_document();
+        let catalog_id = document.catalog.expect("Catalog should exist");
+        let catalog = document
+            .ast
+            .get_node_mut(catalog_id)
+            .expect("Catalog node should exist");
+        let mut encoded = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoded
+            .write_all(b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"></x:xmpmeta>")
+            .expect("XMP should encode");
+        let compressed = encoded.finish().expect("compressed XMP should finish");
+
+        if let PdfValue::Dictionary(dict) = &mut catalog.value {
+            let mut metadata_dict = PdfDictionary::new();
+            metadata_dict.insert("Type", PdfValue::Name(PdfName::new("Metadata")));
+            metadata_dict.insert("Subtype", PdfValue::Name(PdfName::new("XML")));
+            metadata_dict.insert("Filter", PdfValue::Name(PdfName::new("FlateDecode")));
+            dict.insert(
+                "Metadata",
+                PdfValue::Stream(PdfStream::new(metadata_dict, compressed)),
+            );
+        }
+
+        let report = SchemaRegistry::new()
+            .validate(&document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(!has_issue(&report, "XMP_PACKET_MISSING"));
+        assert!(!has_issue(&report, "METADATA_DECODE_FAILED"));
+    }
+
+    #[test]
+    fn pdfua_metadata_decode_respects_document_budget() {
+        let mut document = create_test_document();
+        add_pdfua_metadata(&mut document, true);
+        document.budget =
+            pdf_ast::performance::ResourceBudget::new(1024, 0, 1024, 10, 100, 100, 100, 8);
+
+        let report = SchemaRegistry::new()
+            .validate(&document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(has_issue(&report, "METADATA_DECODE_FAILED"));
+    }
+
+    #[test]
+    fn pdfa_resolves_indirect_catalog_entries() {
+        let mut document = create_test_document();
+        let action_id = ObjectId::new(40, 0);
+        document.ast.create_node(
+            NodeType::Object(action_id),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("S", PdfValue::Name(PdfName::new("JavaScript")));
+                dict
+            }),
+        );
+        let form_id = ObjectId::new(41, 0);
+        document.ast.create_node(
+            NodeType::Object(form_id),
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("XFA", PdfValue::String(PdfString::new_literal(b"xfa")));
+                dict
+            }),
+        );
+        document.ast.create_node(
+            NodeType::Object(ObjectId::new(42, 0)),
+            PdfValue::Stream(PdfStream::new(
+                {
+                    let mut dict = PdfDictionary::new();
+                    dict.insert("Type", PdfValue::Name(PdfName::new("Metadata")));
+                    dict.insert("Subtype", PdfValue::Name(PdfName::new("XML")));
+                    dict
+                },
+                b"<x:xmpmeta/>".to_vec(),
+            )),
+        );
+
+        let catalog = document.catalog.expect("catalog should exist");
+        let catalog_node = document
+            .ast
+            .get_node_mut(catalog)
+            .expect("catalog node should exist");
+        if let PdfValue::Dictionary(catalog_dict) = &mut catalog_node.value {
+            catalog_dict.insert("OpenAction", PdfValue::Reference(PdfReference::new(40, 0)));
+            catalog_dict.insert("AcroForm", PdfValue::Reference(PdfReference::new(41, 0)));
+            catalog_dict.insert("Metadata", PdfValue::Reference(PdfReference::new(42, 0)));
+        }
+
+        let report = PdfA1bValidator::new()
+            .with_strict_mode(false)
+            .validate(&document);
+        assert!(has_issue(&report, "PDF_A_JAVASCRIPT"));
+        assert!(has_issue(&report, "PDF_A_XFA"));
+        assert!(!has_issue(&report, "PDF_A_XMP_METADATA"));
+    }
+
+    #[test]
+    fn pdfa_output_intent_requires_profile_fields() {
+        let mut invalid = create_test_document();
+        let catalog_id = invalid.catalog.expect("catalog should exist");
+        let catalog = invalid
+            .ast
+            .get_node_mut(catalog_id)
+            .expect("catalog node should exist");
+        if let PdfValue::Dictionary(dict) = &mut catalog.value {
+            dict.insert(
+                "OutputIntents",
+                PdfValue::Array(PdfArray::from(vec![PdfValue::Dictionary({
+                    let mut intent = PdfDictionary::new();
+                    intent.insert("S", PdfValue::Name(PdfName::new("GTS_PDFX")));
+                    intent
+                })])),
+            );
+        }
+        let invalid_report = PdfA1bValidator::new()
+            .with_strict_mode(false)
+            .validate(&invalid);
+        assert!(has_issue(&invalid_report, "PDF_A_OUTPUT_INTENT"));
+
+        let mut valid = create_test_document();
+        let catalog_id = valid.catalog.expect("catalog should exist");
+        let catalog = valid
+            .ast
+            .get_node_mut(catalog_id)
+            .expect("catalog node should exist");
+        if let PdfValue::Dictionary(dict) = &mut catalog.value {
+            dict.insert(
+                "OutputIntents",
+                PdfValue::Array(PdfArray::from(vec![PdfValue::Dictionary({
+                    let mut intent = PdfDictionary::new();
+                    intent.insert("S", PdfValue::Name(PdfName::new("GTS_PDFA1")));
+                    intent.insert(
+                        "OutputConditionIdentifier",
+                        PdfValue::String(PdfString::new_literal(b"sRGB")),
+                    );
+                    intent.insert(
+                        "DestOutputProfile",
+                        PdfValue::Stream(PdfStream::new(PdfDictionary::new(), vec![0; 4])),
+                    );
+                    intent
+                })])),
+            );
+        }
+        let valid_report = PdfA1bValidator::new()
+            .with_strict_mode(false)
+            .validate(&valid);
+        assert!(!has_issue(&valid_report, "PDF_A_OUTPUT_INTENT"));
+    }
+
+    #[test]
+    fn pdfua_resolves_indirect_catalog_language() {
+        let mut document = create_test_document();
+        let language_id = ObjectId::new(50, 0);
+        document.ast.create_node(
+            NodeType::Object(language_id),
+            PdfValue::String(PdfString::new_literal(b"en-US")),
+        );
+        let catalog_id = document.catalog.expect("catalog should exist");
+        let catalog = document
+            .ast
+            .get_node_mut(catalog_id)
+            .expect("catalog node should exist");
+        if let PdfValue::Dictionary(dict) = &mut catalog.value {
+            dict.insert("Lang", PdfValue::Reference(PdfReference::new(50, 0)));
+        }
+
+        let report = SchemaRegistry::new()
+            .validate(&document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(!has_issue(&report, "LANG_MISSING"));
+        assert!(!has_issue(&report, "LANG_EMPTY"));
     }
 
     // Helper functions for creating test scenarios
@@ -527,6 +1014,12 @@ mod validation_tests {
     }
 
     fn add_embedded_font(document: &mut PdfDocument, font_name: &str, embedded: bool) {
+        if embedded {
+            document.ast.create_node(
+                NodeType::Object(ObjectId::new(999, 0)),
+                PdfValue::Stream(PdfStream::new(PdfDictionary::new(), vec![0x01])),
+            );
+        }
         let font_value = PdfValue::Dictionary({
             let mut dict = PdfDictionary::new();
             dict.insert("Type", PdfValue::Name(PdfName::new("Font")));
@@ -624,6 +1117,28 @@ mod validation_tests {
         });
         let metadata_id = document.ast.create_node(NodeType::Metadata, metadata_value);
         document.set_info(metadata_id);
+    }
+
+    fn add_pdfua_metadata(document: &mut PdfDocument, valid_type: bool) {
+        let catalog_id = document.catalog.expect("Catalog should exist");
+        let catalog = document
+            .ast
+            .get_node_mut(catalog_id)
+            .expect("Catalog node should exist");
+        if let PdfValue::Dictionary(dict) = &mut catalog.value {
+            let mut metadata_dict = PdfDictionary::new();
+            if valid_type {
+                metadata_dict.insert("Type", PdfValue::Name(PdfName::new("Metadata")));
+            }
+            metadata_dict.insert("Subtype", PdfValue::Name(PdfName::new("XML")));
+            dict.insert(
+                "Metadata",
+                PdfValue::Stream(PdfStream::new(
+                    metadata_dict,
+                    b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"></x:xmpmeta>".to_vec(),
+                )),
+            );
+        }
     }
 
     fn add_image_object(document: &mut PdfDocument, colorspace: &str) {

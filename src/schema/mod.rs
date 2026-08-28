@@ -1,18 +1,18 @@
 use crate::ast::{NodeId, NodeType, PdfAstGraph};
+use crate::performance::ResourceBudget;
 use crate::serialization::{edge_type_name, node_type_name};
 use crate::types::{
     ObjectId, PdfArray, PdfDictionary, PdfName, PdfReference, PdfStream, PdfString, PdfValue,
-    StreamData,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 type MigrationFunction = Box<dyn Fn(&mut StableAstSchema) -> Result<(), String>>;
 
 pub const SCHEMA_VERSION: &str = "1.1.0";
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SchemaVersion {
     pub major: u32,
     pub minor: u32,
@@ -76,12 +76,18 @@ pub struct StableAstSchema {
 
 impl StableAstSchema {
     pub fn to_graph(&self) -> Result<PdfAstGraph, String> {
+        self.to_graph_with_budget(&ResourceBudget::default())
+    }
+
+    pub fn to_graph_with_budget(&self, budget: &ResourceBudget) -> Result<PdfAstGraph, String> {
+        budget.check().map_err(|error| error.to_string())?;
         let mut graph = PdfAstGraph::new();
         graph.set_deterministic_ids(false);
 
         let mut id_map: HashMap<String, NodeId> = HashMap::new();
 
         for node in &self.nodes {
+            budget.consume_node().map_err(|error| error.to_string())?;
             let node_type = parse_node_type(node)?;
             let value = stable_value_to_pdf(&node.value_type, &node.value)?;
             let node_id = graph.create_node(node_type, value);
@@ -89,6 +95,7 @@ impl StableAstSchema {
         }
 
         for edge in &self.edges {
+            budget.consume_edge().map_err(|error| error.to_string())?;
             let from = id_map
                 .get(&edge.source)
                 .ok_or_else(|| format!("Unknown edge source: {}", edge.source))?;
@@ -367,10 +374,7 @@ fn parse_stream_value(value: &Value) -> Result<PdfValue, String> {
         }
     }
 
-    let stream = PdfStream {
-        dict,
-        data: StreamData::Raw(Vec::new()),
-    };
+    let stream = PdfStream::new(dict, Vec::new());
     Ok(PdfValue::Stream(stream))
 }
 
@@ -690,7 +694,14 @@ impl SchemaMigrator {
         mut schema: StableAstSchema,
         target_version: SchemaVersion,
     ) -> Result<StableAstSchema, String> {
-        while !schema.version.is_compatible_with(&target_version) {
+        let mut visited_versions = HashSet::new();
+        while schema.version != target_version {
+            if !visited_versions.insert(schema.version.clone()) {
+                return Err(format!(
+                    "Schema migration cycle detected at version {}.{}.{}",
+                    schema.version.major, schema.version.minor, schema.version.patch
+                ));
+            }
             let migration = self.find_migration(&schema.version)?;
             (migration.migration_fn)(&mut schema)?;
             schema.version = migration.to_version.clone();
@@ -799,6 +810,59 @@ mod tests {
     }
 
     #[test]
+    fn schema_migration_reaches_the_exact_target_version() {
+        let mut migrator = SchemaMigrator::new();
+        migrator.register_migration(
+            SchemaVersion {
+                major: 1,
+                minor: 0,
+                patch: 0,
+            },
+            SchemaVersion::current(),
+            Box::new(|_| Ok(())),
+        );
+        let schema = StableAstSchema {
+            version: SchemaVersion {
+                major: 0,
+                minor: 9,
+                patch: 0,
+            },
+            document_metadata: HashMap::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            deterministic_ids: false,
+        };
+
+        let migrated = migrator
+            .migrate(schema, SchemaVersion::current())
+            .expect("migration chain should reach the requested version");
+        assert_eq!(migrated.version, SchemaVersion::current());
+    }
+
+    #[test]
+    fn schema_migration_rejects_non_progressing_cycles() {
+        let version = SchemaVersion {
+            major: 1,
+            minor: 0,
+            patch: 0,
+        };
+        let mut migrator = SchemaMigrator::new();
+        migrator.register_migration(version.clone(), version.clone(), Box::new(|_| Ok(())));
+        let schema = StableAstSchema {
+            version,
+            document_metadata: HashMap::new(),
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            deterministic_ids: false,
+        };
+
+        let error = migrator
+            .migrate(schema, SchemaVersion::current())
+            .expect_err("non-progressing migrations must terminate");
+        assert!(error.contains("cycle"));
+    }
+
+    #[test]
     fn test_deterministic_id_generation() {
         let mut graph = PdfAstGraph::new();
         let root = graph.create_node(NodeType::Root, PdfValue::Null);
@@ -826,5 +890,29 @@ mod tests {
 
         assert_eq!(imported.node_count(), graph.node_count());
         assert!(imported.get_root().is_some());
+    }
+
+    #[test]
+    fn schema_graph_import_respects_node_budget() {
+        let schema = StableAstSchema {
+            version: SchemaVersion::current(),
+            document_metadata: HashMap::new(),
+            nodes: vec![StableNode {
+                id: "root".to_string(),
+                node_type: "Root".to_string(),
+                value_type: "null".to_string(),
+                value: Value::Null,
+                metadata: HashMap::new(),
+                object_id: None,
+            }],
+            edges: Vec::new(),
+            deterministic_ids: true,
+        };
+        let budget = crate::performance::ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 10);
+
+        let error = schema
+            .to_graph_with_budget(&budget)
+            .expect_err("schema graph import must respect node budget");
+        assert!(error.contains("Nodes"));
     }
 }

@@ -566,17 +566,15 @@ impl AccessibilityValidator {
                     });
                 }
             }
-            "Artifact" => {
+            "Artifact" if attributes.alt.is_some() || attributes.actual_text.is_some() => {
                 // Artifacts should not have accessibility attributes
-                if attributes.alt.is_some() || attributes.actual_text.is_some() {
-                    report.add_issue(AccessibilityIssue {
-                        issue_type: AccessibilityIssueType::ArtifactWithText,
-                        severity: AccessibilityIssueSeverity::Warning,
-                        node_id,
-                        description: "Artifact has accessibility text".to_string(),
-                        suggestion: Some("Remove Alt/ActualText from artifacts".to_string()),
-                    });
-                }
+                report.add_issue(AccessibilityIssue {
+                    issue_type: AccessibilityIssueType::ArtifactWithText,
+                    severity: AccessibilityIssueSeverity::Warning,
+                    node_id,
+                    description: "Artifact has accessibility text".to_string(),
+                    suggestion: Some("Remove Alt/ActualText from artifacts".to_string()),
+                });
             }
             _ => {}
         }

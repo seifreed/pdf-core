@@ -1,9 +1,14 @@
-use crate::ast::{EdgeType, NodeId, NodeType, PdfAstGraph, PdfDocument};
-use crate::types::PdfValue;
+use crate::ast::{
+    AstNode, CrossReferenceTable, DocumentMetadata, DocumentRevision, EdgeType, ForensicSnapshot,
+    LinearizationInfo, NodeId, NodeType, PdfAstGraph, PdfDocument, PdfVersion, XRefEntry,
+    XRefStream,
+};
+use crate::performance::{ResourceBudget, ResourceBudgetError};
+use crate::types::{ObjectId, PdfValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub const AST_SCHEMA_VERSION: &str = "1.1.0";
+pub const AST_SCHEMA_VERSION: &str = "1.2.0";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableDocument {
@@ -15,11 +20,21 @@ pub struct SerializableDocument {
     pub trailer: SerializableValue,
     pub xref_entries: HashMap<String, SerializableXRefEntry>,
     #[serde(default)]
+    pub xref_prev_offset: Option<u64>,
+    #[serde(default)]
+    pub xref_hybrid_mode: bool,
+    #[serde(default)]
+    pub xref_streams: Vec<SerializableXRefStream>,
+    #[serde(default)]
     pub original_bytes: Option<Vec<u8>>,
     #[serde(default)]
     pub revisions: Vec<SerializableRevision>,
     #[serde(default)]
     pub diagnostics: Vec<crate::ast::ParseDiagnostic>,
+    #[serde(default)]
+    pub forensic: Option<SerializableForensicSnapshot>,
+    #[serde(default)]
+    pub linearization: Option<SerializableLinearizationInfo>,
     pub metadata: SerializableDocumentMetadata,
 }
 
@@ -28,6 +43,31 @@ pub struct SerializableXRefEntry {
     pub offset: Option<u64>,
     pub generation: u16,
     pub entry_type: String,
+    #[serde(default)]
+    pub next_free_object: Option<u32>,
+    #[serde(default)]
+    pub stream_object: Option<u32>,
+    #[serde(default)]
+    pub index: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableXRefStream {
+    pub object_id: (u32, u16),
+    pub dict: SerializableValue,
+    pub entries: Vec<XRefEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableLinearizationInfo {
+    pub version: f64,
+    pub file_length: u64,
+    pub hint_stream_offset: u64,
+    pub hint_stream_length: Option<u64>,
+    pub object_count: u32,
+    pub first_page_object_number: u32,
+    pub first_page_end_offset: u64,
+    pub main_xref_table_entries: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +78,161 @@ pub struct SerializableRevision {
     pub modified_objects: Vec<(u32, u16)>,
     pub added_objects: Vec<(u32, u16)>,
     pub deleted_objects: Vec<(u32, u16)>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SerializableForensicSnapshot {
+    pub declared_xref: HashMap<String, crate::ast::XRefEntry>,
+    pub recovered_xref: HashMap<String, crate::ast::XRefEntry>,
+    pub duplicate_objects: Vec<(u32, u16)>,
+    pub overwritten_objects: Vec<(u32, u16)>,
+    pub residual_ranges: Vec<(u64, u64)>,
+}
+
+fn serialize_xref_entry(entry: XRefEntry) -> SerializableXRefEntry {
+    match entry {
+        XRefEntry::InUse { offset, generation } => SerializableXRefEntry {
+            offset: Some(offset),
+            generation,
+            entry_type: "InUse".to_string(),
+            next_free_object: None,
+            stream_object: None,
+            index: None,
+        },
+        XRefEntry::Free {
+            next_free_object,
+            generation,
+        } => SerializableXRefEntry {
+            offset: None,
+            generation,
+            entry_type: "Free".to_string(),
+            next_free_object: Some(next_free_object),
+            stream_object: None,
+            index: None,
+        },
+        XRefEntry::Compressed {
+            stream_object,
+            index,
+        } => SerializableXRefEntry {
+            offset: None,
+            generation: 0,
+            entry_type: "Compressed".to_string(),
+            next_free_object: None,
+            stream_object: Some(stream_object),
+            index: Some(index),
+        },
+    }
+}
+
+fn deserialize_xref_entry(entry: &SerializableXRefEntry) -> Result<XRefEntry, String> {
+    match entry.entry_type.as_str() {
+        "InUse" => Ok(XRefEntry::InUse {
+            offset: entry
+                .offset
+                .ok_or_else(|| "InUse xref entry is missing offset".to_string())?,
+            generation: entry.generation,
+        }),
+        "Free" => Ok(XRefEntry::Free {
+            next_free_object: entry
+                .next_free_object
+                .ok_or_else(|| "Free xref entry is missing next_free_object".to_string())?,
+            generation: entry.generation,
+        }),
+        "Compressed" => {
+            if entry.generation != 0 {
+                return Err("Compressed xref entry has non-zero generation".to_string());
+            }
+            Ok(XRefEntry::Compressed {
+                stream_object: entry
+                    .stream_object
+                    .ok_or_else(|| "Compressed xref entry is missing stream_object".to_string())?,
+                index: entry
+                    .index
+                    .ok_or_else(|| "Compressed xref entry is missing index".to_string())?,
+            })
+        }
+        entry_type => Err(format!("Unknown xref entry type: {entry_type}")),
+    }
+}
+
+fn parse_object_id(value: &str) -> Result<ObjectId, String> {
+    let (number, generation) = value
+        .split_once('_')
+        .ok_or_else(|| format!("Invalid object ID: {value}"))?;
+    let number = number
+        .parse::<u32>()
+        .map_err(|_| format!("Invalid object number: {number}"))?;
+    let generation = generation
+        .parse::<u16>()
+        .map_err(|_| format!("Invalid object generation: {generation}"))?;
+    Ok(ObjectId::new(number, generation))
+}
+
+fn serial_object_id(id: ObjectId) -> (u32, u16) {
+    (id.number, id.generation)
+}
+
+fn object_id_from_tuple((number, generation): (u32, u16)) -> ObjectId {
+    ObjectId::new(number, generation)
+}
+
+impl From<&crate::ast::ForensicSnapshot> for SerializableForensicSnapshot {
+    fn from(snapshot: &crate::ast::ForensicSnapshot) -> Self {
+        let serialize_xref = |entries: &HashMap<crate::types::ObjectId, crate::ast::XRefEntry>| {
+            entries
+                .iter()
+                .map(|(object_id, entry)| {
+                    (
+                        format!("{}_{}", object_id.number, object_id.generation),
+                        *entry,
+                    )
+                })
+                .collect()
+        };
+        Self {
+            declared_xref: serialize_xref(&snapshot.declared_xref),
+            recovered_xref: serialize_xref(&snapshot.recovered_xref),
+            duplicate_objects: snapshot
+                .duplicate_objects
+                .iter()
+                .map(|id| (id.number, id.generation))
+                .collect(),
+            overwritten_objects: snapshot
+                .overwritten_objects
+                .iter()
+                .map(|id| (id.number, id.generation))
+                .collect(),
+            residual_ranges: snapshot.residual_ranges.clone(),
+        }
+    }
+}
+
+fn deserialize_forensic(
+    snapshot: &SerializableForensicSnapshot,
+) -> Result<ForensicSnapshot, String> {
+    let deserialize_xref = |entries: &HashMap<String, XRefEntry>| {
+        entries
+            .iter()
+            .map(|(key, entry)| Ok((parse_object_id(key)?, *entry)))
+            .collect::<Result<HashMap<_, _>, String>>()
+    };
+    Ok(ForensicSnapshot {
+        declared_xref: deserialize_xref(&snapshot.declared_xref)?,
+        recovered_xref: deserialize_xref(&snapshot.recovered_xref)?,
+        duplicate_objects: snapshot
+            .duplicate_objects
+            .iter()
+            .copied()
+            .map(object_id_from_tuple)
+            .collect(),
+        overwritten_objects: snapshot
+            .overwritten_objects
+            .iter()
+            .copied()
+            .map(object_id_from_tuple)
+            .collect(),
+        residual_ranges: snapshot.residual_ranges.clone(),
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -78,6 +273,14 @@ pub struct SerializableDocumentMetadata {
     pub creator: Option<String>,
     pub creation_date: Option<String>,
     pub modification_date: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub subject: Option<String>,
+    #[serde(default)]
+    pub compliance: Vec<crate::ast::ComplianceProfile>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +293,9 @@ pub struct SerializableGraph {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableNode {
+    /// Stable node identity; absent in the historical 1.0/1.1 envelope.
+    #[serde(default)]
+    pub original_id: Option<usize>,
     pub id: usize,
     pub node_type: String,
     pub value: SerializableValue,
@@ -129,6 +335,10 @@ pub enum SerializableValue {
     Integer(i64),
     Real(f64),
     String(String),
+    StringBytes {
+        bytes: Vec<u8>,
+        hexadecimal: bool,
+    },
     Name(String),
     Array(Vec<SerializableValue>),
     Dictionary(HashMap<String, SerializableValue>),
@@ -136,6 +346,18 @@ pub enum SerializableValue {
         dictionary: HashMap<String, SerializableValue>,
         data: Vec<u8>,
         lazy: Option<crate::types::StreamReference>,
+        #[serde(default)]
+        decoded: bool,
+        #[serde(default)]
+        original_bytes: Option<Vec<u8>>,
+        #[serde(default)]
+        declared_length: Option<u64>,
+        #[serde(default)]
+        observed_length: Option<usize>,
+        #[serde(default)]
+        parse_errors: Vec<String>,
+        #[serde(default)]
+        recovery_actions: Vec<String>,
     },
     Reference {
         object_id: u32,
@@ -149,21 +371,199 @@ impl SerializableGraph {
         serializer.serialize(ast)
     }
 
+    /// Serializes an AST after charging its nodes, edges, and byte payloads to
+    /// the supplied resource budget.
+    pub fn from_ast_with_budget(
+        ast: &PdfAstGraph,
+        budget: &ResourceBudget,
+    ) -> Result<Self, ResourceBudgetError> {
+        for node in ast.get_all_nodes() {
+            budget.consume_node()?;
+            check_value_budget(&node.value, budget)?;
+        }
+        for _ in ast.get_all_edges() {
+            budget.consume_edge()?;
+        }
+        Ok(Self::from_ast(ast))
+    }
+
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string_pretty(self)
+    }
+
+    pub fn to_json_with_budget(&self, budget: &ResourceBudget) -> Result<String, String> {
+        check_serializable_graph_budget(self, budget).map_err(|error| error.to_string())?;
+        let output = self.to_json().map_err(|error| error.to_string())?;
+        budget
+            .consume_decoded(output.len() as u64)
+            .map_err(|error| error.to_string())?;
+        Ok(output)
     }
 
     pub fn to_cbor(&self) -> serde_cbor::Result<Vec<u8>> {
         serde_cbor::to_vec(self)
     }
 
+    pub fn to_cbor_with_budget(&self, budget: &ResourceBudget) -> Result<Vec<u8>, String> {
+        check_serializable_graph_budget(self, budget).map_err(|error| error.to_string())?;
+        let output = self.to_cbor().map_err(|error| error.to_string())?;
+        budget
+            .consume_decoded(output.len() as u64)
+            .map_err(|error| error.to_string())?;
+        Ok(output)
+    }
+
     pub fn from_json(json: &str) -> serde_json::Result<Self> {
         serde_json::from_str(json)
+    }
+
+    pub fn from_json_with_budget(json: &str, budget: &ResourceBudget) -> Result<Self, String> {
+        budget.check().map_err(|error| error.to_string())?;
+        if json.len() as u64 > budget.max_input_bytes {
+            return Err(ResourceBudgetError::InputBytes.to_string());
+        }
+        let graph = Self::from_json(json).map_err(|error| error.to_string())?;
+        check_serializable_graph_budget(&graph, budget).map_err(|error| error.to_string())?;
+        Ok(graph)
     }
 
     pub fn from_cbor(data: &[u8]) -> serde_cbor::Result<Self> {
         serde_cbor::from_slice(data)
     }
+
+    pub fn from_cbor_with_budget(data: &[u8], budget: &ResourceBudget) -> Result<Self, String> {
+        budget.check().map_err(|error| error.to_string())?;
+        if data.len() as u64 > budget.max_input_bytes {
+            return Err(ResourceBudgetError::InputBytes.to_string());
+        }
+        let graph = Self::from_cbor(data).map_err(|error| error.to_string())?;
+        check_serializable_graph_budget(&graph, budget).map_err(|error| error.to_string())?;
+        Ok(graph)
+    }
+
+    /// Deserializes an AST after charging its nodes, edges, and byte payloads
+    /// to the supplied resource budget.
+    pub fn deserialize_with_budget(&self, budget: &ResourceBudget) -> Result<PdfAstGraph, String> {
+        check_serializable_graph_budget(self, budget).map_err(|error| error.to_string())?;
+        GraphDeserializer::deserialize(self.clone())
+    }
+}
+
+fn check_value_budget(
+    value: &PdfValue,
+    budget: &ResourceBudget,
+) -> Result<(), ResourceBudgetError> {
+    match value {
+        PdfValue::String(value) => budget.consume_input(value.to_string_lossy().len() as u64)?,
+        PdfValue::Name(value) => budget.consume_input(value.as_str().len() as u64)?,
+        PdfValue::Array(values) => {
+            for value in values {
+                check_value_budget(value, budget)?;
+            }
+        }
+        PdfValue::Dictionary(dictionary) => {
+            for (key, value) in dictionary.iter() {
+                budget.consume_input(key.as_str().len() as u64)?;
+                check_value_budget(value, budget)?;
+            }
+        }
+        PdfValue::Stream(stream) => {
+            if let Some(data) = stream.data.as_bytes() {
+                budget.consume_input(data.len() as u64)?;
+            }
+            if let Some(data) = stream.original_data() {
+                budget.consume_input(data.len() as u64)?;
+            }
+            check_value_budget(&PdfValue::Dictionary(stream.dict.clone()), budget)?;
+        }
+        PdfValue::Null
+        | PdfValue::Boolean(_)
+        | PdfValue::Integer(_)
+        | PdfValue::Real(_)
+        | PdfValue::Reference(_) => {}
+    }
+    Ok(())
+}
+
+fn check_serializable_value_budget(
+    value: &SerializableValue,
+    budget: &ResourceBudget,
+) -> Result<(), ResourceBudgetError> {
+    match value {
+        SerializableValue::String(value) | SerializableValue::Name(value) => {
+            budget.consume_input(value.len() as u64)?
+        }
+        SerializableValue::StringBytes { bytes, .. } => budget.consume_input(bytes.len() as u64)?,
+        SerializableValue::Array(values) => {
+            for value in values {
+                check_serializable_value_budget(value, budget)?;
+            }
+        }
+        SerializableValue::Dictionary(dictionary) => {
+            for (key, value) in dictionary {
+                budget.consume_input(key.len() as u64)?;
+                check_serializable_value_budget(value, budget)?;
+            }
+        }
+        SerializableValue::Stream {
+            dictionary,
+            data,
+            original_bytes,
+            ..
+        } => {
+            budget.consume_input(data.len() as u64)?;
+            if let Some(original_bytes) = original_bytes {
+                budget.consume_input(original_bytes.len() as u64)?;
+            }
+            for (key, value) in dictionary {
+                budget.consume_input(key.len() as u64)?;
+                check_serializable_value_budget(value, budget)?;
+            }
+        }
+        SerializableValue::Null
+        | SerializableValue::Boolean(_)
+        | SerializableValue::Integer(_)
+        | SerializableValue::Real(_)
+        | SerializableValue::Reference { .. } => {}
+    }
+    Ok(())
+}
+
+fn check_serializable_graph_budget(
+    graph: &SerializableGraph,
+    budget: &ResourceBudget,
+) -> Result<(), ResourceBudgetError> {
+    for node in &graph.nodes {
+        budget.consume_node()?;
+        check_serializable_value_budget(&node.value, budget)?;
+    }
+    for _ in &graph.edges {
+        budget.consume_edge()?;
+    }
+    Ok(())
+}
+
+fn check_serializable_document_budget(
+    document: &SerializableDocument,
+    budget: &ResourceBudget,
+) -> Result<(), ResourceBudgetError> {
+    check_serializable_graph_budget(&document.ast, budget)?;
+    if let Some(bytes) = &document.original_bytes {
+        budget.consume_input(bytes.len() as u64)?;
+    }
+    check_serializable_value_budget(&document.trailer, budget)?;
+    for _ in &document.xref_entries {
+        budget.consume_object()?;
+    }
+    for stream in &document.xref_streams {
+        budget.consume_object()?;
+        check_serializable_value_budget(&stream.dict, budget)?;
+    }
+    for revision in &document.revisions {
+        budget.consume_object()?;
+        check_serializable_value_budget(&revision.trailer, budget)?;
+    }
+    Ok(())
 }
 
 struct GraphSerializer {
@@ -191,13 +591,12 @@ impl GraphSerializer {
 
             self.node_id_map.insert(node.id, serial_id);
 
-            // Extract object_id if this is an Object node
-            let object_id = match &node.node_type {
-                crate::ast::NodeType::Object(obj_id) => Some((obj_id.number, obj_id.generation)),
-                _ => None,
-            };
+            let object_id = ast
+                .get_object_id(node.id)
+                .map(|object_id| (object_id.number, object_id.generation));
 
             let serialized_node = SerializableNode {
+                original_id: Some(node.id.0),
                 id: serial_id,
                 node_type: node_type_name(&node.node_type).to_string(),
                 value: Self::serialize_value(&node.value),
@@ -251,7 +650,10 @@ impl GraphSerializer {
             PdfValue::Boolean(b) => SerializableValue::Boolean(*b),
             PdfValue::Integer(i) => SerializableValue::Integer(*i),
             PdfValue::Real(r) => SerializableValue::Real(*r),
-            PdfValue::String(s) => SerializableValue::String(s.to_string_lossy()),
+            PdfValue::String(s) => SerializableValue::StringBytes {
+                bytes: s.as_bytes().to_vec(),
+                hexadecimal: matches!(s, crate::types::PdfString::Hexadecimal(_)),
+            },
             PdfValue::Name(n) => SerializableValue::Name(n.as_str().to_string()),
             PdfValue::Array(arr) => {
                 let items: Vec<SerializableValue> = arr.iter().map(Self::serialize_value).collect();
@@ -280,6 +682,12 @@ impl GraphSerializer {
                         crate::types::StreamData::Lazy(reference) => Some(reference.clone()),
                         _ => None,
                     },
+                    decoded: matches!(stream.data, crate::types::StreamData::Decoded(_)),
+                    original_bytes: stream.lossless.original_bytes.clone(),
+                    declared_length: stream.lossless.declared_length,
+                    observed_length: Some(stream.lossless.observed_length),
+                    parse_errors: stream.lossless.parse_errors.clone(),
+                    recovery_actions: stream.lossless.recovery_actions.clone(),
                 }
             }
             PdfValue::Reference(r) => SerializableValue::Reference {
@@ -318,6 +726,7 @@ impl GraphDeserializer {
 
         let mut ast = PdfAstGraph::new();
         let mut id_map: HashMap<usize, NodeId> = HashMap::new();
+        let mut restored_ids = std::collections::HashSet::new();
 
         // First pass: create all nodes
         for serialized_node in &serialized.nodes {
@@ -330,7 +739,14 @@ impl GraphDeserializer {
             let node_type =
                 Self::parse_node_type(&serialized_node.node_type, serialized_node.object_id)?;
             let value = Self::deserialize_value(&serialized_node.value)?;
-            let node_id = ast.create_node(node_type, value);
+            let node_id = NodeId(serialized_node.original_id.unwrap_or(serialized_node.id));
+            if !restored_ids.insert(node_id) {
+                return Err(format!("Duplicate restored node ID: {}", node_id.0));
+            }
+            ast.add_node(AstNode::new(node_id, node_type, value));
+            if let Some((number, generation)) = serialized_node.object_id {
+                ast.register_object_node(ObjectId::new(number, generation), node_id);
+            }
             let node = ast
                 .get_node_mut(node_id)
                 .ok_or_else(|| format!("Failed to restore node {}", serialized_node.id))?;
@@ -380,7 +796,10 @@ impl GraphDeserializer {
                 serialized.metadata.serialization_version = AST_SCHEMA_VERSION.to_string();
                 Ok(serialized)
             }
-            AST_SCHEMA_VERSION => Ok(serialized),
+            "1.1.0" | AST_SCHEMA_VERSION => {
+                serialized.metadata.serialization_version = AST_SCHEMA_VERSION.to_string();
+                Ok(serialized)
+            }
             _ => Err(format!(
                 "Unsupported AST serialization version: {}; expected {}",
                 serialized.metadata.serialization_version, AST_SCHEMA_VERSION
@@ -504,6 +923,13 @@ impl GraphDeserializer {
             SerializableValue::String(s) => Ok(PdfValue::String(
                 crate::types::PdfString::new_literal(s.as_bytes()),
             )),
+            SerializableValue::StringBytes { bytes, hexadecimal } => {
+                Ok(PdfValue::String(if *hexadecimal {
+                    crate::types::PdfString::new_hex(bytes.clone())
+                } else {
+                    crate::types::PdfString::new_literal(bytes.clone())
+                }))
+            }
             SerializableValue::Name(n) => Ok(PdfValue::Name(crate::types::PdfName::new(n))),
             SerializableValue::Array(items) => {
                 let mut array = crate::types::PdfArray::new();
@@ -523,19 +949,32 @@ impl GraphDeserializer {
                 dictionary,
                 data,
                 lazy,
+                decoded,
+                original_bytes,
+                declared_length,
+                observed_length,
+                parse_errors,
+                recovery_actions,
             } => {
                 let mut dict = crate::types::PdfDictionary::new();
                 for (key, val) in dictionary {
                     dict.insert(key.as_str(), Self::deserialize_value(val)?);
                 }
-                let stream = if let Some(reference) = lazy {
+                let mut stream = if let Some(reference) = lazy {
                     crate::types::PdfStream::new_lazy(dict, reference.clone())
-                } else {
-                    crate::types::PdfStream {
+                } else if *decoded {
+                    crate::types::PdfStream::from_data(
                         dict,
-                        data: crate::types::StreamData::Raw(data.clone()),
-                    }
+                        crate::types::StreamData::Decoded(data.clone()),
+                    )
+                } else {
+                    crate::types::PdfStream::new(dict, data.clone())
                 };
+                stream.lossless.original_bytes = original_bytes.clone();
+                stream.lossless.declared_length = *declared_length;
+                stream.lossless.observed_length = observed_length.unwrap_or(stream.data.len());
+                stream.lossless.parse_errors = parse_errors.clone();
+                stream.lossless.recovery_actions = recovery_actions.clone();
                 Ok(PdfValue::Stream(stream))
             }
             SerializableValue::Reference {
@@ -653,24 +1092,266 @@ pub fn to_json(document: &PdfDocument) -> Result<String, serde_json::Error> {
 }
 
 impl SerializableDocument {
+    /// Serializes a document after charging its AST and retained byte payloads
+    /// to the supplied resource budget.
+    pub fn from_document_with_budget(
+        document: &PdfDocument,
+        budget: &ResourceBudget,
+    ) -> Result<Self, ResourceBudgetError> {
+        let _ = SerializableGraph::from_ast_with_budget(&document.ast, budget)?;
+        if let Some(bytes) = &document.original_bytes {
+            budget.consume_input(bytes.len() as u64)?;
+        }
+        check_value_budget(&PdfValue::Dictionary(document.trailer.clone()), budget)?;
+        for _ in &document.xref.entries {
+            budget.consume_object()?;
+        }
+        for stream in &document.xref.streams {
+            budget.consume_object()?;
+            check_value_budget(&PdfValue::Dictionary(stream.dict.clone()), budget)?;
+        }
+        for revision in &document.revisions {
+            budget.consume_object()?;
+            check_value_budget(&PdfValue::Dictionary(revision.trailer.clone()), budget)?;
+        }
+        Ok(Self::from_document(document))
+    }
+
     pub fn to_json(&self) -> serde_json::Result<String> {
         serde_json::to_string_pretty(self)
+    }
+
+    pub fn to_json_with_budget(&self, budget: &ResourceBudget) -> Result<String, String> {
+        check_serializable_document_budget(self, budget).map_err(|error| error.to_string())?;
+        let output = self.to_json().map_err(|error| error.to_string())?;
+        budget
+            .consume_decoded(output.len() as u64)
+            .map_err(|error| error.to_string())?;
+        Ok(output)
     }
 
     pub fn to_cbor(&self) -> serde_cbor::Result<Vec<u8>> {
         serde_cbor::to_vec(self)
     }
 
+    pub fn to_cbor_with_budget(&self, budget: &ResourceBudget) -> Result<Vec<u8>, String> {
+        check_serializable_document_budget(self, budget).map_err(|error| error.to_string())?;
+        let output = self.to_cbor().map_err(|error| error.to_string())?;
+        budget
+            .consume_decoded(output.len() as u64)
+            .map_err(|error| error.to_string())?;
+        Ok(output)
+    }
+
     pub fn from_json(json: &str) -> serde_json::Result<Self> {
         serde_json::from_str(json)
+    }
+
+    pub fn from_json_with_budget(json: &str, budget: &ResourceBudget) -> Result<Self, String> {
+        budget.check().map_err(|error| error.to_string())?;
+        if json.len() as u64 > budget.max_input_bytes {
+            return Err(ResourceBudgetError::InputBytes.to_string());
+        }
+        let document = Self::from_json(json).map_err(|error| error.to_string())?;
+        check_serializable_document_budget(&document, budget).map_err(|error| error.to_string())?;
+        Ok(document)
     }
 
     pub fn from_cbor(data: &[u8]) -> serde_cbor::Result<Self> {
         serde_cbor::from_slice(data)
     }
 
+    pub fn from_cbor_with_budget(data: &[u8], budget: &ResourceBudget) -> Result<Self, String> {
+        budget.check().map_err(|error| error.to_string())?;
+        if data.len() as u64 > budget.max_input_bytes {
+            return Err(ResourceBudgetError::InputBytes.to_string());
+        }
+        let document = Self::from_cbor(data).map_err(|error| error.to_string())?;
+        check_serializable_document_budget(&document, budget).map_err(|error| error.to_string())?;
+        Ok(document)
+    }
+
     pub fn deserialize_ast(&self) -> Result<PdfAstGraph, String> {
         GraphDeserializer::deserialize(self.ast.clone())
+    }
+
+    /// Deserializes a document after charging retained bytes, nodes, edges,
+    /// xref streams, and revisions to the supplied resource budget.
+    pub fn deserialize_document_with_budget(
+        &self,
+        budget: &ResourceBudget,
+    ) -> Result<PdfDocument, String> {
+        check_serializable_document_budget(self, budget).map_err(|error| error.to_string())?;
+        self.deserialize_document()
+    }
+
+    pub fn deserialize_document(&self) -> Result<PdfDocument, String> {
+        let ast = self.deserialize_ast()?;
+        let version = PdfVersion::from_string(&self.version)
+            .ok_or_else(|| format!("Invalid PDF version: {}", self.version))?;
+        let node_id = |serial_id: Option<usize>| {
+            serial_id.and_then(|id| {
+                self.ast
+                    .nodes
+                    .iter()
+                    .find(|node| node.id == id)
+                    .map(|node| NodeId(node.original_id.unwrap_or(node.id)))
+            })
+        };
+        let trailer = match GraphDeserializer::deserialize_value(&self.trailer)? {
+            PdfValue::Dictionary(dict) => dict,
+            value => {
+                return Err(format!(
+                    "Document trailer must be a dictionary, got {}",
+                    value.type_name()
+                ))
+            }
+        };
+
+        let mut xref = CrossReferenceTable {
+            entries: HashMap::new(),
+            streams: Vec::new(),
+            prev_offset: self.xref_prev_offset,
+            hybrid_mode: self.xref_hybrid_mode,
+        };
+        for (key, entry) in &self.xref_entries {
+            xref.entries
+                .insert(parse_object_id(key)?, deserialize_xref_entry(entry)?);
+        }
+        for stream in &self.xref_streams {
+            let dict = match GraphDeserializer::deserialize_value(&stream.dict)? {
+                PdfValue::Dictionary(dict) => dict,
+                value => {
+                    return Err(format!(
+                        "XRef stream dictionary must be a dictionary, got {}",
+                        value.type_name()
+                    ))
+                }
+            };
+            xref.streams.push(XRefStream {
+                object_id: object_id_from_tuple(stream.object_id),
+                dict,
+                entries: stream.entries.clone(),
+            });
+        }
+
+        let revisions = self
+            .revisions
+            .iter()
+            .map(|revision| {
+                let trailer = match GraphDeserializer::deserialize_value(&revision.trailer)? {
+                    PdfValue::Dictionary(dict) => dict,
+                    value => {
+                        return Err(format!(
+                            "Revision trailer must be a dictionary, got {}",
+                            value.type_name()
+                        ))
+                    }
+                };
+                Ok(DocumentRevision {
+                    revision_number: revision.revision_number,
+                    xref_offset: revision.xref_offset,
+                    trailer,
+                    modified_objects: revision
+                        .modified_objects
+                        .iter()
+                        .copied()
+                        .map(object_id_from_tuple)
+                        .collect(),
+                    added_objects: revision
+                        .added_objects
+                        .iter()
+                        .copied()
+                        .map(object_id_from_tuple)
+                        .collect(),
+                    deleted_objects: revision
+                        .deleted_objects
+                        .iter()
+                        .copied()
+                        .map(object_id_from_tuple)
+                        .collect(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
+
+        let forensic = self
+            .forensic
+            .as_ref()
+            .map(deserialize_forensic)
+            .transpose()?;
+        let linearization = self.linearization.as_ref().map(|value| LinearizationInfo {
+            version: value.version,
+            file_length: value.file_length,
+            hint_stream_offset: value.hint_stream_offset,
+            hint_stream_length: value.hint_stream_length,
+            object_count: value.object_count,
+            first_page_object_number: value.first_page_object_number,
+            first_page_end_offset: value.first_page_end_offset,
+            main_xref_table_entries: value.main_xref_table_entries,
+        });
+
+        let metadata = DocumentMetadata {
+            file_size: self.metadata.file_size,
+            linearized: self.metadata.linearized,
+            encrypted: self.metadata.encrypted,
+            has_forms: self.metadata.has_forms,
+            has_xfa: self.metadata.has_xfa,
+            xfa_packets: self.metadata.xfa_packets,
+            has_xfa_scripts: self.metadata.has_xfa_scripts,
+            xfa_script_nodes: self.metadata.xfa_script_nodes,
+            has_hybrid_forms: self.metadata.has_hybrid_forms,
+            form_field_count: self.metadata.form_field_count,
+            has_javascript: self.metadata.has_javascript,
+            has_embedded_files: self.metadata.has_embedded_files,
+            has_signatures: self.metadata.has_signatures,
+            has_richmedia: self.metadata.has_richmedia,
+            richmedia_annotations: self.metadata.richmedia_annotations,
+            richmedia_assets: self.metadata.richmedia_assets,
+            richmedia_scripts: self.metadata.richmedia_scripts,
+            has_3d: self.metadata.has_3d,
+            threed_annotations: self.metadata.threed_annotations,
+            threed_u3d: self.metadata.threed_u3d,
+            threed_prc: self.metadata.threed_prc,
+            has_audio: self.metadata.has_audio,
+            audio_annotations: self.metadata.audio_annotations,
+            has_video: self.metadata.has_video,
+            video_annotations: self.metadata.video_annotations,
+            has_dss: self.metadata.has_dss,
+            dss_vri_count: self.metadata.dss_vri_count,
+            dss_certs: self.metadata.dss_certs,
+            dss_ocsp: self.metadata.dss_ocsp,
+            dss_crl: self.metadata.dss_crl,
+            dss_timestamps: self.metadata.dss_timestamps,
+            page_count: self.metadata.page_count,
+            compliance: self.metadata.compliance.clone(),
+            producer: self.metadata.producer.clone(),
+            creator: self.metadata.creator.clone(),
+            creation_date: self.metadata.creation_date.clone(),
+            modification_date: self.metadata.modification_date.clone(),
+            title: self.metadata.title.clone(),
+            author: self.metadata.author.clone(),
+            subject: self.metadata.subject.clone(),
+        };
+
+        let mut document = PdfDocument::new(version);
+        document.original_bytes = self.original_bytes.clone();
+        document.ast = ast;
+        document.catalog = node_id(self.catalog);
+        document.info = node_id(self.info);
+        if self.catalog.is_some() && document.catalog.is_none() {
+            return Err("Document catalog references an unknown AST node".to_string());
+        }
+        if self.info.is_some() && document.info.is_none() {
+            return Err("Document info references an unknown AST node".to_string());
+        }
+        document.trailer = trailer;
+        document.xref = xref;
+        document.metadata = metadata;
+        document.linearization = linearization;
+        document.revisions = revisions;
+        document.diagnostics = self.diagnostics.clone();
+        document.forensic = forensic;
+        Ok(document)
     }
 
     pub fn from_document(document: &PdfDocument) -> Self {
@@ -680,44 +1361,22 @@ impl SerializableDocument {
         let mut xref_entries = HashMap::new();
         for (obj_id, entry) in &document.xref.entries {
             let key = format!("{}_{}", obj_id.number, obj_id.generation);
-            let serializable_entry = match entry {
-                crate::ast::document::XRefEntry::InUse { offset, generation } => {
-                    SerializableXRefEntry {
-                        offset: Some(*offset),
-                        generation: *generation,
-                        entry_type: "InUse".to_string(),
-                    }
-                }
-                crate::ast::document::XRefEntry::Free { generation, .. } => SerializableXRefEntry {
-                    offset: None,
-                    generation: *generation,
-                    entry_type: "Free".to_string(),
-                },
-                crate::ast::document::XRefEntry::Compressed { .. } => SerializableXRefEntry {
-                    offset: None,
-                    generation: 0,
-                    entry_type: "Compressed".to_string(),
-                },
-            };
+            let serializable_entry = serialize_xref_entry(*entry);
             xref_entries.insert(key, serializable_entry);
         }
 
-        // Convert catalog and info to serial IDs
-        let catalog_serial_id = document.catalog.and_then(|node_id| {
-            ast_serializable
-                .nodes
-                .iter()
-                .find(|node| node.id == node_id.0)
-                .map(|node| node.id)
-        });
-
-        let info_serial_id = document.info.and_then(|node_id| {
-            ast_serializable
-                .nodes
-                .iter()
-                .find(|node| node.id == node_id.0)
-                .map(|node| node.id)
-        });
+        // Convert original node IDs to serial IDs.
+        let serial_id_for = |node_id: Option<NodeId>| {
+            node_id.and_then(|node_id| {
+                ast_serializable
+                    .nodes
+                    .iter()
+                    .find(|node| node.original_id.unwrap_or(node.id) == node_id.0)
+                    .map(|node| node.id)
+            })
+        };
+        let catalog_serial_id = serial_id_for(document.catalog);
+        let info_serial_id = serial_id_for(document.info);
 
         SerializableDocument {
             version: document.version.to_string(),
@@ -729,6 +1388,20 @@ impl SerializableDocument {
                 document.trailer.clone(),
             )),
             xref_entries,
+            xref_prev_offset: document.xref.prev_offset,
+            xref_hybrid_mode: document.xref.hybrid_mode,
+            xref_streams: document
+                .xref
+                .streams
+                .iter()
+                .map(|stream| SerializableXRefStream {
+                    object_id: serial_object_id(stream.object_id),
+                    dict: GraphSerializer::serialize_value(&PdfValue::Dictionary(
+                        stream.dict.clone(),
+                    )),
+                    entries: stream.entries.clone(),
+                })
+                .collect(),
             original_bytes: document.original_bytes.clone(),
             revisions: document
                 .revisions
@@ -757,6 +1430,22 @@ impl SerializableDocument {
                 })
                 .collect(),
             diagnostics: document.diagnostics.clone(),
+            forensic: document
+                .forensic
+                .as_ref()
+                .map(SerializableForensicSnapshot::from),
+            linearization: document.linearization.as_ref().map(|value| {
+                SerializableLinearizationInfo {
+                    version: value.version,
+                    file_length: value.file_length,
+                    hint_stream_offset: value.hint_stream_offset,
+                    hint_stream_length: value.hint_stream_length,
+                    object_count: value.object_count,
+                    first_page_object_number: value.first_page_object_number,
+                    first_page_end_offset: value.first_page_end_offset,
+                    main_xref_table_entries: value.main_xref_table_entries,
+                }
+            }),
             metadata: SerializableDocumentMetadata {
                 file_size: document.metadata.file_size,
                 linearized: document.metadata.linearized,
@@ -794,6 +1483,10 @@ impl SerializableDocument {
                 creator: document.metadata.creator.clone(),
                 creation_date: document.metadata.creation_date.clone(),
                 modification_date: document.metadata.modification_date.clone(),
+                title: document.metadata.title.clone(),
+                author: document.metadata.author.clone(),
+                subject: document.metadata.subject.clone(),
+                compliance: document.metadata.compliance.clone(),
             },
         }
     }
@@ -802,8 +1495,39 @@ impl SerializableDocument {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{DocumentRevision, NodeType, PdfAstGraph, PdfDocument, PdfVersion};
+    use crate::ast::{
+        DocumentRevision, ForensicSnapshot, NodeType, PdfAstGraph, PdfDocument, PdfVersion,
+        XRefEntry,
+    };
     use crate::types::{ObjectId, PdfDictionary, PdfValue};
+
+    #[test]
+    fn budgeted_serialization_checks_structure_input_and_output() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.create_node(NodeType::Root, PdfValue::Null);
+        ast.set_root(root_id);
+        let serialized = SerializableGraph::from_ast(&ast);
+
+        let node_budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 0, 10, 10);
+        assert!(serialized
+            .to_json_with_budget(&node_budget)
+            .expect_err("serialization must consume node budget")
+            .contains("Nodes"));
+
+        let output_budget = ResourceBudget::new(1024, 0, 1024, 100, 10, 10, 10, 10);
+        assert!(serialized
+            .to_cbor_with_budget(&output_budget)
+            .expect_err("serialization output must consume decoded budget")
+            .contains("DecodedBytes"));
+
+        let json = serialized.to_json().unwrap();
+        let input_budget = ResourceBudget::new(0, 1024, 1024, 100, 10, 10, 10, 10);
+        assert!(
+            SerializableGraph::from_json_with_budget(&json, &input_budget)
+                .expect_err("serialized input must respect the budget")
+                .contains("InputBytes")
+        );
+    }
 
     #[test]
     fn test_graph_serialization() {
@@ -836,9 +1560,32 @@ mod tests {
     }
 
     #[test]
+    fn preserves_semantic_object_identity_across_round_trip() {
+        let mut ast = PdfAstGraph::new();
+        let node_id = ast.create_node(NodeType::Page, PdfValue::Null);
+        let object_id = ObjectId::new(7, 0);
+        assert!(ast.register_object_node(object_id, node_id));
+
+        let serialized = SerializableGraph::from_ast(&ast);
+        let node = serialized
+            .nodes
+            .iter()
+            .find(|node| node.original_id == Some(node_id.index()))
+            .expect("semantic node should be serialized");
+        assert_eq!(node.object_id, Some((7, 0)));
+
+        let restored = GraphDeserializer::deserialize(serialized).expect("graph should restore");
+        assert_eq!(
+            restored.get_node_by_object(object_id).map(|node| node.id),
+            Some(node_id)
+        );
+    }
+
+    #[test]
     fn rejects_object_nodes_without_identity() {
         let graph = SerializableGraph {
             nodes: vec![SerializableNode {
+                original_id: None,
                 id: 0,
                 node_type: "Object".to_string(),
                 value: SerializableValue::Null,
@@ -870,7 +1617,7 @@ mod tests {
         ast.set_root(root_id);
         let mut graph = SerializableGraph::from_ast(&ast);
 
-        for version in ["1", "1.2.0", "2.0.0"] {
+        for version in ["1", "1.3.0", "2.0.0"] {
             graph.metadata.serialization_version = version.to_string();
             let error = GraphDeserializer::deserialize(graph.clone()).unwrap_err();
             assert!(error.contains("Unsupported AST serialization version"));
@@ -888,6 +1635,47 @@ mod tests {
 
         let restored = GraphDeserializer::deserialize(graph).unwrap();
         assert!(restored.get_node_by_object(object_id).is_some());
+    }
+
+    #[test]
+    fn migrates_ast_1_1_string_values() {
+        let mut ast = PdfAstGraph::new();
+        let node_id = ast.create_node(NodeType::Root, PdfValue::Null);
+        ast.set_root(node_id);
+        let mut graph = SerializableGraph::from_ast(&ast);
+        graph.metadata.serialization_version = "1.1.0".to_string();
+        graph.nodes[0].value = SerializableValue::String("legacy".to_string());
+
+        let restored = GraphDeserializer::deserialize(graph).expect("1.1 graph should migrate");
+        assert_eq!(
+            restored
+                .get_node(node_id)
+                .and_then(|node| node.value.as_string())
+                .map(|value| value.as_bytes()),
+            Some(b"legacy".as_slice())
+        );
+    }
+
+    #[test]
+    fn preserves_non_contiguous_node_ids_across_round_trip() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = NodeId::new(41);
+        let child_id = NodeId::new(9001);
+        ast.add_node(AstNode::new(
+            root_id,
+            NodeType::Root,
+            PdfValue::Dictionary(PdfDictionary::new()),
+        ));
+        ast.add_node(AstNode::new(child_id, NodeType::Metadata, PdfValue::Null));
+        ast.set_root(root_id);
+        ast.add_edge(root_id, child_id, EdgeType::Child);
+
+        let restored = GraphDeserializer::deserialize(SerializableGraph::from_ast(&ast)).unwrap();
+
+        assert!(restored.get_node(root_id).is_some());
+        assert!(restored.get_node(child_id).is_some());
+        assert_eq!(restored.get_children(root_id), vec![child_id]);
+        assert_eq!(restored.get_root(), Some(root_id));
     }
 
     #[test]
@@ -945,6 +1733,89 @@ mod tests {
     }
 
     #[test]
+    fn preserves_stream_decode_state_across_round_trip() {
+        let mut ast = PdfAstGraph::new();
+        let mut dictionary = PdfDictionary::new();
+        dictionary.insert("Length", PdfValue::Integer(3));
+        let stream_id = ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream({
+                let mut stream = crate::types::PdfStream::from_data(
+                    dictionary,
+                    crate::types::StreamData::Decoded(b"abc".to_vec()),
+                );
+                stream.lossless.original_bytes = Some(b"raw".to_vec());
+                stream.lossless.observed_length = 3;
+                stream.lossless.parse_errors = vec!["decode failed".to_string()];
+                stream.lossless.recovery_actions = vec!["stream_decode_skipped".to_string()];
+                stream
+            }),
+        );
+        ast.set_root(stream_id);
+
+        let serialized = SerializableGraph::from_ast(&ast);
+        let SerializableValue::Stream { decoded, .. } = &serialized.nodes[0].value else {
+            panic!("expected serialized stream");
+        };
+        assert!(*decoded);
+
+        let restored = GraphDeserializer::deserialize(serialized).unwrap();
+        let stream = restored
+            .get_node(restored.root.unwrap())
+            .and_then(|node| node.value.as_stream())
+            .expect("restored stream");
+        assert!(matches!(
+            stream.data,
+            crate::types::StreamData::Decoded(ref data) if data == b"abc"
+        ));
+        assert_eq!(stream.original_data(), Some(b"raw".as_slice()));
+        assert_eq!(stream.lossless.observed_length, 3);
+        assert_eq!(stream.lossless.parse_errors, vec!["decode failed"]);
+        assert_eq!(
+            stream.lossless.recovery_actions,
+            vec!["stream_decode_skipped"]
+        );
+    }
+
+    #[test]
+    fn preserves_pdf_string_bytes_and_encoding_across_round_trip() {
+        let mut ast = PdfAstGraph::new();
+        let mut dictionary = PdfDictionary::new();
+        dictionary.insert(
+            "Literal",
+            PdfValue::String(crate::types::PdfString::new_literal(vec![0, 0xff, b'a'])),
+        );
+        dictionary.insert(
+            "Hex",
+            PdfValue::String(crate::types::PdfString::new_hex(vec![0xde, 0xad])),
+        );
+        let root_id = ast.create_node(NodeType::Root, PdfValue::Dictionary(dictionary));
+        ast.set_root(root_id);
+
+        let serialized = SerializableGraph::from_ast(&ast);
+        let json = serialized
+            .to_json()
+            .expect("string values should serialize");
+        let restored = GraphDeserializer::deserialize(
+            SerializableGraph::from_json(&json).expect("serialized graph should parse"),
+        )
+        .expect("graph should restore");
+        let dictionary = restored
+            .get_node(root_id)
+            .and_then(|node| node.value.as_dict())
+            .expect("restored dictionary");
+
+        assert_eq!(
+            dictionary.get("Literal").and_then(PdfValue::as_string),
+            Some(&crate::types::PdfString::new_literal(vec![0, 0xff, b'a']))
+        );
+        assert_eq!(
+            dictionary.get("Hex").and_then(PdfValue::as_string),
+            Some(&crate::types::PdfString::new_hex(vec![0xde, 0xad]))
+        );
+    }
+
+    #[test]
     fn rejects_ast_1_0_object_nodes_without_identity_during_migration() {
         let mut ast = PdfAstGraph::new();
         let root_id = ast.create_node(NodeType::Root, PdfValue::Null);
@@ -996,6 +1867,25 @@ mod tests {
             bytes_consumed: 42,
             message: "recovered missing object".to_string(),
         });
+        document.forensic = Some(ForensicSnapshot {
+            declared_xref: HashMap::from([(
+                ObjectId::new(1, 0),
+                XRefEntry::InUse {
+                    offset: 12,
+                    generation: 0,
+                },
+            )]),
+            recovered_xref: HashMap::from([(
+                ObjectId::new(2, 0),
+                XRefEntry::Free {
+                    next_free_object: 0,
+                    generation: 65535,
+                },
+            )]),
+            duplicate_objects: vec![ObjectId::new(3, 0)],
+            overwritten_objects: vec![ObjectId::new(4, 0)],
+            residual_ranges: vec![(100, 120)],
+        });
         document.revisions.push(DocumentRevision {
             revision_number: 1,
             xref_offset: 123,
@@ -1020,6 +1910,11 @@ mod tests {
         assert_eq!(deserialized.diagnostics.len(), 1);
         assert_eq!(deserialized.diagnostics[0].recovery_action, "xref recovery");
         assert_eq!(deserialized.diagnostics[0].bytes_consumed, 42);
+        let forensic = deserialized.forensic.as_ref().unwrap();
+        assert_eq!(forensic.declared_xref.len(), 1);
+        assert_eq!(forensic.recovered_xref.len(), 1);
+        assert_eq!(forensic.duplicate_objects, vec![(3, 0)]);
+        assert_eq!(forensic.residual_ranges, vec![(100, 120)]);
         deserialized.deserialize_ast().unwrap();
 
         let cbor = SerializableDocument::from_document(&document)
@@ -1035,6 +1930,93 @@ mod tests {
     }
 
     #[test]
+    fn preserves_full_document_state_across_round_trip() {
+        let mut document = PdfDocument::new(PdfVersion::new(2, 0));
+        let catalog_id = NodeId::new(41);
+        let info_id = NodeId::new(9001);
+        document.ast.add_node(AstNode::new(
+            catalog_id,
+            NodeType::Catalog,
+            PdfValue::Dictionary(PdfDictionary::new()),
+        ));
+        document.ast.add_node(AstNode::new(
+            info_id,
+            NodeType::Metadata,
+            PdfValue::Dictionary(PdfDictionary::new()),
+        ));
+        document.set_catalog(catalog_id);
+        document.set_info(info_id);
+        document.trailer.insert("Size", PdfValue::Integer(12));
+        document.add_xref_entry(
+            ObjectId::new(1, 0),
+            XRefEntry::InUse {
+                offset: 100,
+                generation: 0,
+            },
+        );
+        document.add_xref_entry(
+            ObjectId::new(2, 1),
+            XRefEntry::Free {
+                next_free_object: 0,
+                generation: 1,
+            },
+        );
+        document.add_xref_entry(
+            ObjectId::new(3, 0),
+            XRefEntry::Compressed {
+                stream_object: 7,
+                index: 2,
+            },
+        );
+        document.xref.prev_offset = Some(88);
+        document.xref.hybrid_mode = true;
+        let mut xref_stream_dict = PdfDictionary::new();
+        xref_stream_dict.insert("Type", PdfValue::Name(crate::types::PdfName::new("XRef")));
+        document.add_xref_stream(crate::ast::XRefStream {
+            object_id: ObjectId::new(7, 0),
+            dict: xref_stream_dict,
+            entries: vec![XRefEntry::Compressed {
+                stream_object: 7,
+                index: 2,
+            }],
+        });
+        document.linearization = Some(LinearizationInfo {
+            version: 1.0,
+            file_length: 1000,
+            hint_stream_offset: 200,
+            hint_stream_length: Some(20),
+            object_count: 12,
+            first_page_object_number: 4,
+            first_page_end_offset: 500,
+            main_xref_table_entries: 8,
+        });
+        document.metadata.title = Some("Round trip".to_string());
+        document.metadata.author = Some("pdf-core".to_string());
+        document.metadata.compliance = vec![crate::ast::ComplianceProfile::PdfA1b];
+
+        let restored = SerializableDocument::from_document(&document)
+            .deserialize_document()
+            .unwrap();
+
+        assert_eq!(restored.version, PdfVersion::new(2, 0));
+        assert_eq!(restored.catalog, Some(catalog_id));
+        assert_eq!(restored.info, Some(info_id));
+        assert_eq!(restored.trailer.get("Size"), Some(&PdfValue::Integer(12)));
+        assert_eq!(restored.xref.entries, document.xref.entries);
+        assert_eq!(restored.xref.prev_offset, Some(88));
+        assert!(restored.xref.hybrid_mode);
+        assert_eq!(restored.xref.streams.len(), 1);
+        assert_eq!(
+            restored.xref.streams[0].entries,
+            document.xref.streams[0].entries
+        );
+        assert_eq!(restored.linearization.as_ref().unwrap().file_length, 1000);
+        assert_eq!(restored.metadata.title.as_deref(), Some("Round trip"));
+        assert_eq!(restored.metadata.author.as_deref(), Some("pdf-core"));
+        assert_eq!(restored.metadata.compliance, document.metadata.compliance);
+    }
+
+    #[test]
     fn test_cbor_serialization() {
         let mut ast = PdfAstGraph::new();
         let root_value = PdfValue::Dictionary(PdfDictionary::new());
@@ -1047,5 +2029,74 @@ mod tests {
 
         let deserialized = SerializableGraph::from_cbor(&cbor_data).unwrap();
         assert_eq!(deserialized.nodes.len(), 1);
+    }
+
+    #[test]
+    fn budgeted_graph_serialization_rejects_node_limits() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.create_node(NodeType::Root, PdfValue::Null);
+        ast.set_root(root_id);
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 0, 10, 10);
+
+        let error = SerializableGraph::from_ast_with_budget(&ast, &budget)
+            .expect_err("node budget must apply to serialization");
+        assert_eq!(error, ResourceBudgetError::Nodes);
+    }
+
+    #[test]
+    fn budgeted_graph_serialization_charges_stream_bytes() {
+        let mut ast = PdfAstGraph::new();
+        let stream_id = ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream(crate::types::PdfStream::new(
+                PdfDictionary::new(),
+                b"abc".to_vec(),
+            )),
+        );
+        ast.set_root(stream_id);
+        let budget = ResourceBudget::new(5, 1024, 1024, 100, 10, 10, 10, 10);
+
+        let error = SerializableGraph::from_ast_with_budget(&ast, &budget)
+            .expect_err("stream payload must apply to serialization budget");
+        assert_eq!(error, ResourceBudgetError::InputBytes);
+    }
+
+    #[test]
+    fn budgeted_graph_deserialization_charges_stream_bytes() {
+        let mut ast = PdfAstGraph::new();
+        let stream_id = ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream(crate::types::PdfStream::new(
+                PdfDictionary::new(),
+                b"abc".to_vec(),
+            )),
+        );
+        ast.set_root(stream_id);
+        let serialized = SerializableGraph::from_ast(&ast);
+        let budget = ResourceBudget::new(2, 1024, 1024, 100, 10, 10, 10, 10);
+
+        let error = serialized
+            .deserialize_with_budget(&budget)
+            .expect_err("stream payload must apply to deserialization budget");
+        assert!(error.contains("InputBytes"));
+    }
+
+    #[test]
+    fn budgeted_document_round_trip_charges_xref_entries() {
+        let mut document = PdfDocument::new(PdfVersion::new(1, 4));
+        document.xref.entries.insert(
+            ObjectId::new(1, 0),
+            XRefEntry::InUse {
+                offset: 10,
+                generation: 0,
+            },
+        );
+        let serialized = SerializableDocument::from_document(&document);
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 0, 10, 10, 10);
+
+        let error = serialized
+            .deserialize_document_with_budget(&budget)
+            .expect_err("xref entries must apply to document deserialization budget");
+        assert!(error.contains("Objects"));
     }
 }

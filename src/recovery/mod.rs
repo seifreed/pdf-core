@@ -4,11 +4,14 @@
 /// the parser to continue processing even when encountering malformed or
 /// corrupted PDF data, making it suitable for forensic analysis and
 /// handling real-world, imperfect PDF documents.
-use crate::ast::{AstNode, AstResult, NodeId, NodeMetadata, NodeType, PdfDocument};
+use crate::ast::{AstError, AstNode, AstResult, NodeId, NodeMetadata, NodeType, PdfDocument};
 use crate::parser::PdfParser;
+use crate::performance::ResourceBudget;
 use crate::types::PdfValue;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::Cursor;
+use std::time::{Duration, Instant};
 
 pub mod diagnostics;
 pub mod reconstruction;
@@ -152,6 +155,12 @@ impl RecoveryParser {
         parser
     }
 
+    /// Uses an explicit budget for both the initial and recovered parse.
+    pub fn with_resource_budget(mut self, budget: ResourceBudget) -> Self {
+        self.base_parser = self.base_parser.with_resource_budget(budget);
+        self
+    }
+
     /// Parse a PDF document with error recovery
     pub fn parse_with_recovery(&mut self, data: &[u8]) -> AstResult<(PdfDocument, RecoveryReport)> {
         let start_time = std::time::Instant::now();
@@ -170,6 +179,10 @@ impl RecoveryParser {
                 return Ok((document, report));
             }
             Err(initial_error) => {
+                if is_resource_limit_error(&initial_error) {
+                    return Err(initial_error);
+                }
+                self.check_timeout(start_time)?;
                 // Normal parsing failed, begin recovery
                 self.log_error(RecoveryError {
                     error_type: RecoveryErrorType::ParseError,
@@ -193,7 +206,7 @@ impl RecoveryParser {
         }
 
         // Begin recovery process
-        let recovery_result = self.attempt_recovery(data)?;
+        let recovery_result = self.attempt_recovery(data, start_time)?;
         let elapsed = start_time.elapsed().as_millis() as u64;
         self.statistics.recovery_time_ms = elapsed;
 
@@ -207,16 +220,21 @@ impl RecoveryParser {
     }
 
     /// Attempt recovery using all available strategies
-    fn attempt_recovery(&mut self, data: &[u8]) -> AstResult<(PdfDocument, RecoveryReport)> {
+    fn attempt_recovery(
+        &mut self,
+        data: &[u8],
+        start_time: Instant,
+    ) -> AstResult<(PdfDocument, RecoveryReport)> {
         let mut document = PdfDocument::new(crate::ast::PdfVersion { major: 1, minor: 4 });
         let mut recovery_actions = Vec::new();
-        let mut current_data = data.to_vec();
+        let mut current_data: Cow<'_, [u8]> = Cow::Borrowed(data);
 
         // Apply recovery strategies in order of preference
         for strategy in &self.recovery_strategies {
+            self.check_timeout(start_time)?;
             let context = RecoveryContext {
                 original_data: data,
-                current_data: &current_data,
+                current_data: current_data.as_ref(),
                 document: &document,
                 config: &self.recovery_config,
                 error_log: &self.error_log,
@@ -233,7 +251,9 @@ impl RecoveryParser {
                     });
 
                     if result.data_changed {
-                        current_data = result.modified_data.unwrap_or(current_data);
+                        if let Some(modified_data) = result.modified_data {
+                            current_data = Cow::Owned(modified_data);
+                        }
                     }
 
                     if result.document_changed {
@@ -257,11 +277,16 @@ impl RecoveryParser {
         }
 
         // Final parsing attempt with recovered data
-        let final_document = match self.base_parser.parse(&mut Cursor::new(&current_data)) {
+        self.check_timeout(start_time)?;
+        let final_document = match self
+            .base_parser
+            .parse(&mut Cursor::new(current_data.as_ref()))
+        {
             Ok(doc) => doc,
+            Err(error) if is_resource_limit_error(&error) => return Err(error),
             Err(_) => {
                 // If all recovery failed, return best-effort document
-                self.create_best_effort_document(&current_data)?
+                self.create_best_effort_document(current_data.as_ref())?
             }
         };
 
@@ -276,6 +301,15 @@ impl RecoveryParser {
         };
 
         Ok((final_document, report))
+    }
+
+    fn check_timeout(&self, start_time: Instant) -> AstResult<()> {
+        if start_time.elapsed() >= Duration::from_millis(self.recovery_config.timeout_ms) {
+            return Err(AstError::ParseError(
+                "recovery timeout exceeded".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     /// Initialize recovery strategies based on configuration
@@ -371,7 +405,12 @@ impl RecoveryParser {
 
     /// Create a best-effort document when all recovery fails
     fn create_best_effort_document(&self, data: &[u8]) -> AstResult<PdfDocument> {
+        let budget = self.base_parser.resource_budget();
+        budget
+            .consume_node()
+            .map_err(|error| AstError::ParseError(error.to_string()))?;
         let mut document = PdfDocument::new(crate::ast::PdfVersion { major: 1, minor: 4 });
+        document.budget = budget.clone();
 
         // Create minimal document structure
         let catalog_id = document.ast.create_node(
@@ -388,8 +427,11 @@ impl RecoveryParser {
         document.ast.set_root(catalog_id);
 
         // Try to extract any recognizable objects
-        let objects = self.extract_salvageable_objects(data);
+        let objects = self.extract_salvageable_objects(data, &budget)?;
         for object in objects {
+            budget
+                .consume_edge()
+                .map_err(|error| AstError::ParseError(error.to_string()))?;
             let node_id = document.ast.create_node(object.node_type, object.value);
             // Link to catalog if possible
             document
@@ -401,7 +443,11 @@ impl RecoveryParser {
     }
 
     /// Extract any objects that can be salvaged from corrupted data
-    fn extract_salvageable_objects(&self, data: &[u8]) -> Vec<AstNode> {
+    fn extract_salvageable_objects(
+        &self,
+        data: &[u8],
+        budget: &ResourceBudget,
+    ) -> AstResult<Vec<AstNode>> {
         let mut objects = Vec::new();
         let mut pos = 0;
 
@@ -414,6 +460,12 @@ impl RecoveryParser {
                     let obj_data = &data[pos..pos + obj_end];
 
                     // Try to parse this object
+                    budget
+                        .consume_node()
+                        .map_err(|error| AstError::ParseError(error.to_string()))?;
+                    budget
+                        .consume_decoded(obj_data.len() as u64)
+                        .map_err(|error| AstError::ParseError(error.to_string()))?;
                     if let Ok(node) = self.parse_partial_object(obj_data) {
                         objects.push(node);
                     }
@@ -427,7 +479,7 @@ impl RecoveryParser {
             }
         }
 
-        objects
+        Ok(objects)
     }
 
     /// Find the start of a PDF object
@@ -511,6 +563,10 @@ impl RecoveryParser {
     }
 }
 
+fn is_resource_limit_error(error: &AstError) -> bool {
+    matches!(error, AstError::ParseError(message) if message.contains("resource budget exceeded") || message.contains("File too large"))
+}
+
 /// Report generated after recovery attempt
 #[derive(Debug, Clone)]
 pub struct RecoveryReport {
@@ -557,4 +613,43 @@ pub enum DocumentHealth {
 pub fn parse_with_automatic_recovery(data: &[u8]) -> AstResult<(PdfDocument, RecoveryReport)> {
     let mut parser = RecoveryParser::new(RecoveryConfig::default());
     parser.parse_with_recovery(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RecoveryConfig, RecoveryParser};
+    use crate::performance::ResourceBudget;
+
+    #[test]
+    fn recovery_does_not_bypass_input_budget() {
+        let budget = ResourceBudget::new(8, 1024, 1024, 10, 10, 10, 10, 8);
+        let error = RecoveryParser::new(RecoveryConfig::default())
+            .with_resource_budget(budget)
+            .parse_with_recovery(b"%PDF-1.7\n")
+            .expect_err("oversized input must not enter best-effort recovery");
+        assert!(error.to_string().contains("InputBytes"));
+    }
+
+    #[test]
+    fn recovery_honors_configured_timeout() {
+        let config = RecoveryConfig {
+            timeout_ms: 0,
+            ..RecoveryConfig::default()
+        };
+        let error = RecoveryParser::new(config)
+            .parse_with_recovery(b"not a pdf")
+            .expect_err("zero timeout must stop recovery");
+        assert!(error.to_string().contains("timeout"));
+    }
+
+    #[test]
+    fn best_effort_recovery_respects_node_budget() {
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 8);
+        let parser = RecoveryParser::new(RecoveryConfig::default()).with_resource_budget(budget);
+
+        let error = parser
+            .create_best_effort_document(b"not a pdf")
+            .expect_err("best-effort recovery must not bypass node limits");
+        assert!(error.to_string().contains("Nodes"));
+    }
 }

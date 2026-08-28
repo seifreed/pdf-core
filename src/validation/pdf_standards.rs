@@ -122,7 +122,7 @@ impl PdfSchema for Pdf20Schema {
     }
 
     fn supports_pdf_version(&self, version: &PdfVersion) -> bool {
-        version.major >= 2 || (version.major == 1 && version.minor >= 4)
+        version.major == 2 && version.minor == 0
     }
 
     fn validate(&self, document: &PdfDocument) -> ValidationReport {
@@ -196,21 +196,18 @@ impl PdfSchema for PdfASchema {
     }
 
     fn supports_pdf_version(&self, version: &PdfVersion) -> bool {
-        let required_version = self.version().parse::<f32>().unwrap_or(1.4);
-        let doc_version = format!("{}.{}", version.major, version.minor)
-            .parse::<f32>()
-            .unwrap_or(0.0);
-        doc_version >= required_version
+        match self.level {
+            PdfALevel::PdfA1a | PdfALevel::PdfA1b => version.major == 1 && version.minor <= 4,
+            PdfALevel::PdfA2a
+            | PdfALevel::PdfA2b
+            | PdfALevel::PdfA2u
+            | PdfALevel::PdfA3a
+            | PdfALevel::PdfA3b
+            | PdfALevel::PdfA3u => version.major == 1 && version.minor == 7,
+        }
     }
 
     fn validate(&self, document: &PdfDocument) -> ValidationReport {
-        if self.level == PdfALevel::PdfA1b {
-            let mut report = crate::validation::pdfa::PdfA1bValidator::new().validate(document);
-            report.schema_name = self.name().to_string();
-            report.schema_version = self.version().to_string();
-            return report;
-        }
-
         let mut report = ValidationReport::new(self.name().to_string(), self.version().to_string());
         let context = ValidationContext::new(document, &mut report);
 
@@ -230,6 +227,10 @@ impl PdfSchema for PdfASchema {
     }
 
     fn get_constraints(&self) -> Vec<Box<dyn SchemaConstraint>> {
+        if self.level == PdfALevel::PdfA1b {
+            return crate::validation::pdfa::PdfA1bValidator::new().constraints();
+        }
+
         let mut constraints: Vec<Box<dyn SchemaConstraint>> = vec![
             Box::new(HasCatalogConstraint),
             Box::new(HasPagesTreeConstraint),
@@ -285,11 +286,14 @@ impl PdfSchema for PdfXSchema {
     }
 
     fn supports_pdf_version(&self, version: &PdfVersion) -> bool {
-        let required_version = self.version().parse::<f32>().unwrap_or(1.3);
-        let doc_version = format!("{}.{}", version.major, version.minor)
-            .parse::<f32>()
-            .unwrap_or(0.0);
-        doc_version >= required_version
+        match self.level {
+            PdfXLevel::PdfX1a | PdfXLevel::PdfX3 => version.major == 1 && version.minor == 3,
+            PdfXLevel::PdfX4
+            | PdfXLevel::PdfX4p
+            | PdfXLevel::PdfX5g
+            | PdfXLevel::PdfX5n
+            | PdfXLevel::PdfX5pg => version.major == 1 && version.minor == 6,
+        }
     }
 
     fn validate(&self, document: &PdfDocument) -> ValidationReport {
@@ -351,11 +355,12 @@ impl PdfSchema for PdfUASchema {
     }
 
     fn supports_pdf_version(&self, version: &PdfVersion) -> bool {
-        let required_version = self.version().parse::<f32>().unwrap_or(1.7);
-        let doc_version = format!("{}.{}", version.major, version.minor)
-            .parse::<f32>()
-            .unwrap_or(0.0);
-        doc_version >= required_version
+        match self.level {
+            // PDF/UA-1 is based on PDF 1.7, but valid documents in the
+            // upstream corpus may carry an older PDF 1.x header.
+            PdfUALevel::PdfUA1 => version.major == 1 && version.minor <= 7,
+            PdfUALevel::PdfUA2 => version.major == 2 && version.minor == 0,
+        }
     }
 
     fn validate(&self, document: &PdfDocument) -> ValidationReport {
@@ -386,5 +391,58 @@ impl PdfSchema for PdfUASchema {
             Box::new(LanguageSpecificationConstraint),
             Box::new(LogicalReadingOrderConstraint),
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_version_gates_do_not_apply_the_wrong_standard() {
+        let pdfa1 = PdfASchema::new(PdfALevel::PdfA1b);
+        let pdfa2 = PdfASchema::new(PdfALevel::PdfA2b);
+        let pdf20 = Pdf20Schema::new();
+
+        assert!(pdfa1.supports_pdf_version(&PdfVersion::new(1, 4)));
+        assert!(!pdfa1.supports_pdf_version(&PdfVersion::new(1, 7)));
+        assert!(pdfa2.supports_pdf_version(&PdfVersion::new(1, 7)));
+        assert!(!pdfa2.supports_pdf_version(&PdfVersion::new(2, 0)));
+        assert!(pdf20.supports_pdf_version(&PdfVersion::new(2, 0)));
+        assert!(!pdf20.supports_pdf_version(&PdfVersion::new(1, 7)));
+    }
+
+    #[test]
+    fn pdfx_version_gates_do_not_accept_newer_pdf_versions() {
+        let pdfx1a = PdfXSchema::new(PdfXLevel::PdfX1a);
+        let pdfx4 = PdfXSchema::new(PdfXLevel::PdfX4);
+
+        assert!(pdfx1a.supports_pdf_version(&PdfVersion::new(1, 3)));
+        assert!(!pdfx1a.supports_pdf_version(&PdfVersion::new(1, 4)));
+        assert!(pdfx4.supports_pdf_version(&PdfVersion::new(1, 6)));
+        assert!(!pdfx4.supports_pdf_version(&PdfVersion::new(2, 0)));
+    }
+
+    #[test]
+    fn pdfua_version_gates_match_the_profile_base() {
+        let pdfua1 = PdfUASchema::new(PdfUALevel::PdfUA1);
+        let pdfua2 = PdfUASchema::new(PdfUALevel::PdfUA2);
+
+        assert!(pdfua1.supports_pdf_version(&PdfVersion::new(1, 7)));
+        assert!(pdfua1.supports_pdf_version(&PdfVersion::new(1, 5)));
+        assert!(!pdfua1.supports_pdf_version(&PdfVersion::new(2, 0)));
+        assert!(pdfua2.supports_pdf_version(&PdfVersion::new(2, 0)));
+        assert!(!pdfua2.supports_pdf_version(&PdfVersion::new(1, 7)));
+    }
+
+    #[test]
+    fn pdfa1b_registry_uses_the_shared_constraint_set() {
+        let schema = PdfASchema::new(PdfALevel::PdfA1b);
+        let constraints = schema.get_constraints();
+
+        assert_eq!(constraints.len(), 13);
+        assert!(constraints
+            .iter()
+            .all(|constraint| constraint.name().starts_with("pdfa-1b-")));
     }
 }

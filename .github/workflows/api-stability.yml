@@ -34,6 +34,16 @@ jobs:
         with:
           toolchain: stable
       - name: Install cargo-semver-checks
-        run: cargo install cargo-semver-checks --version 0.50.0 --locked
+        shell: bash
+        run: |
+          archive="$RUNNER_TEMP/cargo-semver-checks.tar.gz"
+          curl --fail --location --retry 3 \
+            "https://github.com/obi1kenobi/cargo-semver-checks/releases/download/v0.50.0/cargo-semver-checks-x86_64-unknown-linux-gnu.tar.gz" \
+            --output "$archive"
+          echo "52a65dc88dc53fa8b57d6087954eb52cda149ca03bcfca78ce3fdecd23f893c4  $archive" | sha256sum --check
+          install_dir="$RUNNER_TEMP/cargo-semver-checks"
+          mkdir -p "$install_dir"
+          tar --extract --gzip --file "$archive" --directory "$install_dir"
+          echo "$install_dir" >> "$GITHUB_PATH"
       - name: Check release compatibility
         run: cargo semver-checks check-release --package pdf-ast --baseline-version 0.1.0

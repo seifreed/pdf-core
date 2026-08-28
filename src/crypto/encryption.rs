@@ -503,15 +503,15 @@ impl PdfEncryptionHandler {
     /// Compute encryption key for AES security handler (R 5+)
     fn compute_key_aes(
         &self,
-        info: &EncryptionInfo,
-        user_password: Option<&str>,
+        _info: &EncryptionInfo,
+        _user_password: Option<&str>,
         _owner_password: Option<&str>,
     ) -> CryptoResult<Vec<u8>> {
         #[cfg(feature = "crypto")]
         {
             // AES key derivation using SHA-256
-            let password = user_password.unwrap_or("").as_bytes();
-            self.compute_sha256_key(password, &info.user_key, info.key_length)
+            let password = _user_password.unwrap_or("").as_bytes();
+            self.compute_sha256_key(password, &_info.user_key, _info.key_length)
         }
         #[cfg(not(feature = "crypto"))]
         {
@@ -911,12 +911,11 @@ mod tests {
     #[cfg(not(feature = "crypto"))]
     #[test]
     fn test_simple_rc4() {
-        let handler = PdfEncryptionHandler::new();
         let key = b"key";
         let data = b"Hello, World!";
 
-        let encrypted = handler.rc4_simple(data, key).unwrap();
-        let decrypted = handler.rc4_simple(&encrypted, key).unwrap();
+        let encrypted = rc4_encrypt(data, key);
+        let decrypted = rc4_encrypt(&encrypted, key);
 
         assert_eq!(data, &decrypted[..]);
     }

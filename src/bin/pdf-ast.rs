@@ -1501,6 +1501,24 @@ fn write_value_xml<W: std::io::Write>(
                 .write_event(Event::Text(BytesText::new(s)))
                 .map_err(|e| format!("XML writing error: {}", e))?;
         }
+        SerializableValue::StringBytes { bytes, hexadecimal } => {
+            value_element.push_attribute(("type", "string_bytes"));
+            value_element.push_attribute((
+                "encoding",
+                if *hexadecimal {
+                    "hexadecimal"
+                } else {
+                    "literal"
+                },
+            ));
+            writer
+                .write_event(Event::Start(value_element))
+                .map_err(|e| format!("XML writing error: {}", e))?;
+            let encoded = base64_encode(bytes);
+            writer
+                .write_event(Event::Text(BytesText::new(&encoded)))
+                .map_err(|e| format!("XML writing error: {}", e))?;
+        }
         SerializableValue::Name(n) => {
             value_element.push_attribute(("type", "name"));
             writer
@@ -1653,8 +1671,7 @@ fn base64_encode(data: &[u8]) -> String {
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut result = Vec::new();
 
-    let chunks = data.chunks_exact(3);
-    let remainder = chunks.remainder();
+    let (chunks, remainder) = data.as_chunks::<3>();
 
     for chunk in chunks {
         let b1 = chunk[0] as u32;

@@ -190,7 +190,9 @@ impl DocumentReconstructor {
 
         // Check for PDF header
         if data[start_pos..].starts_with(b"%PDF-") {
-            let end_pos = self.find_line_end(data, start_pos).unwrap_or(start_pos + 8);
+            let end_pos = self
+                .find_line_end(data, start_pos)
+                .unwrap_or_else(|| start_pos.saturating_add(8).min(data.len()));
             return Some(DocumentFragment {
                 fragment_id: format!("frag_{}", fragment_id),
                 offset: start_pos as u64,
@@ -714,4 +716,16 @@ impl Default for DocumentReconstructor {
 pub fn reconstruct_document(data: &[u8]) -> ReconstructionResult {
     let mut reconstructor = DocumentReconstructor::new(ReconstructionConfig::default());
     reconstructor.reconstruct(data)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reconstruct_document;
+
+    #[test]
+    fn truncated_pdf_header_does_not_panic_during_reconstruction() {
+        let result = std::panic::catch_unwind(|| reconstruct_document(b"%PDF-"));
+
+        assert!(result.is_ok());
+    }
 }

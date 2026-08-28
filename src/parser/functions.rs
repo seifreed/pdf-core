@@ -1,5 +1,6 @@
 use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
 use crate::parser::reference_resolver::ObjectNodeMap;
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::types::{PdfDictionary, PdfStream, PdfValue};
 
 /// Experimental PDF Function parser for the supported function types.
@@ -51,14 +52,45 @@ pub struct PostScriptFunction {
 pub struct FunctionParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
+    budget: ResourceBudget,
+    budget_error: Option<ResourceBudgetError>,
 }
 
 impl<'a> FunctionParser<'a> {
     pub fn new(ast: &'a mut PdfAstGraph, resolver: &'a ObjectNodeMap) -> Self {
-        FunctionParser { ast, resolver }
+        Self::new_with_budget(ast, resolver, &ResourceBudget::default())
+    }
+
+    pub fn new_with_budget(
+        ast: &'a mut PdfAstGraph,
+        resolver: &'a ObjectNodeMap,
+        budget: &ResourceBudget,
+    ) -> Self {
+        FunctionParser {
+            ast,
+            resolver,
+            budget: budget.clone(),
+            budget_error: None,
+        }
     }
 
     pub fn parse_function(&mut self, func_value: &PdfValue) -> Option<(NodeId, PdfFunction)> {
+        self.parse_function_with_budget(func_value).ok().flatten()
+    }
+
+    pub fn parse_function_with_budget(
+        &mut self,
+        func_value: &PdfValue,
+    ) -> Result<Option<(NodeId, PdfFunction)>, ResourceBudgetError> {
+        self.budget_error = None;
+        let result = self.parse_function_inner(func_value);
+        match self.budget_error.take() {
+            Some(error) => Err(error),
+            None => Ok(result),
+        }
+    }
+
+    fn parse_function_inner(&mut self, func_value: &PdfValue) -> Option<(NodeId, PdfFunction)> {
         match func_value {
             PdfValue::Dictionary(dict) => self.parse_function_dict(dict, None),
             PdfValue::Stream(stream) => self.parse_function_dict(&stream.dict, Some(stream)),
@@ -101,6 +133,10 @@ impl<'a> FunctionParser<'a> {
         };
 
         // Create AST node
+        if let Err(error) = self.budget.consume_node() {
+            self.budget_error = Some(error);
+            return None;
+        }
         let mut node = AstNode::new(
             self.ast.next_node_id(),
             NodeType::Function,
@@ -218,11 +254,7 @@ impl<'a> FunctionParser<'a> {
         }
 
         // Parse N (exponent)
-        if let Some(n) = dict.get("N").and_then(|v| self.get_number(v)) {
-            func.n = n;
-        } else {
-            return None;
-        }
+        func.n = dict.get("N").and_then(|v| self.get_number(v))?;
 
         Some(PdfFunction::Type2(func))
     }
@@ -239,7 +271,7 @@ impl<'a> FunctionParser<'a> {
         // Parse Functions array
         if let Some(PdfValue::Array(funcs)) = dict.get("Functions") {
             for f in funcs {
-                if let Some((_, parsed_func)) = self.parse_function(f) {
+                if let Some((_, parsed_func)) = self.parse_function_inner(f) {
                     func.functions.push(Box::new(parsed_func));
                 }
             }
@@ -359,7 +391,7 @@ impl<'a> FunctionParser<'a> {
     }
 
     fn parse_samples(&self, stream: &PdfStream, func: &SampledFunction) -> Vec<f64> {
-        let data = match stream.decode() {
+        let data = match stream.decode_with_budget(&self.budget) {
             Ok(d) => d,
             Err(_) => return Vec::new(),
         };
@@ -406,7 +438,7 @@ impl<'a> FunctionParser<'a> {
     }
 
     fn extract_postscript_code(&self, stream: &PdfStream) -> String {
-        match stream.decode() {
+        match stream.decode_with_budget(&self.budget) {
             Ok(data) => String::from_utf8_lossy(&data).to_string(),
             Err(_) => String::new(),
         }
@@ -610,6 +642,8 @@ mod tests {
     };
     use crate::ast::PdfAstGraph;
     use crate::parser::reference_resolver::ObjectNodeMap;
+    use crate::performance::{ResourceBudget, ResourceBudgetError};
+    use crate::types::{PdfArray, PdfDictionary, PdfValue};
 
     #[test]
     fn type0_evaluation_handles_mismatched_domain_and_encode_arrays() {
@@ -650,5 +684,42 @@ mod tests {
         });
 
         assert!(parser.evaluate(&function, &[0.5]).is_empty());
+    }
+
+    #[test]
+    fn function_parser_respects_node_budget() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 8);
+        let mut parser = FunctionParser::new_with_budget(&mut ast, &resolver, &budget);
+        let mut dict = PdfDictionary::new();
+        dict.insert("FunctionType", PdfValue::Integer(2));
+        dict.insert(
+            "Domain",
+            PdfValue::Array(PdfArray::from(vec![
+                PdfValue::Integer(0),
+                PdfValue::Integer(1),
+            ])),
+        );
+        dict.insert(
+            "C0",
+            PdfValue::Array(PdfArray::from(vec![PdfValue::Integer(0)])),
+        );
+        dict.insert(
+            "C1",
+            PdfValue::Array(PdfArray::from(vec![PdfValue::Integer(1)])),
+        );
+        dict.insert("N", PdfValue::Integer(1));
+
+        let value = PdfValue::Dictionary(dict);
+        assert!(parser.parse_function(&value).is_none());
+        assert_eq!(
+            parser
+                .parse_function_with_budget(&value)
+                .expect_err("function node budget must propagate"),
+            ResourceBudgetError::Nodes
+        );
+        drop(parser);
+        assert_eq!(ast.node_count(), 0);
     }
 }

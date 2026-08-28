@@ -1,4 +1,5 @@
 use super::FilterResult;
+use crate::performance::ResourceBudget;
 
 /// PNG Predictor implementation for PDF streams
 ///
@@ -39,11 +40,37 @@ impl PredictorDecoder {
     }
 
     pub fn decode(&self, data: &[u8]) -> FilterResult<Vec<u8>> {
-        match self.predictor {
+        self.decode_with_budget(data, &ResourceBudget::default())
+    }
+
+    pub fn decode_with_budget(
+        &self,
+        data: &[u8],
+        budget: &ResourceBudget,
+    ) -> FilterResult<Vec<u8>> {
+        budget
+            .check()
+            .map_err(|error| crate::filters::FilterError::DecompressionError(error.to_string()))?;
+        budget
+            .consume_input(data.len() as u64)
+            .map_err(|error| crate::filters::FilterError::DecompressionError(error.to_string()))?;
+        let output_limit = budget
+            .max_decoded_bytes_per_stream
+            .min(budget.remaining_decoded_bytes());
+        if data.len() as u64 > output_limit {
+            return Err(crate::filters::FilterError::DecompressionError(
+                "Predictor output exceeds resource budget".to_string(),
+            ));
+        }
+        let output = match self.predictor {
             PredictorType::None => Ok(data.to_vec()),
             PredictorType::TIFF => self.decode_tiff_predictor(data),
             PredictorType::PNG | PredictorType::PNGOptimum => self.decode_png_predictor(data),
-        }
+        }?;
+        budget
+            .consume_decoded(output.len() as u64)
+            .map_err(|error| crate::filters::FilterError::DecompressionError(error.to_string()))?;
+        Ok(output)
     }
 
     fn decode_tiff_predictor(&self, data: &[u8]) -> FilterResult<Vec<u8>> {
@@ -230,6 +257,18 @@ fn paeth_predictor(a: u16, b: u16, c: u16) -> u16 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::performance::ResourceBudget;
+
+    #[test]
+    fn predictor_budget_rejects_input_before_decoding() {
+        let decoder = PredictorDecoder::new(1, 1, 8, 1);
+        let budget = ResourceBudget::new(0, 1024, 1024, 100, 10, 10, 10, 10);
+        assert!(decoder
+            .decode_with_budget(&[0], &budget)
+            .expect_err("predictor input must respect the budget")
+            .to_string()
+            .contains("InputBytes"));
+    }
 
     #[test]
     fn test_no_predictor() {

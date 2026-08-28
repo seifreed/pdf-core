@@ -292,7 +292,7 @@ impl DecryptionPipeline {
                 let decrypted = handler
                     .decrypt_stream(bytes, &key)
                     .map_err(|e| format!("Stream decryption error: {:?}", e))?;
-                stream.data = crate::types::stream::StreamData::Decoded(decrypted);
+                stream.set_decoded(decrypted);
             }
 
             // Remove crypt filter from stream dictionary

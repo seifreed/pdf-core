@@ -1,6 +1,6 @@
 use super::*;
 use crate::ast::{AstNode, NodeType, PdfDocument};
-use crate::types::{PdfDictionary, PdfStream, PdfValue};
+use crate::types::{PdfDictionary, PdfStream, PdfString, PdfValue};
 
 fn resolve_node_from_value<'a>(document: &'a PdfDocument, value: &PdfValue) -> Option<&'a AstNode> {
     match value {
@@ -29,6 +29,90 @@ fn resolve_stream_from_value(document: &PdfDocument, value: &PdfValue) -> Option
             resolve_node_from_value(document, value).and_then(|node| node.as_stream().cloned())
         }
         _ => None,
+    }
+}
+
+fn resolve_string_from_value<'a>(
+    document: &'a PdfDocument,
+    value: &'a PdfValue,
+) -> Option<&'a PdfString> {
+    match value {
+        PdfValue::String(string) => Some(string),
+        PdfValue::Reference(_) => {
+            resolve_node_from_value(document, value).and_then(|node| node.value.as_string())
+        }
+        _ => None,
+    }
+}
+
+fn is_valid_pdf_language_tag(lang: &str) -> bool {
+    let mut parts = lang.split('-');
+    let Some(language) = parts.next() else {
+        return false;
+    };
+
+    // ponytail: syntax-only BCP 47 check; add registry validation for full language conformance.
+    (2..=8).contains(&language.len())
+        && language.bytes().all(|byte| byte.is_ascii_alphabetic())
+        && parts.all(|part| {
+            (2..=8).contains(&part.len()) && part.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
+}
+
+fn is_encoding_value(document: &PdfDocument, value: &PdfValue) -> bool {
+    match value {
+        PdfValue::Name(_) | PdfValue::Dictionary(_) => true,
+        PdfValue::Reference(_) => resolve_node_from_value(document, value)
+            .is_some_and(|node| node.value.as_name().is_some() || node.as_dict().is_some()),
+        _ => false,
+    }
+}
+
+fn has_embedded_font_program(
+    dict: &PdfDictionary,
+    document: &PdfDocument,
+    visited: &mut HashSet<NodeId>,
+) -> bool {
+    for key in ["FontFile", "FontFile2", "FontFile3", "CIDFontFile"] {
+        let Some(value) = dict.get(key) else {
+            continue;
+        };
+        let is_stream = match value {
+            PdfValue::Stream(_) => true,
+            PdfValue::Reference(reference) => match document.ast.get_node_by_object(reference.id())
+            {
+                Some(node) if visited.insert(node.id) => {
+                    let result = matches!(node.value, PdfValue::Stream(_));
+                    visited.remove(&node.id);
+                    result
+                }
+                _ => false,
+            },
+            _ => false,
+        };
+        if is_stream {
+            return true;
+        }
+    }
+
+    match dict.get("FontDescriptor") {
+        Some(PdfValue::Dictionary(descriptor)) => {
+            has_embedded_font_program(descriptor, document, visited)
+        }
+        Some(PdfValue::Reference(reference)) => {
+            let Some(node) = document.ast.get_node_by_object(reference.id()) else {
+                return false;
+            };
+            if !visited.insert(node.id) {
+                return false;
+            }
+            let result = node
+                .as_dict()
+                .is_some_and(|descriptor| has_embedded_font_program(descriptor, document, visited));
+            visited.remove(&node.id);
+            result
+        }
+        _ => false,
     }
 }
 
@@ -203,11 +287,7 @@ impl SchemaConstraint for CatalogVersionConstraint {
                                     is_2_0 = true;
                                 }
                             }
-                            PdfValue::String(s) => {
-                                if s.to_string_lossy() == "2.0" {
-                                    is_2_0 = true;
-                                }
-                            }
+                            PdfValue::String(s) if s.to_string_lossy() == "2.0" => is_2_0 = true,
                             _ => {}
                         }
                     }
@@ -786,11 +866,21 @@ impl SchemaConstraint for EmbeddedFontsConstraint {
             for font_id in fonts {
                 if let Some(font) = document.ast.get_node(font_id) {
                     if let PdfValue::Dictionary(dict) = &font.value {
-                        // Check if font has FontFile, FontFile2, FontFile3, or CIDFontFile
-                        let has_font_file = dict.contains_key("FontFile")
-                            || dict.contains_key("FontFile2")
-                            || dict.contains_key("FontFile3")
-                            || dict.contains_key("CIDFontFile");
+                        let has_font_file =
+                            has_embedded_font_program(dict, document, &mut HashSet::new())
+                                || dict
+                                    .get("DescendantFonts")
+                                    .and_then(PdfValue::as_array)
+                                    .into_iter()
+                                    .flatten()
+                                    .filter_map(|value| resolve_dict_from_value(document, value))
+                                    .any(|descendant| {
+                                        has_embedded_font_program(
+                                            &descendant,
+                                            document,
+                                            &mut HashSet::new(),
+                                        )
+                                    });
 
                         if !has_font_file {
                             all_embedded = false;
@@ -836,16 +926,18 @@ impl SchemaConstraint for TaggedStructureConstraint {
         if let Some(catalog_id) = catalog_nodes.first() {
             if let Some(catalog) = document.ast.get_node(*catalog_id) {
                 if let PdfValue::Dictionary(dict) = &catalog.value {
-                    if let Some(PdfValue::Dictionary(mark_info)) = dict.get("MarkInfo") {
-                        if let Some(PdfValue::Boolean(marked)) = mark_info.get("Marked") {
-                            if *marked {
-                                // Check for StructTreeRoot
-                                if dict.contains_key("StructTreeRoot") {
-                                    report.add_passed_check();
-                                    return;
-                                }
-                            }
-                        }
+                    let marked = dict
+                        .get("MarkInfo")
+                        .and_then(|value| resolve_dict_from_value(document, value))
+                        .and_then(|mark_info| mark_info.get("Marked").and_then(PdfValue::as_bool))
+                        .unwrap_or(false);
+                    let has_struct_tree_root = dict
+                        .get("StructTreeRoot")
+                        .and_then(|value| resolve_dict_from_value(document, value))
+                        .is_some();
+                    if marked && has_struct_tree_root {
+                        report.add_passed_check();
+                        return;
                     }
                 }
             }
@@ -985,19 +1077,42 @@ impl SchemaConstraint for FontCMapEncodingConstraint {
 
     fn check(&self, document: &PdfDocument, report: &mut ValidationReport) {
         let font_nodes = document.ast.find_nodes_by_type(NodeType::Font);
-        let cid_nodes = document.ast.find_nodes_by_type(NodeType::CIDFont);
 
-        for font_id in font_nodes.into_iter().chain(cid_nodes.into_iter()) {
+        for font_id in font_nodes {
             let mut has_encoding = false;
             let mut has_tounicode = false;
 
             if let Some(node) = document.ast.get_node(font_id) {
                 if let Some(dict) = node.as_dict() {
-                    if dict.contains_key("Encoding") {
-                        has_encoding = true;
+                    if let Some(encoding) = dict.get("Encoding") {
+                        if is_encoding_value(document, encoding) {
+                            has_encoding = true;
+                        } else {
+                            report.add_issue(ValidationIssue {
+                                severity: ValidationSeverity::Warning,
+                                code: "ENCODING_INVALID".to_string(),
+                                message: "Font Encoding entry has an invalid type".to_string(),
+                                node_id: Some(font_id),
+                                location: Some("Font Encoding".to_string()),
+                                suggestion: Some(
+                                    "Ensure Encoding is a name or dictionary".to_string(),
+                                ),
+                            });
+                        }
                     }
-                    if dict.contains_key("ToUnicode") {
-                        has_tounicode = true;
+                    if let Some(to_unicode) = dict.get("ToUnicode") {
+                        if resolve_stream_from_value(document, to_unicode).is_some() {
+                            has_tounicode = true;
+                        } else {
+                            report.add_issue(ValidationIssue {
+                                severity: ValidationSeverity::Warning,
+                                code: "TOUNICODE_NOT_STREAM".to_string(),
+                                message: "ToUnicode entry is not a stream".to_string(),
+                                node_id: Some(font_id),
+                                location: Some("Font ToUnicode".to_string()),
+                                suggestion: Some("Ensure ToUnicode points to a stream".to_string()),
+                            });
+                        }
                     }
                     if let Some(PdfValue::Name(subtype)) = dict.get("Subtype") {
                         if subtype.without_slash() == "Type0" && !dict.contains_key("ToUnicode") {
@@ -1302,7 +1417,7 @@ impl SchemaConstraint for AccessibilityMetadataConstraint {
             .get("Type")
             .and_then(PdfValue::as_name)
             .map(|name| name.without_slash() == "Metadata")
-            .unwrap_or(true);
+            .unwrap_or(false);
 
         if !subtype_ok || !type_ok {
             report.add_issue(ValidationIssue {
@@ -1316,20 +1431,32 @@ impl SchemaConstraint for AccessibilityMetadataConstraint {
             return;
         }
 
-        if let Some(bytes) = stream.data.as_bytes() {
-            if !bytes.windows(9).any(|w| w == b"x:xmpmeta")
-                && !bytes.windows(10).any(|w| w == b"<x:xmpmeta")
-            {
+        let bytes = match stream.decode_with_budget(&document.budget) {
+            Ok(bytes) => bytes,
+            Err(error) => {
                 report.add_issue(ValidationIssue {
-                    severity: ValidationSeverity::Warning,
-                    code: "XMP_PACKET_MISSING".to_string(),
-                    message: "Metadata stream does not appear to contain an XMP packet".to_string(),
+                    severity: ValidationSeverity::Error,
+                    code: "METADATA_DECODE_FAILED".to_string(),
+                    message: format!("Metadata stream could not be decoded: {error}"),
                     node_id: document.catalog,
                     location: Some("Metadata stream".to_string()),
-                    suggestion: Some("Embed a valid XMP packet".to_string()),
+                    suggestion: Some("Use a supported, valid stream filter".to_string()),
                 });
                 return;
             }
+        };
+        if !bytes.windows(9).any(|w| w == b"x:xmpmeta")
+            && !bytes.windows(10).any(|w| w == b"<x:xmpmeta")
+        {
+            report.add_issue(ValidationIssue {
+                severity: ValidationSeverity::Warning,
+                code: "XMP_PACKET_MISSING".to_string(),
+                message: "Metadata stream does not appear to contain an XMP packet".to_string(),
+                node_id: document.catalog,
+                location: Some("Metadata stream".to_string()),
+                suggestion: Some("Embed a valid XMP packet".to_string()),
+            });
+            return;
         }
 
         report.add_passed_check();
@@ -1381,7 +1508,16 @@ impl SchemaConstraint for AltTextConstraint {
                                 || name.without_slash() == "Table"
                         })
                         .unwrap_or(false);
-                    if is_figure && !dict.contains_key("Alt") {
+                    let has_alt_text = dict
+                        .get("Alt")
+                        .and_then(|value| resolve_string_from_value(document, value))
+                        .is_some_and(|string| {
+                            string
+                                .as_bytes()
+                                .iter()
+                                .any(|byte| !byte.is_ascii_whitespace())
+                        });
+                    if is_figure && !has_alt_text {
                         missing_alt = true;
                         report.add_issue(ValidationIssue {
                             severity: ValidationSeverity::Error,
@@ -1435,9 +1571,12 @@ impl SchemaConstraint for LanguageSpecificationConstraint {
             }
         };
 
-        let lang_value = catalog.get("Lang").and_then(PdfValue::as_string);
+        let lang_value = catalog
+            .get("Lang")
+            .and_then(|value| resolve_string_from_value(document, value));
         if let Some(lang) = lang_value {
-            if lang.as_bytes().is_empty() {
+            let language = lang.decode_pdf_encoding();
+            if language.trim().is_empty() {
                 report.add_issue(ValidationIssue {
                     severity: ValidationSeverity::Error,
                     code: "LANG_EMPTY".to_string(),
@@ -1448,6 +1587,19 @@ impl SchemaConstraint for LanguageSpecificationConstraint {
                 });
                 return;
             }
+
+            if !is_valid_pdf_language_tag(&language) {
+                report.add_issue(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    code: "LANG_INVALID".to_string(),
+                    message: "Catalog Lang entry is not a valid language tag".to_string(),
+                    node_id: document.catalog,
+                    location: Some("Catalog".to_string()),
+                    suggestion: Some("Set Lang to a BCP 47 language tag (e.g. en-US)".to_string()),
+                });
+                return;
+            }
+
             report.add_passed_check();
         } else {
             report.add_issue(ValidationIssue {

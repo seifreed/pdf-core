@@ -2,7 +2,9 @@
 ///
 /// These tests verify individual parsing functions and components
 use pdf_ast::parser::*;
+use pdf_ast::performance::PerformanceLimits;
 use pdf_ast::types::*;
+use std::io::Cursor;
 
 #[cfg(test)]
 mod parser_tests {
@@ -50,6 +52,20 @@ mod parser_tests {
         } else {
             panic!("Expected name value");
         }
+    }
+
+    #[test]
+    fn low_level_object_parsers_respect_resource_budgets() {
+        use object_parser::{parse_indirect_object_with_budget, parse_value_with_budget};
+        use pdf_ast::performance::ResourceBudget;
+
+        let input_budget = ResourceBudget::new(2, 1024, 1024, 10, 10, 10, 10, 8);
+        assert!(parse_value_with_budget(b"123", &input_budget).is_err());
+
+        let object_budget = ResourceBudget::new(1024, 1024, 1024, 10, 0, 10, 10, 8);
+        assert!(
+            parse_indirect_object_with_budget(b"1 0 obj\nnull\nendobj", &object_budget).is_err()
+        );
     }
 
     #[test]
@@ -277,7 +293,7 @@ mod parser_tests {
     #[test]
     fn test_linearization_parsing() {
         use pdf_ast::parser::xref::parse_linearization_dict;
-        use pdf_ast::types::{PdfDictionary, PdfStream, StreamData};
+        use pdf_ast::types::{PdfDictionary, PdfStream};
 
         let mut dict = PdfDictionary::new();
         dict.insert("Linearized", PdfValue::Real(1.0));
@@ -294,10 +310,7 @@ mod parser_tests {
         dict.insert("E", PdfValue::Integer(800));
         dict.insert("T", PdfValue::Integer(200));
 
-        let stream = PdfStream {
-            dict,
-            data: StreamData::Raw(vec![]),
-        };
+        let stream = PdfStream::new(dict, vec![]);
 
         let result = parse_linearization_dict(&stream);
         assert!(result.is_ok());
@@ -415,6 +428,15 @@ mod parser_tests {
     }
 
     #[test]
+    fn object_stream_offsets_respect_entry_budget() {
+        use object_parser::parse_object_stream_offsets_with_budget;
+        use pdf_ast::performance::ResourceBudget;
+
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 1, 10, 10, 8);
+        assert!(parse_object_stream_offsets_with_budget(b"1 0 2 3 data", 2, 4, &budget).is_err());
+    }
+
+    #[test]
     fn parser_modes_are_explicit() {
         assert_eq!(PdfParser::strict().mode(), ParseMode::Strict);
         assert_eq!(PdfParser::new().mode(), ParseMode::Tolerant);
@@ -424,12 +446,35 @@ mod parser_tests {
             PdfParser::new().parse_objects(b"1 2 nope").unwrap().len(),
             2
         );
+
+        let mut limits = PerformanceLimits {
+            max_nodes: 1,
+            ..PerformanceLimits::default()
+        };
+        limits.refresh_budget();
+        let bounded = PdfParser::new().with_limits(limits);
+        assert!(bounded
+            .parse_objects(b"1 0 obj null endobj 2 0 obj null endobj")
+            .is_err());
+
         let (objects, diagnostics) = PdfParser::new()
             .parse_objects_with_diagnostics(b"1 2 nope")
             .unwrap();
         assert_eq!(objects.len(), 2);
         assert_eq!(diagnostics.len(), 1);
-        assert_eq!(diagnostics[0].recovery_action, "returned_partial_sequence");
+        assert_eq!(diagnostics[0].recovery_action, "skipped_to_next_line");
+    }
+
+    #[test]
+    fn tolerant_object_sequence_resumes_after_a_malformed_line() {
+        let (objects, diagnostics) = PdfParser::new()
+            .with_max_errors(2)
+            .parse_objects_with_diagnostics(b"1 nope\n2\n")
+            .expect("tolerant recovery should continue at the next line");
+
+        assert_eq!(objects, vec![PdfValue::Integer(1), PdfValue::Integer(2)]);
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].recovery_action, "skipped_to_next_line");
     }
 
     #[test]
@@ -438,6 +483,24 @@ mod parser_tests {
             .parse_object(b"7 0 obj\n42\n")
             .expect_err("strict mode must reject a truncated indirect object");
         assert!(!error.to_string().is_empty());
+    }
+
+    #[test]
+    fn tolerant_parse_object_does_not_hide_malformed_indirect_objects() {
+        assert!(PdfParser::new().parse_object(b"7 0 obj\n42\n").is_err());
+    }
+
+    #[test]
+    fn public_parser_apis_respect_input_budget() {
+        let limits = PerformanceLimits {
+            max_file_size_mb: 0,
+            ..PerformanceLimits::default()
+        };
+        let parser = PdfParser::strict().with_limits(limits);
+
+        assert!(parser.parse_value(b"1").is_err());
+        assert!(parser.parse_object(b"1").is_err());
+        assert!(parser.parse_objects(b"1").is_err());
     }
 
     #[test]
@@ -474,6 +537,29 @@ mod parser_tests {
     }
 
     #[test]
+    fn reader_parsing_preserves_original_bytes() {
+        let input = b"%PDF-1.7\n1 0 obj\n42\nendobj\n".to_vec();
+        let document = PdfParser::new()
+            .parse(Cursor::new(input.clone()))
+            .expect("reader parse should succeed");
+
+        assert_eq!(document.original_bytes, Some(input));
+    }
+
+    #[test]
+    fn configured_value_depth_is_enforced() {
+        let nested = "[".repeat(2) + "0" + &"]".repeat(2);
+        assert!(PdfParser::new()
+            .with_max_depth(2)
+            .parse_value(nested.as_bytes())
+            .is_err());
+        assert!(PdfParser::new()
+            .with_max_depth(4)
+            .parse_value(nested.as_bytes())
+            .is_ok());
+    }
+
+    #[test]
     fn parse_object_accepts_an_indirect_object() {
         assert_eq!(
             PdfParser::strict()
@@ -481,5 +567,18 @@ mod parser_tests {
                 .unwrap(),
             PdfValue::Integer(42)
         );
+    }
+
+    #[test]
+    fn strict_single_value_rejects_trailing_tokens() {
+        assert!(PdfParser::strict().parse_value(b"42 trailing").is_err());
+        assert!(PdfParser::new().parse_value(b"42 trailing").is_ok());
+    }
+
+    #[test]
+    fn strict_indirect_object_rejects_trailing_tokens() {
+        assert!(PdfParser::strict()
+            .parse_object(b"7 2 obj\n42\nendobj trailing")
+            .is_err());
     }
 }

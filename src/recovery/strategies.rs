@@ -80,28 +80,7 @@ impl RecoveryStrategy for BasicStructureRecovery {
             }
         }
 
-        // 2. Fix missing or malformed xref table
-        if !data.windows(4).any(|w| w == b"xref") {
-            // Generate a basic xref table
-            let xref_data = self.generate_basic_xref(&data);
-
-            // Find insertion point (before trailer or at end)
-            if let Some(trailer_pos) = find_pattern(&data, b"trailer") {
-                data.splice(trailer_pos..trailer_pos, xref_data);
-            } else {
-                data.extend_from_slice(&xref_data);
-            }
-            modified = true;
-        }
-
-        // 3. Fix missing trailer
-        if !data.windows(7).any(|w| w == b"trailer") {
-            let trailer_data = self.generate_basic_trailer();
-            data.extend_from_slice(&trailer_data);
-            modified = true;
-        }
-
-        // 4. Fix missing EOF marker
+        // 2. Fix missing EOF marker
         if !data.ends_with(b"%%EOF") && !data.ends_with(b"%%EOF\n") {
             data.extend_from_slice(b"\n%%EOF");
             modified = true;
@@ -131,35 +110,6 @@ impl RecoveryStrategy for BasicStructureRecovery {
 
     fn priority(&self) -> u8 {
         90 // High priority for basic structure
-    }
-}
-
-impl BasicStructureRecovery {
-    fn generate_basic_xref(&self, data: &[u8]) -> Vec<u8> {
-        let mut xref = b"xref\n0 1\n0000000000 65535 f \n".to_vec();
-
-        // Find objects and add to xref
-        let mut object_count = 1;
-        let mut pos = 0;
-
-        while let Some(obj_pos) = find_pattern(&data[pos..], b" obj") {
-            let abs_pos = pos + obj_pos;
-            let xref_entry = format!("{:010} 00000 n \n", abs_pos);
-            xref.extend_from_slice(xref_entry.as_bytes());
-            object_count += 1;
-            pos = abs_pos + 4;
-
-            if object_count > 1000 {
-                // Limit to prevent infinite loops
-                break;
-            }
-        }
-
-        xref
-    }
-
-    fn generate_basic_trailer(&self) -> Vec<u8> {
-        b"trailer\n<<\n/Size 2\n/Root 1 0 R\n>>\nstartxref\n0\n".to_vec()
     }
 }
 
@@ -299,7 +249,7 @@ impl RecoveryStrategy for StreamRecovery {
         for stream in streams {
             if let Some(fixed_stream) = self.fix_stream(&data, &stream) {
                 // Replace broken stream
-                data.splice(stream.start..stream.end, fixed_stream.into_iter());
+                data.splice(stream.start..stream.end, fixed_stream);
                 modified = true;
             }
         }
@@ -1319,6 +1269,7 @@ impl XRefRebuildStrategy {
     fn rebuild_xref_table(&self, data: &mut Vec<u8>) -> bool {
         // First, find all object positions
         let objects = self.scan_for_objects(data);
+        let root_clause = Self::existing_root_clause(data).unwrap_or_default();
 
         // Remove existing xref and trailer
         if let Some(xref_pos) = find_pattern(data, b"xref") {
@@ -1354,10 +1305,14 @@ impl XRefRebuildStrategy {
         }
 
         // Add trailer
+        let size = objects
+            .keys()
+            .max()
+            .and_then(|object_number| object_number.checked_add(1))
+            .unwrap_or(1);
         let trailer = format!(
-            "trailer\n<<\n/Size {}\n/Root 1 0 R\n>>\nstartxref\n{}\n%%EOF\n",
-            objects.len() + 1,
-            xref_start_pos
+            "trailer\n<<\n/Size {}\n{}>>\nstartxref\n{}\n%%EOF\n",
+            size, root_clause, xref_start_pos
         );
 
         xref_data.extend_from_slice(trailer.as_bytes());
@@ -1379,25 +1334,44 @@ impl XRefRebuildStrategy {
         while pos < data.len() {
             if let Some(obj_start) = find_pattern(&data[pos..], b" obj") {
                 let abs_pos = pos + obj_start;
+                let object_end = abs_pos.saturating_add(b" obj".len());
 
                 // Look backwards for the object number
                 let search_start = abs_pos.saturating_sub(20);
-                let prefix = String::from_utf8_lossy(&data[search_start..abs_pos]);
+                let prefix = String::from_utf8_lossy(&data[search_start..object_end]);
 
                 // Find object number pattern
                 if let Some(captures) = obj_regex.captures(&prefix) {
                     if let Ok(obj_num) = captures[1].parse::<u32>() {
-                        objects.insert(obj_num, search_start);
+                        let header_start = search_start + captures.get(0).unwrap().start();
+                        objects.insert(obj_num, header_start);
                     }
                 }
 
-                pos = abs_pos + 4;
+                pos = object_end;
             } else {
                 break;
             }
         }
 
         objects
+    }
+
+    fn existing_root_clause(data: &[u8]) -> Option<String> {
+        let trailer = find_pattern(data, b"trailer")?;
+        let (_, value) = crate::parser::object_parser::parse_value(&data[trailer + 7..]).ok()?;
+        let dictionary = match value {
+            crate::types::PdfValue::Dictionary(dictionary) => dictionary,
+            _ => return None,
+        };
+        let root = match dictionary.get("Root") {
+            Some(crate::types::PdfValue::Reference(reference)) => reference,
+            _ => return None,
+        };
+        Some(format!(
+            "/Root {} {} R\n",
+            root.object_number, root.generation_number
+        ))
     }
 }
 
@@ -1580,27 +1554,41 @@ impl StreamRepairStrategy {
 
     fn repair_compressed_streams(&self, data: &mut Vec<u8>) -> bool {
         let mut modified = false;
-        let data_str = String::from_utf8_lossy(data);
 
         // Look for compressed streams with corrupted headers
-        if data_str.contains("/Filter ") && data_str.contains("FlateDecode") {
+        if data
+            .windows(b"/Filter ".len())
+            .any(|window| window == b"/Filter ")
+            && data
+                .windows(b"FlateDecode".len())
+                .any(|window| window == b"FlateDecode")
+        {
             // Find FlateDecode streams
             let mut pos = 0;
-            while let Some(filter_pos) = data_str[pos..].find("/Filter ") {
+            while let Some(filter_pos) = find_pattern(&data[pos..], b"/Filter ") {
                 let abs_pos = pos + filter_pos;
 
-                if data_str[abs_pos..].starts_with("/Filter /FlateDecode")
-                    || data_str[abs_pos..].starts_with("/Filter [/FlateDecode")
+                if data
+                    .get(abs_pos..)
+                    .is_some_and(|tail| tail.starts_with(b"/Filter /FlateDecode"))
+                    || data
+                        .get(abs_pos..)
+                        .is_some_and(|tail| tail.starts_with(b"/Filter [/FlateDecode"))
                 {
                     // Find the stream data
-                    if let Some(stream_start) = data_str[abs_pos..].find("stream\n") {
+                    if let Some(stream_start) = find_pattern(&data[abs_pos..], b"stream\n") {
                         let stream_data_start = abs_pos + stream_start + 7;
 
-                        if let Some(endstream_pos) = data_str[stream_data_start..].find("endstream")
+                        if let Some(endstream_pos) = data
+                            .get(stream_data_start..)
+                            .and_then(|tail| find_pattern(tail, b"endstream"))
                         {
                             // Check if stream data looks like it starts with zlib header
-                            let stream_bytes =
-                                &data[stream_data_start..stream_data_start + endstream_pos];
+                            let stream_end = stream_data_start.saturating_add(endstream_pos);
+                            let Some(stream_bytes) = data.get(stream_data_start..stream_end) else {
+                                pos = abs_pos.saturating_add(b"/Filter ".len());
+                                continue;
+                            };
 
                             if !stream_bytes.is_empty() {
                                 // Check for corrupted zlib header
@@ -2318,4 +2306,70 @@ impl Default for ExperimentalRecovery {
 fn find_pattern(data: &[u8], pattern: &[u8]) -> Option<usize> {
     data.windows(pattern.len())
         .position(|window| window == pattern)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        BasicStructureRecovery, RecoveryConfig, RecoveryContext, RecoveryStrategy,
+        StreamRepairStrategy, XRefRebuildStrategy,
+    };
+    use crate::ast::{PdfDocument, PdfVersion};
+
+    #[test]
+    fn basic_recovery_does_not_invent_xref_or_root() {
+        let data = b"%PDF-1.4\n1 0 obj\nnull\nendobj\n";
+        let document = PdfDocument::new(PdfVersion::new(1, 4));
+        let config = RecoveryConfig::default();
+        let result = BasicStructureRecovery::new()
+            .apply_recovery(RecoveryContext {
+                original_data: data,
+                current_data: data,
+                document: &document,
+                config: &config,
+                error_log: &[],
+            })
+            .expect("basic recovery should complete");
+        let recovered = result
+            .modified_data
+            .expect("missing EOF should be repaired");
+
+        assert!(recovered.ends_with(b"\n%%EOF"));
+        assert!(!recovered.windows(4).any(|window| window == b"xref"));
+        assert!(!recovered.windows(7).any(|window| window == b"trailer"));
+        assert!(!recovered.windows(5).any(|window| window == b"/Root"));
+    }
+
+    #[test]
+    fn xref_rebuild_records_the_exact_object_header_offset() {
+        let data = b"prefix\n12 0 obj\nnull\nendobj\n";
+        let objects = XRefRebuildStrategy::new().scan_for_objects(data);
+        let expected = data
+            .windows(b"12 0 obj".len())
+            .position(|window| window == b"12 0 obj")
+            .expect("object header");
+
+        assert_eq!(objects.get(&12), Some(&expected));
+    }
+
+    #[test]
+    fn xref_rebuild_does_not_invent_root_and_uses_correct_size() {
+        let mut data = b"%PDF-1.4\n12 0 obj\nnull\nendobj\n".to_vec();
+        XRefRebuildStrategy::new().rebuild_xref_table(&mut data);
+        let rebuilt = String::from_utf8(data).expect("repaired PDF should be text");
+
+        assert!(rebuilt.contains("/Size 13"));
+        assert!(!rebuilt.contains("/Root 1 0 R"));
+        assert!(rebuilt.contains("0000000009 00000 n"));
+    }
+
+    #[test]
+    fn compressed_stream_repair_keeps_byte_offsets_on_invalid_utf8() {
+        let mut data = b"\xff/Filter /FlateDecode\nstream\nnot-zlib\nendstream".to_vec();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            StreamRepairStrategy::new().repair_compressed_streams(&mut data)
+        }));
+
+        assert!(result.is_ok());
+    }
 }

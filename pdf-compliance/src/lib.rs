@@ -22,6 +22,7 @@ pub enum ComplianceProfile {
     PdfA3b,
     PdfA3u,
     PdfUA1,
+    PdfUA2,
 }
 
 impl ComplianceProfile {
@@ -36,6 +37,7 @@ impl ComplianceProfile {
             Self::PdfA3b => "PDF/A-3b",
             Self::PdfA3u => "PDF/A-3u",
             Self::PdfUA1 => "PDF/UA-1",
+            Self::PdfUA2 => "PDF/UA-2",
         }
     }
 }
@@ -86,6 +88,11 @@ pub fn validate_pdfua1(document: &PdfDocument) -> ComplianceReport {
         .expect("PDF/UA-1 is registered by the root validation registry")
 }
 
+pub fn validate_pdfua2(document: &PdfDocument) -> ComplianceReport {
+    validate_profile(document, ComplianceProfile::PdfUA2)
+        .expect("PDF/UA-2 is registered by the root validation registry")
+}
+
 fn convert_report(
     profile: ComplianceProfile,
     document: &PdfDocument,
@@ -133,11 +140,30 @@ fn convert_issue(issue: ValidationIssue, document: &PdfDocument) -> Violation {
         .and_then(|id| document.ast.get_node(id))
         .and_then(|node| node.metadata.offset);
     let standard_reference = match issue.code.as_str() {
+        "PDF_A_VERSION" => Some("ISO 19005-1:2005, 6.1.2"),
+        "PDF_A_ENCRYPTION" => Some("ISO 19005-1:2005, 6.1.3"),
+        "PDF_A_XREF_FORMAT" => Some("ISO 19005-1:2005, 6.1.4"),
+        "PDF_A_LZW_DECODE" => Some("ISO 19005-1:2005, 6.1.10"),
+        "PDF_A_EMBEDDED_FILES" => Some("ISO 19005-1:2005, 6.1.11"),
+        "PDF_A_OUTPUT_INTENT" | "PDF_A_COLOR_SPACE" => Some("ISO 19005-1:2005, 6.2.3.3"),
         "PDF_A_FONT_EMBEDDING" => Some("ISO 19005-1:2005, 6.3.4"),
-        "PDF_A_MULTIMEDIA" => Some("ISO 19005-1:2005, 6.5.2"),
+        "PDF_A_FONT_ENCODING" => Some("ISO 19005-1:2005, 6.3.7"),
         "PDF_A_JAVASCRIPT" => Some("ISO 19005-1:2005, 6.6.1"),
-        "NO_TAGGED_STRUCTURE" | "STRUCT_ELEM_MISSING" => Some("ISO 14289-1:2014, 7.1"),
-        "LANG_MISSING" | "LANG_EMPTY" => Some("ISO 14289-1:2014, 7.2"),
+        "PDF_A_XMP_METADATA" => Some("ISO 19005-1:2005, 6.7.2"),
+        "PDF_A_METADATA_SYNC" => Some("ISO 19005-1:2005, 6.7.3"),
+        "PDF_A_MULTIMEDIA"
+        | "PDF_A_ANNOTATION_TYPE"
+        | "PDF_A_ANNOTATION_APPEARANCE"
+        | "PDF_A_TRANSPARENCY" => Some("ISO 19005-1:2005, 6.5.2"),
+        "NO_TAGGED_STRUCTURE"
+        | "STRUCT_ELEM_MISSING"
+        | "ACCESSIBILITY_METADATA_MISSING"
+        | "METADATA_NOT_STREAM"
+        | "METADATA_STREAM_INVALID"
+        | "METADATA_DECODE_FAILED"
+        | "XMP_PACKET_MISSING" => Some("ISO 14289-1:2014, 7.1"),
+        "LANG_MISSING" | "LANG_EMPTY" | "LANG_INVALID" => Some("ISO 14289-1:2014, 7.2"),
+        "ALT_TEXT_MISSING" => Some("ISO 14289-1:2014, 7.3"),
         _ => None,
     };
 
@@ -183,21 +209,37 @@ mod tests {
     }
 
     #[test]
-    fn validates_all_exposed_profiles_through_the_root_registry() {
-        let doc = PdfDocument::new(PdfVersion::new(1, 7));
-        for profile in [
-            ComplianceProfile::PdfA1a,
-            ComplianceProfile::PdfA1b,
-            ComplianceProfile::PdfA2a,
-            ComplianceProfile::PdfA2b,
-            ComplianceProfile::PdfA2u,
-            ComplianceProfile::PdfA3a,
-            ComplianceProfile::PdfA3b,
-            ComplianceProfile::PdfA3u,
-            ComplianceProfile::PdfUA1,
+    fn test_pdfua2_validation() {
+        let doc = PdfDocument::new(PdfVersion::new(2, 0));
+        let report = validate_pdfua2(&doc);
+        assert_eq!(report.profile, ComplianceProfile::PdfUA2);
+    }
+
+    #[test]
+    fn validates_exposed_profiles_through_the_root_registry() {
+        for (profile, version) in [
+            (ComplianceProfile::PdfA1a, PdfVersion::new(1, 4)),
+            (ComplianceProfile::PdfA1b, PdfVersion::new(1, 4)),
+            (ComplianceProfile::PdfA2a, PdfVersion::new(1, 7)),
+            (ComplianceProfile::PdfA2b, PdfVersion::new(1, 7)),
+            (ComplianceProfile::PdfA2u, PdfVersion::new(1, 7)),
+            (ComplianceProfile::PdfA3a, PdfVersion::new(1, 7)),
+            (ComplianceProfile::PdfA3b, PdfVersion::new(1, 7)),
+            (ComplianceProfile::PdfA3u, PdfVersion::new(1, 7)),
+            (ComplianceProfile::PdfUA1, PdfVersion::new(1, 7)),
+            (ComplianceProfile::PdfUA2, PdfVersion::new(2, 0)),
         ] {
-            assert!(validate_profile(&doc, profile).is_some());
+            assert!(validate_profile(&PdfDocument::new(version), profile).is_some());
         }
+    }
+
+    #[test]
+    fn rejects_profiles_with_an_incompatible_pdf_version() {
+        assert!(validate_profile(
+            &PdfDocument::new(PdfVersion::new(2, 0)),
+            ComplianceProfile::PdfA1b,
+        )
+        .is_none());
     }
 
     #[test]
@@ -228,5 +270,102 @@ mod tests {
             violation.standard_reference.as_deref(),
             Some("ISO 19005-1:2005, 6.3.4")
         );
+    }
+
+    #[test]
+    fn preserves_pdfua_alt_text_reference() {
+        let violation = convert_issue(
+            ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "ALT_TEXT_MISSING".to_string(),
+                message: "missing alternative text".to_string(),
+                node_id: None,
+                location: None,
+                suggestion: None,
+            },
+            &PdfDocument::new(PdfVersion::new(1, 7)),
+        );
+
+        assert_eq!(
+            violation.standard_reference.as_deref(),
+            Some("ISO 14289-1:2014, 7.3")
+        );
+    }
+
+    #[test]
+    fn preserves_pdfua_metadata_reference() {
+        let violation = convert_issue(
+            ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "METADATA_DECODE_FAILED".to_string(),
+                message: "metadata stream could not be decoded".to_string(),
+                node_id: None,
+                location: None,
+                suggestion: None,
+            },
+            &PdfDocument::new(PdfVersion::new(1, 7)),
+        );
+
+        assert_eq!(
+            violation.standard_reference.as_deref(),
+            Some("ISO 14289-1:2014, 7.1")
+        );
+    }
+
+    #[test]
+    fn preserves_pdfua_invalid_language_reference() {
+        let violation = convert_issue(
+            ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "LANG_INVALID".to_string(),
+                message: "invalid language tag".to_string(),
+                node_id: None,
+                location: None,
+                suggestion: None,
+            },
+            &PdfDocument::new(PdfVersion::new(1, 7)),
+        );
+
+        assert_eq!(
+            violation.standard_reference.as_deref(),
+            Some("ISO 14289-1:2014, 7.2")
+        );
+    }
+
+    #[test]
+    fn maps_all_pdfa_rules_to_normative_clauses() {
+        let document = PdfDocument::new(PdfVersion::new(1, 4));
+        let expected = [
+            ("PDF_A_VERSION", "6.1.2"),
+            ("PDF_A_ENCRYPTION", "6.1.3"),
+            ("PDF_A_XREF_FORMAT", "6.1.4"),
+            ("PDF_A_LZW_DECODE", "6.1.10"),
+            ("PDF_A_EMBEDDED_FILES", "6.1.11"),
+            ("PDF_A_OUTPUT_INTENT", "6.2.3.3"),
+            ("PDF_A_COLOR_SPACE", "6.2.3.3"),
+            ("PDF_A_FONT_EMBEDDING", "6.3.4"),
+            ("PDF_A_FONT_ENCODING", "6.3.7"),
+            ("PDF_A_JAVASCRIPT", "6.6.1"),
+            ("PDF_A_XMP_METADATA", "6.7.2"),
+            ("PDF_A_METADATA_SYNC", "6.7.3"),
+            ("PDF_A_MULTIMEDIA", "6.5.2"),
+            ("PDF_A_ANNOTATION_TYPE", "6.5.2"),
+            ("PDF_A_ANNOTATION_APPEARANCE", "6.5.2"),
+            ("PDF_A_TRANSPARENCY", "6.5.2"),
+        ];
+
+        for (code, clause) in expected {
+            let issue = ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: code.to_string(),
+                message: String::new(),
+                node_id: None,
+                location: None,
+                suggestion: None,
+            };
+            let reference = convert_issue(issue, &document).standard_reference;
+            let expected = format!("ISO 19005-1:2005, {clause}");
+            assert_eq!(reference.as_deref(), Some(expected.as_str()));
+        }
     }
 }

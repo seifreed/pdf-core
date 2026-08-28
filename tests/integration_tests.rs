@@ -30,6 +30,51 @@ mod integration_tests {
         }
     }
 
+    #[test]
+    fn parse_bytes_original_retention_respects_memory_budget() {
+        let minimal_pdf = create_minimal_pdf();
+        let budget = pdf_ast::performance::ResourceBudget::new(
+            1024 * 1024,
+            (minimal_pdf.len() - 1) as u64,
+            1024 * 1024,
+            100,
+            10_000,
+            10_000,
+            10_000,
+            100,
+        );
+
+        let error = PdfParser::new()
+            .with_resource_budget(budget)
+            .parse_bytes(&minimal_pdf)
+            .expect_err("lossless source retention must respect the memory budget");
+        assert!(error.to_string().contains("DecodedBytes"));
+    }
+
+    #[test]
+    fn document_page_queries_respect_node_budget() {
+        let document = PdfParser::new()
+            .parse_bytes(&create_minimal_pdf())
+            .expect("minimal PDF should parse");
+        let budget = pdf_ast::performance::ResourceBudget::new(
+            1024 * 1024,
+            1024 * 1024,
+            1024 * 1024,
+            100,
+            100,
+            0,
+            100,
+            100,
+        );
+
+        assert_eq!(
+            document
+                .get_pages_with_budget(&budget)
+                .expect_err("page collection must charge nodes"),
+            pdf_ast::performance::ResourceBudgetError::Nodes
+        );
+    }
+
     /// Test PDF with JavaScript content
     #[test]
     fn test_javascript_detection() {
@@ -120,6 +165,222 @@ mod integration_tests {
                 .map(|node| node.node_type == NodeType::Font)
                 .unwrap_or(false)
         }));
+    }
+
+    #[test]
+    fn invalid_page_resources_are_strict_error_or_tolerant_diagnostic() {
+        let pdf = create_pdf_with_invalid_resources();
+
+        let error = PdfParser::strict()
+            .parse_bytes(&pdf)
+            .expect_err("strict mode must reject non-dictionary page resources");
+        assert!(error.to_string().contains("Resources must be a dictionary"));
+
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant mode should retain a diagnostic");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "invalid_resources"));
+    }
+
+    #[test]
+    fn invalid_page_tree_node_is_strict_error_or_tolerant_diagnostic() {
+        let pdf = create_pdf_with_invalid_page_tree_node();
+
+        let error = PdfParser::strict()
+            .parse_bytes(&pdf)
+            .expect_err("strict mode must reject a non-dictionary page tree node");
+        assert!(error
+            .to_string()
+            .contains("Page tree node must be a dictionary"));
+
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant mode should retain a diagnostic");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "invalid_page_tree_node"));
+    }
+
+    #[test]
+    fn invalid_page_tree_kids_are_strict_error_or_tolerant_diagnostic() {
+        let pdf = create_pdf_with_invalid_page_tree_kids();
+
+        let error = PdfParser::strict()
+            .parse_bytes(&pdf)
+            .expect_err("strict mode must reject non-array page tree kids");
+        assert!(error
+            .to_string()
+            .contains("Page tree /Kids must be an array"));
+
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant mode should retain a diagnostic");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "invalid_page_tree_kids"));
+    }
+
+    #[test]
+    fn missing_page_tree_fields_are_strict_error_or_tolerant_diagnostics() {
+        let pdf = create_pdf_with_missing_page_tree_fields();
+
+        let error = PdfParser::strict()
+            .parse_bytes(&pdf)
+            .expect_err("strict mode must reject missing /Pages fields");
+        assert!(error.to_string().contains("missing required /Kids"));
+
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant mode should retain diagnostics");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "missing_page_tree_kids"));
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "missing_page_tree_count"));
+    }
+
+    #[test]
+    fn page_tree_count_must_be_a_non_negative_integer() {
+        let pdf = create_pdf_with_invalid_page_tree_count();
+
+        let error = PdfParser::strict()
+            .parse_bytes(&pdf)
+            .expect_err("strict mode must reject an invalid /Count");
+        assert!(error
+            .to_string()
+            .contains("/Count must be a non-negative integer"));
+
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant mode should retain a diagnostic");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "invalid_page_tree_count"));
+    }
+
+    #[test]
+    fn page_parent_must_be_an_indirect_reference() {
+        let pdf = create_pdf_with_invalid_page_parent();
+
+        let error = PdfParser::strict()
+            .parse_bytes(&pdf)
+            .expect_err("strict mode must reject a missing page parent");
+        assert!(error
+            .to_string()
+            .contains("Page tree /Page node is missing required /Parent"));
+
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant mode should retain a diagnostic");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "missing_page_parent"));
+    }
+
+    #[test]
+    fn catalog_pages_root_must_be_a_pages_node() {
+        let pdf = create_pdf_with_page_as_catalog_pages_root();
+
+        let error = PdfParser::strict()
+            .parse_bytes(&pdf)
+            .expect_err("strict mode must reject a /Page as catalog /Pages root");
+        assert!(error
+            .to_string()
+            .contains("Catalog /Pages must resolve to a /Pages node"));
+
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant mode should retain a diagnostic");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "invalid_pages_root_type"));
+    }
+
+    #[test]
+    fn indirect_page_tree_kids_are_resolved() {
+        let document = PdfParser::strict()
+            .parse_bytes(&create_pdf_with_indirect_page_tree_kids())
+            .expect("strict mode should resolve an indirect /Kids array");
+        assert_eq!(document.ast.find_nodes_by_type(NodeType::Page).len(), 1);
+    }
+
+    #[test]
+    fn direct_names_dictionary_is_parsed() {
+        let document = PdfParser::new()
+            .parse_bytes(&create_pdf_with_direct_names_dictionary())
+            .expect("direct /Names dictionary should parse");
+        assert!(!document
+            .ast
+            .find_nodes_by_type(NodeType::JavaScriptAction)
+            .is_empty());
+    }
+
+    #[test]
+    fn indirect_output_intent_is_materialized_after_reference_resolution() {
+        let document = PdfParser::new()
+            .parse_bytes(&create_pdf_with_indirect_output_intent())
+            .expect("indirect output intent should parse");
+        let output_intents = document.ast.find_nodes_by_type(NodeType::OutputIntent);
+        assert_eq!(output_intents.len(), 1);
+        let node = document
+            .ast
+            .get_node(output_intents[0])
+            .expect("output intent node should exist");
+        assert_eq!(
+            node.metadata.properties.get("subtype"),
+            Some(&"GTS_PDFA1".to_string())
+        );
+    }
+
+    #[test]
+    fn invalid_catalog_pages_root_is_strict_error_or_tolerant_diagnostic() {
+        let pdf = create_pdf_with_invalid_catalog_pages_root();
+
+        let error = PdfParser::strict()
+            .parse_bytes(&pdf)
+            .expect_err("strict mode must reject a non-reference catalog /Pages");
+        assert!(error
+            .to_string()
+            .contains("Catalog /Pages must be an indirect reference"));
+
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant mode should retain a diagnostic");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "invalid_pages_root"));
+    }
+
+    #[test]
+    fn missing_catalog_pages_root_is_strict_error_or_tolerant_diagnostic() {
+        let pdf = create_pdf_without_catalog_pages_root();
+
+        let error = PdfParser::strict()
+            .parse_bytes(&pdf)
+            .expect_err("strict mode must reject a catalog without /Pages");
+        assert!(error
+            .to_string()
+            .contains("missing the required /Pages reference"));
+
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant mode should retain a diagnostic");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "missing_pages_root"));
     }
 
     /// Test filter decoding
@@ -215,6 +476,25 @@ mod integration_tests {
         );
     }
 
+    #[test]
+    fn indirect_catalog_entries_remain_resolvable_after_parsing() {
+        let document = PdfParser::new()
+            .parse_bytes(&create_pdf_with_indirect_catalog_entries())
+            .expect("indirect catalog entries should parse");
+        let validator = pdf_ast::validation::pdfa::PdfA1bValidator::new().with_strict_mode(false);
+        let report = validator.validate(&document);
+
+        assert!(report
+            .issues
+            .iter()
+            .any(|issue| issue.code == "PDF_A_JAVASCRIPT"));
+        assert!(report.issues.iter().any(|issue| issue.code == "PDF_A_XFA"));
+        assert!(!report
+            .issues
+            .iter()
+            .any(|issue| issue.code == "PDF_A_XMP_METADATA"));
+    }
+
     /// Test malformed PDF handling
     #[test]
     fn test_malformed_pdf_handling() {
@@ -272,6 +552,29 @@ mod integration_tests {
         let _ = has_recovery;
     }
 
+    #[test]
+    fn tolerant_parser_recovers_from_object_offset_outside_file() {
+        let mut pdf = create_minimal_pdf();
+        let root_entry = b"0000000009 00000 n ";
+        let root_entry_start = pdf
+            .windows(root_entry.len())
+            .position(|window| window == root_entry)
+            .expect("minimal PDF root xref entry should exist");
+        pdf.splice(
+            root_entry_start..root_entry_start + root_entry.len(),
+            b"9999999999 00000 n ".iter().copied(),
+        );
+
+        assert!(PdfParser::strict().parse_bytes(&pdf).is_err());
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant parser should preserve a controlled result");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "object_buffer"));
+    }
+
     // Helper functions to create test PDFs
 
     fn create_minimal_pdf() -> Vec<u8> {
@@ -305,9 +608,9 @@ endobj
         let xref_content = b"xref
 0 4
 0000000000 65535 f 
-0000000011 00000 n 
+0000000009 00000 n 
 0000000058 00000 n 
-0000000100 00000 n 
+0000000115 00000 n 
 trailer
 <<
 /Size 4
@@ -345,6 +648,315 @@ startxref
         }
         pdf.extend_from_slice(
             format!("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_indirect_catalog_entries() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R /OpenAction 4 0 R /AcroForm 5 0 R /Metadata 6 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".as_slice(),
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>\nendobj\n".as_slice(),
+            b"4 0 obj\n<< /S /JavaScript /JS (app.alert) >>\nendobj\n".as_slice(),
+            b"5 0 obj\n<< /XFA (xfa) >>\nendobj\n".as_slice(),
+            b"6 0 obj\n<< /Type /Metadata /Subtype /XML /Length 13 >>\nstream\n<x:xmpmeta/>\nendstream\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 7\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 7 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_invalid_resources() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 /Resources 4 0 R >>\nendobj\n"
+                .as_slice(),
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] >>\nendobj\n"
+                .as_slice(),
+            b"4 0 obj\n123\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 5\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_invalid_page_tree_node() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".as_slice(),
+            b"3 0 obj\n123\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 4\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_invalid_page_tree_kids() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids 3 /Count 1 >>\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 3\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_missing_page_tree_fields() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Pages >>\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 3\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_invalid_page_tree_count() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids [] /Count /one >>\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 3\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 3 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_invalid_page_parent() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".as_slice(),
+            b"3 0 obj\n<< /Type /Page /MediaBox [0 0 10 10] >>\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 4\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_page_as_catalog_pages_root() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Page /Parent 3 0 R /MediaBox [0 0 10 10] >>\nendobj\n".as_slice(),
+            b"3 0 obj\n<< /Type /Pages /Kids [] /Count 0 >>\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 4\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 4 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_indirect_page_tree_kids() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n".as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids 4 0 R /Count 1 >>\nendobj\n".as_slice(),
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>\nendobj\n".as_slice(),
+            b"4 0 obj\n[3 0 R]\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 5\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_direct_names_dictionary() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R /Names << /JavaScript 4 0 R >> >>\nendobj\n"
+                .as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".as_slice(),
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>\nendobj\n".as_slice(),
+            b"4 0 obj\n<< /S /JavaScript /JS (app.alert) >>\nendobj\n".as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 5\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_indirect_output_intent() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [
+            b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R /OutputIntents [4 0 R] >>\nendobj\n"
+                .as_slice(),
+            b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n".as_slice(),
+            b"3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>\nendobj\n"
+                .as_slice(),
+            b"4 0 obj\n<< /Type /OutputIntent /S /GTS_PDFA1 /OutputConditionIdentifier (sRGB) >>\nendobj\n"
+                .as_slice(),
+        ];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 5\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_with_invalid_catalog_pages_root() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let objects = [b"1 0 obj\n<< /Type /Catalog /Pages 3 >>\nendobj\n".as_slice()];
+        let mut offsets = vec![0usize];
+        for object in objects {
+            offsets.push(pdf.len());
+            pdf.extend_from_slice(object);
+        }
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 2\n0000000000 65535 f \n");
+        for offset in offsets.iter().skip(1) {
+            pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 2 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
+                .as_bytes(),
+        );
+        pdf
+    }
+
+    fn create_pdf_without_catalog_pages_root() -> Vec<u8> {
+        let mut pdf = b"%PDF-1.4\n".to_vec();
+        let object = b"1 0 obj\n<< /Type /Catalog >>\nendobj\n";
+        let offset = pdf.len();
+        pdf.extend_from_slice(object);
+        let xref_start = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 2\n0000000000 65535 f \n");
+        pdf.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+        pdf.extend_from_slice(
+            format!("trailer\n<< /Size 2 /Root 1 0 R >>\nstartxref\n{xref_start}\n%%EOF")
                 .as_bytes(),
         );
         pdf

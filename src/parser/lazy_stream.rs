@@ -1,3 +1,4 @@
+use crate::performance::ResourceBudget;
 use crate::types::{ObjectId, PdfDictionary, PdfStream};
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::{Arc, Mutex};
@@ -86,22 +87,41 @@ impl LazyStream {
 
     /// Load stream data on-demand
     pub fn load(&self) -> Result<Vec<u8>, String> {
+        self.load_with_budget(&ResourceBudget::default())
+    }
+
+    pub fn load_with_budget(&self, budget: &ResourceBudget) -> Result<Vec<u8>, String> {
+        budget.check().map_err(|error| error.to_string())?;
         // Check cache first
         if let Ok(cache) = self.cache.lock() {
             if let Some(ref data) = *cache {
+                budget
+                    .consume_decoded(data.len() as u64)
+                    .map_err(|error| error.to_string())?;
                 return Ok(data.clone());
             }
         }
 
         // Load data based on loader type
         let data = match &self.loader {
-            StreamLoader::Inline(data) => data.clone(),
+            StreamLoader::Inline(data) => {
+                budget
+                    .consume_decoded(data.len() as u64)
+                    .map_err(|error| error.to_string())?;
+                data.clone()
+            }
 
             StreamLoader::File {
                 offset,
                 length,
                 file_handle,
             } => {
+                budget
+                    .consume_input(*length as u64)
+                    .map_err(|error| error.to_string())?;
+                budget
+                    .consume_decoded(*length as u64)
+                    .map_err(|error| error.to_string())?;
                 let mut handle = file_handle
                     .lock()
                     .map_err(|e| format!("Failed to lock file handle: {}", e))?;
@@ -117,30 +137,52 @@ impl LazyStream {
                 parent_loader,
             } => {
                 // Load parent stream first
-                let parent_data = self.load_parent_stream(parent_loader)?;
+                let parent_data = self.load_parent_stream_with_budget(parent_loader, budget)?;
 
                 // Parse object stream to extract specific object
-                self.extract_from_object_stream(&parent_data, *index)?
+                let data = self.extract_from_object_stream(&parent_data, *index, budget)?;
+                budget
+                    .consume_decoded(data.len() as u64)
+                    .map_err(|error| error.to_string())?;
+                data
             }
         };
 
         // Cache the loaded data
         if let Ok(mut cache) = self.cache.lock() {
+            budget
+                .consume_decoded(data.len() as u64)
+                .map_err(|error| error.to_string())?;
             *cache = Some(data.clone());
         }
 
         Ok(data)
     }
 
-    fn load_parent_stream(&self, parent: &StreamLoader) -> Result<Vec<u8>, String> {
+    fn load_parent_stream_with_budget(
+        &self,
+        parent: &StreamLoader,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<u8>, String> {
         match parent {
-            StreamLoader::Inline(data) => Ok(data.clone()),
+            StreamLoader::Inline(data) => {
+                budget
+                    .consume_decoded(data.len() as u64)
+                    .map_err(|error| error.to_string())?;
+                Ok(data.clone())
+            }
 
             StreamLoader::File {
                 offset,
                 length,
                 file_handle,
             } => {
+                budget
+                    .consume_input(*length as u64)
+                    .map_err(|error| error.to_string())?;
+                budget
+                    .consume_decoded(*length as u64)
+                    .map_err(|error| error.to_string())?;
                 let mut handle = file_handle
                     .lock()
                     .map_err(|e| format!("Failed to lock parent file handle: {}", e))?;
@@ -156,9 +198,12 @@ impl LazyStream {
         }
     }
 
-    fn extract_from_object_stream(&self, data: &[u8], index: u32) -> Result<Vec<u8>, String> {
-        // Parse object stream format
-        // First parse the offset table
+    fn extract_from_object_stream(
+        &self,
+        data: &[u8],
+        index: u32,
+        budget: &ResourceBudget,
+    ) -> Result<Vec<u8>, String> {
         let n = self
             .dict
             .get("N")
@@ -181,54 +226,18 @@ impl LazyStream {
             ));
         }
 
-        // Parse offset table (simplified - would need proper parsing)
-        let _offset_entry_size = 16; // Approximate size of "objnum offset" entry
-        let offset_table_end = first;
-
-        if offset_table_end > data.len() {
-            return Err("Invalid First offset in object stream".to_string());
-        }
-
-        // Find object offset in stream
-        let offset_table = data
-            .get(..offset_table_end)
-            .ok_or("Invalid First offset in object stream")?;
-        let entries: Vec<&str> = std::str::from_utf8(offset_table)
-            .map_err(|e| format!("Invalid offset table: {}", e))?
-            .split_whitespace()
-            .collect();
-
-        let entry_index = index
-            .checked_mul(2)
-            .and_then(|value| value.checked_add(1))
-            .ok_or("Object stream entry index overflow")?;
-        let obj_offset = entries
-            .get(entry_index)
-            .ok_or("Insufficient entries in offset table")?
-            .parse::<usize>()
-            .map_err(|e| format!("Invalid offset: {}", e))?;
-
-        let absolute_offset = first
-            .checked_add(obj_offset)
-            .ok_or("Object stream offset overflow")?;
-
-        // Find next object offset to determine length
-        let next_offset = if let Some(next_index) = index.checked_add(1).filter(|next| *next < n) {
-            let next_entry_index = next_index
-                .checked_mul(2)
-                .and_then(|value| value.checked_add(1))
-                .ok_or("Object stream entry index overflow")?;
-            let next_obj_offset = entries
-                .get(next_entry_index)
-                .ok_or("Insufficient entries in offset table")?
-                .parse::<usize>()
-                .map_err(|e| format!("Invalid next offset: {}", e))?;
-            first
-                .checked_add(next_obj_offset)
-                .ok_or("Object stream offset overflow")?
-        } else {
-            data.len()
-        };
+        let offsets = crate::parser::object_parser::parse_object_stream_offsets_with_budget(
+            data, n, first, budget,
+        )?;
+        let absolute_offset = *offsets
+            .get(index)
+            .ok_or("Object stream index out of range")?;
+        let next_offset = offsets
+            .iter()
+            .copied()
+            .filter(|candidate| *candidate > absolute_offset)
+            .min()
+            .unwrap_or(data.len());
 
         if absolute_offset >= data.len()
             || next_offset > data.len()
@@ -237,7 +246,9 @@ impl LazyStream {
             return Err("Object offset out of bounds".to_string());
         }
 
-        Ok(data[absolute_offset..next_offset].to_vec())
+        data.get(absolute_offset..next_offset)
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| "Object offset out of bounds".to_string())
     }
 
     /// Get dictionary without loading stream data
@@ -276,11 +287,15 @@ impl LazyStream {
 
     /// Convert to regular PdfStream by loading data
     pub fn to_stream(&self) -> Result<PdfStream, String> {
-        let data = self.load()?;
-        Ok(PdfStream {
-            dict: self.dict.clone(),
-            data: crate::types::stream::StreamData::Decoded(data),
-        })
+        self.to_stream_with_budget(&ResourceBudget::default())
+    }
+
+    pub fn to_stream_with_budget(&self, budget: &ResourceBudget) -> Result<PdfStream, String> {
+        let data = self.load_with_budget(budget)?;
+        Ok(PdfStream::from_data(
+            self.dict.clone(),
+            crate::types::stream::StreamData::Decoded(data),
+        ))
     }
 }
 
@@ -429,7 +444,18 @@ impl StreamCacheManager {
 #[cfg(test)]
 mod tests {
     use super::{LazyStream, MemoryStreamSource, StreamLoader, StreamSource};
+    use crate::performance::ResourceBudget;
     use crate::types::{ObjectId, PdfDictionary, PdfValue};
+
+    #[test]
+    fn lazy_load_rejects_inline_data_before_cloning() {
+        let stream = LazyStream::new_inline(PdfDictionary::new(), vec![1, 2]);
+        let budget = ResourceBudget::new(1024, 1, 1, 100, 10, 10, 10, 10);
+        assert!(stream
+            .load_with_budget(&budget)
+            .expect_err("lazy data must respect the decoded budget")
+            .contains("DecodedBytes"));
+    }
 
     #[test]
     fn rejects_negative_object_stream_counts() {
@@ -481,5 +507,20 @@ mod tests {
         );
 
         assert!(stream.load().is_err());
+    }
+
+    #[test]
+    fn object_stream_uses_next_greater_offset_not_next_index() {
+        let mut dict = PdfDictionary::new();
+        dict.insert("N", PdfValue::Integer(2));
+        dict.insert("First", PdfValue::Integer(9));
+        let stream = LazyStream::new_object_stream(
+            dict,
+            ObjectId::new(1, 0),
+            0,
+            StreamLoader::Inline(b"10 5 20 0xxxxxABCDE".to_vec()),
+        );
+
+        assert_eq!(stream.load().expect("object stream entry"), b"ABCDE");
     }
 }

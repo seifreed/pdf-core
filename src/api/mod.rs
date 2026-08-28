@@ -194,6 +194,9 @@ impl<'a> QueryEngine<'a> {
             }
             QuerySelector::Range(start, end) => {
                 if let Some(ctx) = context {
+                    if end <= start {
+                        return Vec::new();
+                    }
                     self.graph
                         .get_children(ctx)
                         .into_iter()
@@ -581,5 +584,19 @@ mod tests {
             .unwrap();
 
         assert!(matches!(query, QuerySelector::And(_)));
+    }
+
+    #[test]
+    fn reversed_query_range_is_empty() {
+        let mut graph = PdfAstGraph::new();
+        let root = graph.create_node(NodeType::Root, PdfValue::Null);
+        let page = graph.create_node(NodeType::Page, PdfValue::Null);
+        graph.add_edge(root, page, crate::ast::EdgeType::Child);
+        graph.set_root(root);
+
+        let mut engine = QueryEngine::new(&graph);
+        assert!(engine
+            .query_from(&QuerySelector::Range(2, 1), root)
+            .is_empty());
     }
 }

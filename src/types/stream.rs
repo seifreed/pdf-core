@@ -7,6 +7,20 @@ use std::fmt;
 pub struct PdfStream {
     pub dict: PdfDictionary,
     pub data: StreamData,
+    pub lossless: StreamLosslessState,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct StreamLosslessState {
+    #[serde(default)]
+    pub original_bytes: Option<Vec<u8>>,
+    #[serde(default)]
+    pub declared_length: Option<u64>,
+    pub observed_length: usize,
+    #[serde(default)]
+    pub parse_errors: Vec<String>,
+    #[serde(default)]
+    pub recovery_actions: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -147,17 +161,63 @@ pub enum CryptFilterParams {
 
 impl PdfStream {
     pub fn new(dict: PdfDictionary, data: Vec<u8>) -> Self {
-        PdfStream {
-            dict,
-            data: StreamData::Raw(data),
-        }
+        Self::from_data(dict, StreamData::Raw(data))
     }
 
     pub fn new_lazy(dict: PdfDictionary, reference: StreamReference) -> Self {
+        Self::from_data(dict, StreamData::Lazy(reference))
+    }
+
+    pub fn from_data(dict: PdfDictionary, data: StreamData) -> Self {
+        let original_bytes = match &data {
+            StreamData::Raw(bytes) => Some(bytes.clone()),
+            _ => None,
+        };
+        let observed_length = match &data {
+            StreamData::Lazy(reference) => reference.length,
+            _ => data.len(),
+        };
+        let declared_length = match dict.get("Length") {
+            Some(PdfValue::Integer(length)) if *length >= 0 => u64::try_from(*length).ok(),
+            _ => None,
+        };
         PdfStream {
             dict,
-            data: StreamData::Lazy(reference),
+            data,
+            lossless: StreamLosslessState {
+                original_bytes,
+                declared_length,
+                observed_length,
+                ..StreamLosslessState::default()
+            },
         }
+    }
+
+    pub fn original_data(&self) -> Option<&[u8]> {
+        self.lossless.original_bytes.as_deref()
+    }
+
+    pub fn decode_state(&self) -> &'static str {
+        match self.data {
+            StreamData::Raw(_) => "raw",
+            StreamData::Decoded(_) => "decoded",
+            StreamData::Lazy(_) => "lazy",
+        }
+    }
+
+    pub fn set_decoded(&mut self, data: Vec<u8>) {
+        if self.lossless.original_bytes.is_none() {
+            self.lossless.original_bytes = self.raw_data().map(ToOwned::to_owned);
+        }
+        self.data = StreamData::Decoded(data);
+    }
+
+    pub fn record_parse_error(&mut self, message: impl Into<String>) {
+        self.lossless.parse_errors.push(message.into());
+    }
+
+    pub fn record_recovery(&mut self, action: impl Into<String>) {
+        self.lossless.recovery_actions.push(action.into());
     }
 
     pub fn raw_data(&self) -> Option<&[u8]> {
@@ -173,10 +233,16 @@ impl PdfStream {
 
     pub fn decode_with_budget(&self, budget: &ResourceBudget) -> Result<Vec<u8>, String> {
         match &self.data {
-            StreamData::Raw(data) | StreamData::Decoded(data) => {
-                let filters = self.get_filters_with_params();
+            StreamData::Raw(data) => {
+                let filters = self.get_filters_with_params_checked()?;
                 crate::filters::decode_stream_with_budget(data, &filters, budget)
                     .map_err(|e| e.to_string())
+            }
+            StreamData::Decoded(data) => {
+                budget
+                    .consume_memory(data.len() as u64)
+                    .map_err(|e| e.to_string())?;
+                Ok(data.clone())
             }
             StreamData::Lazy(_) => Err("Lazy stream decoding not implemented".to_string()),
         }
@@ -188,8 +254,8 @@ impl PdfStream {
         max_ratio: usize,
     ) -> Result<Vec<u8>, String> {
         match &self.data {
-            StreamData::Raw(data) | StreamData::Decoded(data) => {
-                let filters = self.get_filters_with_params();
+            StreamData::Raw(data) => {
+                let filters = self.get_filters_with_params_checked()?;
                 crate::filters::decode_stream_with_limits(
                     data,
                     &filters,
@@ -197,6 +263,16 @@ impl PdfStream {
                     max_ratio,
                 )
                 .map_err(|e| e.to_string())
+            }
+            StreamData::Decoded(data) => {
+                if data.len() > max_output_bytes {
+                    return Err(format!(
+                        "Decoded stream exceeds output limit: {} > {}",
+                        data.len(),
+                        max_output_bytes
+                    ));
+                }
+                Ok(data.clone())
             }
             StreamData::Lazy(_) => Err("Lazy stream decoding not implemented".to_string()),
         }
@@ -225,23 +301,43 @@ impl PdfStream {
     }
 
     pub fn get_filters_with_params(&self) -> Vec<StreamFilter> {
+        self.get_filters_with_params_checked().unwrap_or_default()
+    }
+
+    pub fn get_filters_with_params_checked(&self) -> Result<Vec<StreamFilter>, String> {
         let mut filters = Vec::new();
 
         let filter_names: Vec<&PdfName> = match self.dict.get("Filter") {
             Some(PdfValue::Name(name)) => vec![name],
-            Some(PdfValue::Array(array)) => array.iter().filter_map(|v| v.as_name()).collect(),
-            _ => Vec::new(),
+            Some(PdfValue::Array(array)) => array
+                .iter()
+                .map(|value| {
+                    value
+                        .as_name()
+                        .ok_or_else(|| "Filter array contains a non-name value".to_string())
+                })
+                .collect::<Result<_, _>>()?,
+            None => Vec::new(),
+            Some(_) => return Err("Filter must be a name or an array of names".to_string()),
         };
 
         if filter_names.is_empty() {
-            return filters;
+            return Ok(filters);
         }
 
         let mut decode_params = match self.dict.get("DecodeParms") {
             Some(PdfValue::Dictionary(dict)) => vec![Some(dict)],
-            Some(PdfValue::Array(array)) => array.iter().map(|v| v.as_dict()).collect(),
+            Some(PdfValue::Array(array)) => array
+                .iter()
+                .map(|value| match value {
+                    PdfValue::Dictionary(dict) => Ok(Some(dict)),
+                    PdfValue::Null => Ok(None),
+                    _ => Err("DecodeParms array contains a non-dictionary value".to_string()),
+                })
+                .collect::<Result<Vec<_>, _>>()?,
             Some(PdfValue::Null) => vec![None],
-            _ => Vec::new(),
+            None => Vec::new(),
+            Some(_) => return Err("DecodeParms must be a dictionary or an array".to_string()),
         };
 
         if decode_params.len() < filter_names.len() {
@@ -250,12 +346,12 @@ impl PdfStream {
 
         for (i, name) in filter_names.iter().enumerate() {
             let params = decode_params.get(i).copied().unwrap_or(None);
-            if let Some(filter) = Self::filter_from_name_with_params(name, params) {
-                filters.push(filter);
-            }
+            let filter = Self::filter_from_name_with_params(name, params)
+                .ok_or_else(|| format!("Unsupported stream filter: {}", name.without_slash()))?;
+            filters.push(filter);
         }
 
-        filters
+        Ok(filters)
     }
 
     fn filter_from_name_with_params(
@@ -452,5 +548,94 @@ mod tests {
         assert!(stream.get(0).is_none());
         assert_eq!(StreamData::Raw(vec![7]).get(0), Some(&7));
         assert!(StreamData::Raw(vec![7]).get(1).is_none());
+    }
+
+    #[test]
+    fn decoded_stream_retains_lossless_state() {
+        let mut dict = PdfDictionary::new();
+        dict.insert("Length", PdfValue::Integer(4));
+        let mut stream = PdfStream::new(dict, b"raw!".to_vec());
+        stream.set_decoded(b"decoded".to_vec());
+        stream.record_parse_error("malformed operator");
+        stream.record_recovery("content_stream_skipped");
+
+        assert_eq!(stream.original_data(), Some(b"raw!".as_slice()));
+        assert_eq!(stream.lossless.declared_length, Some(4));
+        assert_eq!(stream.lossless.observed_length, 4);
+        assert_eq!(stream.decode_state(), "decoded");
+        assert_eq!(stream.lossless.parse_errors, vec!["malformed operator"]);
+        assert_eq!(
+            stream.lossless.recovery_actions,
+            vec!["content_stream_skipped"]
+        );
+    }
+
+    #[test]
+    fn already_decoded_stream_uses_total_memory_budget() {
+        let stream = PdfStream::from_data(
+            PdfDictionary::new(),
+            StreamData::Decoded(b"decoded".to_vec()),
+        );
+        let budget = ResourceBudget::new(1, 7, 1, 10, 10, 10, 10, 8);
+
+        assert_eq!(stream.decode_with_budget(&budget).unwrap(), b"decoded");
+    }
+
+    #[test]
+    fn lazy_stream_records_known_observed_length() {
+        let stream = PdfStream::new_lazy(
+            PdfDictionary::new(),
+            StreamReference {
+                offset: 12,
+                length: 7,
+                filters: Vec::new(),
+            },
+        );
+
+        assert_eq!(stream.lossless.observed_length, 7);
+        assert_eq!(stream.decode_state(), "lazy");
+    }
+
+    #[test]
+    fn unknown_filter_is_not_treated_as_unfiltered_data() {
+        let mut dict = PdfDictionary::new();
+        dict.insert("Filter", PdfValue::Name(PdfName::new("FutureDecode")));
+        let stream = PdfStream::new(dict, b"raw".to_vec());
+
+        let error = stream
+            .decode_with_budget(&ResourceBudget::default())
+            .expect_err("unknown filters must not be silently discarded");
+        assert!(error.contains("Unsupported stream filter"));
+        assert!(stream.get_filters_with_params_checked().is_err());
+    }
+
+    #[test]
+    fn malformed_decode_params_are_not_replaced_with_defaults() {
+        let mut dict = PdfDictionary::new();
+        dict.insert("Filter", PdfValue::Name(PdfName::new("FlateDecode")));
+        dict.insert("DecodeParms", PdfValue::Boolean(true));
+        let stream = PdfStream::new(dict, Vec::new());
+
+        let error = stream
+            .get_filters_with_params_checked()
+            .expect_err("malformed decode parameters must be rejected");
+        assert!(error.contains("DecodeParms"));
+    }
+
+    #[test]
+    fn decoded_stream_is_not_filtered_again() {
+        let mut dict = PdfDictionary::new();
+        dict.insert("Filter", PdfValue::Name(PdfName::new("ASCIIHexDecode")));
+        let mut stream = PdfStream::new(dict, b"3631>".to_vec());
+        stream.set_decoded(b"61".to_vec());
+
+        assert_eq!(stream.decode().expect("decoded bytes"), b"61");
+        assert_eq!(
+            stream
+                .decode_with_limits(2, 1)
+                .expect("decoded bytes within limit"),
+            b"61"
+        );
+        assert!(stream.decode_with_limits(1, 1).is_err());
     }
 }

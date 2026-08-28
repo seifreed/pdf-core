@@ -8,6 +8,7 @@ Release checklist:
 
 - confirm `cargo fmt --all -- --check` and `cargo test --workspace` results;
 - confirm the checked-in corpus and differential checks ran;
+- confirm local binding smoke evidence and the hosted binding matrix;
 - confirm `cargo audit --deny warnings` is clean;
 - review `COMPLIANCE.md`, `SECURITY.md`, and `MSRV.md` for claim changes;
 - create an annotated, signed tag only after the commit is on `main`;

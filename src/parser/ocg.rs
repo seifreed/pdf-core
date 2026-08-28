@@ -4,20 +4,55 @@ use crate::ast::document::{
 };
 use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
 use crate::parser::reference_resolver::ObjectNodeMap;
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::types::{PdfDictionary, PdfValue};
 use std::collections::HashSet;
 
 pub struct OCGParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
+    budget: ResourceBudget,
+    budget_error: Option<ResourceBudgetError>,
 }
 
 impl<'a> OCGParser<'a> {
     pub fn new(ast: &'a mut PdfAstGraph, resolver: &'a ObjectNodeMap) -> Self {
-        OCGParser { ast, resolver }
+        Self::new_with_budget(ast, resolver, &ResourceBudget::default())
+    }
+
+    pub fn new_with_budget(
+        ast: &'a mut PdfAstGraph,
+        resolver: &'a ObjectNodeMap,
+        budget: &ResourceBudget,
+    ) -> Self {
+        OCGParser {
+            ast,
+            resolver,
+            budget: budget.clone(),
+            budget_error: None,
+        }
     }
 
     pub fn parse_ocproperties(
+        &mut self,
+        ocprops_dict: &PdfDictionary,
+    ) -> Option<OptionalContentConfig> {
+        self.parse_ocproperties_inner(ocprops_dict)
+    }
+
+    pub fn parse_ocproperties_with_budget(
+        &mut self,
+        ocprops_dict: &PdfDictionary,
+    ) -> Result<Option<OptionalContentConfig>, ResourceBudgetError> {
+        self.budget_error = None;
+        let result = self.parse_ocproperties_inner(ocprops_dict);
+        match self.budget_error.take() {
+            Some(error) => Err(error),
+            None => Ok(result),
+        }
+    }
+
+    fn parse_ocproperties_inner(
         &mut self,
         ocprops_dict: &PdfDictionary,
     ) -> Option<OptionalContentConfig> {
@@ -108,6 +143,10 @@ impl<'a> OCGParser<'a> {
     fn parse_occonfig(&mut self, value: &PdfValue) -> Option<NodeId> {
         match value {
             PdfValue::Dictionary(dict) => {
+                if let Err(error) = self.budget.consume_node() {
+                    self.budget_error = Some(error);
+                    return None;
+                }
                 // Create inline configuration node
                 let config_node = AstNode::new(
                     self.ast.next_node_id(),
@@ -197,13 +236,21 @@ impl<'a> OCGParser<'a> {
     }
 
     fn parse_order_item(&mut self, value: &PdfValue) -> Option<OCOrderItem> {
+        self.parse_order_item_at_depth(value, 0)
+    }
+
+    fn parse_order_item_at_depth(&mut self, value: &PdfValue, depth: usize) -> Option<OCOrderItem> {
+        if depth >= self.budget.max_depth {
+            return None;
+        }
+
         match value {
             PdfValue::Reference(_) => self.resolve_reference(value).map(OCOrderItem::Group),
             PdfValue::String(s) => Some(OCOrderItem::Label(s.to_string_lossy())),
             PdfValue::Array(arr) => {
                 let mut items = Vec::new();
                 for sub_item in arr {
-                    if let Some(item) = self.parse_order_item(sub_item) {
+                    if let Some(item) = self.parse_order_item_at_depth(sub_item, depth + 1) {
                         items.push(item);
                     }
                 }
@@ -267,6 +314,26 @@ impl<'a> OCGParser<'a> {
     }
 
     pub fn parse_ocmd(&mut self, ocmd_dict: &PdfDictionary) -> Option<NodeId> {
+        self.parse_ocmd_with_budget(ocmd_dict).ok().flatten()
+    }
+
+    pub fn parse_ocmd_with_budget(
+        &mut self,
+        ocmd_dict: &PdfDictionary,
+    ) -> Result<Option<NodeId>, ResourceBudgetError> {
+        self.budget_error = None;
+        let result = self.parse_ocmd_inner(ocmd_dict);
+        match self.budget_error.take() {
+            Some(error) => Err(error),
+            None => Ok(result),
+        }
+    }
+
+    fn parse_ocmd_inner(&mut self, ocmd_dict: &PdfDictionary) -> Option<NodeId> {
+        if let Err(error) = self.budget.consume_node() {
+            self.budget_error = Some(error);
+            return None;
+        }
         // Create OCMD node
         let mut node = AstNode::new(
             self.ast.next_node_id(),
@@ -309,8 +376,15 @@ impl<'a> OCGParser<'a> {
         Some(ocmd_id)
     }
 
-    #[allow(clippy::only_used_in_recursion)]
     fn format_visibility_expression(&self, value: &PdfValue) -> String {
+        self.format_visibility_expression_at_depth(value, 0)
+    }
+
+    fn format_visibility_expression_at_depth(&self, value: &PdfValue, depth: usize) -> String {
+        if depth >= self.budget.max_depth {
+            return "<depth-limit>".to_string();
+        }
+
         match value {
             PdfValue::Array(arr) if !arr.is_empty() => {
                 if let PdfValue::Name(op) = &arr[0] {
@@ -318,7 +392,7 @@ impl<'a> OCGParser<'a> {
                     let operands: Vec<String> = arr
                         .iter()
                         .skip(1)
-                        .map(|v| self.format_visibility_expression(v))
+                        .map(|v| self.format_visibility_expression_at_depth(v, depth + 1))
                         .collect();
                     format!("{}({})", operator, operands.join(", "))
                 } else {
@@ -457,5 +531,68 @@ impl OCContext {
             export_state: false,
             view_state: false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::primitive::PdfName;
+
+    #[test]
+    fn visibility_expression_respects_budget_depth() {
+        let mut expression = PdfValue::Name(PdfName::new("OCG"));
+        for _ in 0..4 {
+            expression =
+                PdfValue::Array(vec![PdfValue::Name(PdfName::new("And")), expression].into());
+        }
+
+        let mut ocmd = PdfDictionary::new();
+        ocmd.insert("Type", PdfValue::Name(PdfName::new("OCMD")));
+        ocmd.insert("VE", expression);
+
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 10, 10, 2);
+        let mut parser = OCGParser::new_with_budget(&mut ast, &resolver, &budget);
+        let node_id = parser.parse_ocmd(&ocmd).expect("OCMD should be parsed");
+
+        let mut order = PdfValue::String("label".into());
+        for _ in 0..4 {
+            order = PdfValue::Array(vec![order].into());
+        }
+        let item = parser.parse_order_item(&order).expect("order should parse");
+        let mut nesting = 0;
+        let mut current = &item;
+        while let OCOrderItem::Array(items) = current {
+            nesting += 1;
+            let Some(first) = items.first() else { break };
+            current = first;
+        }
+        assert_eq!(nesting, 2);
+        drop(parser);
+
+        let expression = ast
+            .get_node(node_id)
+            .and_then(|node| node.metadata.properties.get("visibility_expression"))
+            .expect("visibility expression metadata");
+        assert!(expression.contains("<depth-limit>"));
+    }
+
+    #[test]
+    fn ocmd_parser_reports_node_budget_exhaustion() {
+        let mut ocmd = PdfDictionary::new();
+        ocmd.insert("Type", PdfValue::Name(PdfName::new("OCMD")));
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 8);
+        let mut parser = OCGParser::new_with_budget(&mut ast, &resolver, &budget);
+
+        assert_eq!(
+            parser
+                .parse_ocmd_with_budget(&ocmd)
+                .expect_err("OCMD node budget must propagate"),
+            ResourceBudgetError::Nodes
+        );
     }
 }

@@ -9,9 +9,9 @@ use crate::multimedia::richmedia::extract_richmedia_info;
 use crate::multimedia::threed::extract_threed_info;
 use crate::parser::lexer::*;
 use crate::parser::object_parser;
-use crate::parser::xref::parse_xref_table;
+use crate::parser::xref::parse_xref_table_with_budget;
 use crate::parser::ParseMode;
-use crate::performance::PerformanceLimits;
+use crate::performance::{PerformanceLimits, ResourceBudget};
 use crate::security::ltv::extract_ltv_info;
 use crate::types::*;
 use std::collections::HashMap;
@@ -24,8 +24,6 @@ const LINEARIZATION_BUFFER_SIZE: usize = 1024;
 const HEADER_BUFFER_SIZE: usize = 32;
 const HEADER_SEARCH_BUFFER_SIZE: usize = 1024;
 const XREF_TAIL_BUFFER_SIZE: i64 = 1024;
-const XREF_BUFFER_SIZE: usize = 65536;
-const XREF_LARGE_BUFFER_SIZE: usize = 262144;
 
 // PDF structure constants
 const MIN_PDF_SIZE: usize = 8;
@@ -36,6 +34,14 @@ const EOF_MARKER: &[u8] = b"%%EOF";
 const STARTXREF_KEYWORD: &[u8] = b"startxref";
 const OBJ_KEYWORD: &[u8] = b" obj";
 const XREF_TYPE_MARKER: &[u8] = b"/Type /XRef";
+
+fn is_resource_budget_error(error: &AstError) -> bool {
+    matches!(error, AstError::ParseError(message) if message.contains("budget"))
+}
+
+fn is_parser_budget_error<I>(error: &nom::Err<nom::error::Error<I>>) -> bool {
+    matches!(error, nom::Err::Failure(error) if error.code == nom::error::ErrorKind::TooLarge)
+}
 
 // Depth and size limits
 const MAX_FORM_FIELD_DEPTH: usize = 64;
@@ -50,6 +56,7 @@ pub struct PdfFileParser<R: Read + Seek + BufRead> {
     document: PdfDocument,
     object_cache: HashMap<ObjectId, PdfValue>,
     xref_offset: Option<u64>,
+    object_offsets: Vec<u64>,
     limits: PerformanceLimits,
     object_load_depth: usize,
 }
@@ -76,6 +83,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 limits.max_file_size_mb
             )));
         }
+        if file_size > limits.budget.max_decoded_bytes_total {
+            return Err(AstError::ParseError(
+                crate::performance::ResourceBudgetError::DecodedBytes.to_string(),
+            ));
+        }
         limits
             .budget
             .consume_input(file_size)
@@ -96,6 +108,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             document,
             object_cache: HashMap::new(),
             xref_offset: None,
+            object_offsets: Vec::new(),
             limits,
             object_load_depth: 0,
         })
@@ -123,6 +136,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         } else {
             self.parse_xref_chain()?;
         }
+        self.refresh_object_offsets()?;
 
         // Parse document structure
         log::debug!("Parsing: document structure");
@@ -147,7 +161,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         let pos = Self::skip_pdf_header(&buffer);
 
-        if let Some(linearization) = Self::try_parse_linearization_dict(&buffer[pos..]) {
+        if let Some(linearization) =
+            Self::try_parse_linearization_dict_with_budget(&buffer[pos..], &self.limits.budget)
+                .map_err(AstError::ParseError)?
+        {
             self.document.set_linearization(linearization);
         }
 
@@ -168,51 +185,46 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     fn try_parse_linearization_dict(
         data: &[u8],
     ) -> Option<crate::ast::linearization::LinearizationInfo> {
-        let (_, (obj_id, value)) = object_parser::parse_indirect_object(data).ok()?;
+        Self::try_parse_linearization_dict_with_budget(data, &ResourceBudget::default())
+            .ok()
+            .flatten()
+    }
+
+    fn try_parse_linearization_dict_with_budget(
+        data: &[u8],
+        budget: &ResourceBudget,
+    ) -> Result<Option<crate::ast::linearization::LinearizationInfo>, String> {
+        let (_, (obj_id, value)) =
+            match object_parser::parse_indirect_object_with_budget(data, budget) {
+                Ok(parsed) => parsed,
+                Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                    return Err("resource budget exceeded: linearization parser".to_string());
+                }
+                Err(_) => return Ok(None),
+            };
 
         if obj_id != ObjectId::new(1, 0) {
-            return None;
+            return Ok(None);
         }
 
         let dict = match value {
             PdfValue::Dictionary(d) => d,
-            _ => return None,
+            _ => return Ok(None),
         };
 
         if !dict.contains_key("Linearized") {
-            return None;
+            return Ok(None);
         }
 
-        Some(Self::extract_linearization_info(&dict))
-    }
-
-    fn extract_linearization_info(
-        dict: &PdfDictionary,
-    ) -> crate::ast::linearization::LinearizationInfo {
-        use crate::ast::linearization::LinearizationInfo;
-
-        let hint_array = dict.get("H").and_then(|v| v.as_array());
-
-        LinearizationInfo {
-            version: dict
-                .get("Linearized")
-                .and_then(|v| v.as_real())
-                .unwrap_or(1.0),
-            file_length: dict.get("L").and_then(|v| v.as_integer()).unwrap_or(0) as u64,
-            hint_stream_offset: hint_array
-                .and_then(|arr| arr.get(0))
-                .and_then(|v| v.as_integer())
-                .unwrap_or(0) as u64,
-            hint_stream_length: hint_array
-                .and_then(|arr| arr.get(1))
-                .and_then(|v| v.as_integer())
-                .map(|l| l as u64),
-            object_count: dict.get("N").and_then(|v| v.as_integer()).unwrap_or(0) as u32,
-            first_page_object_number: dict.get("O").and_then(|v| v.as_integer()).unwrap_or(0)
-                as u32,
-            first_page_end_offset: dict.get("E").and_then(|v| v.as_integer()).unwrap_or(0) as u64,
-            main_xref_table_entries: dict.get("T").and_then(|v| v.as_integer()).unwrap_or(0) as u32,
+        let stream = PdfStream::new(dict, Vec::new());
+        let linearization = match crate::parser::xref::parse_linearization_dict(&stream) {
+            Ok(linearization) => linearization,
+            Err(_) => return Ok(None),
+        };
+        if linearization.validate().is_err() {
+            return Ok(None);
         }
+        Ok(Some(linearization))
     }
 
     fn read_header(reader: &mut R, tolerant: bool) -> AstResult<PdfVersion> {
@@ -302,11 +314,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             .xref_offset
             .ok_or_else(|| AstError::ParseError("No xref offset".to_string()))?;
 
-        self.reader.seek(SeekFrom::Start(xref_offset))?;
-
-        let mut buffer = vec![0u8; XREF_BUFFER_SIZE];
-        let n = self.reader.read(&mut buffer)?;
-        buffer.truncate(n);
+        let buffer = self.read_xref_buffer(xref_offset)?;
 
         if Self::starts_with_xref_keyword(&buffer) {
             self.parse_xref_table(&buffer)?;
@@ -332,29 +340,26 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         loop {
             if !seen.insert(offset) {
-                self.record_anomaly(
-                    "xref_prev_cycle",
-                    "Detected cycle in xref /Prev chain",
-                    Some(offset),
-                )?;
-                break;
+                let message = "Detected cycle in xref /Prev chain";
+                if self.tolerant {
+                    self.record_anomaly("xref_prev_cycle", message, Some(offset))?;
+                    break;
+                }
+                return Err(AstError::ParseError(message.to_string()));
             }
 
             let (entries, trailer) = match self.parse_single_xref_at(offset) {
                 Ok(result) => result,
-                Err(err) => {
-                    if self.tolerant {
-                        self.record_anomaly(
-                            "xref_parse_failed",
-                            "Failed to parse xref section; falling back to scan",
-                            Some(offset),
-                        )?;
-                        self.recover_xref_by_scan()?;
-                        break;
-                    } else {
-                        return Err(err);
-                    }
+                Err(err) if self.tolerant && !is_resource_budget_error(&err) => {
+                    self.record_anomaly(
+                        "xref_parse_failed",
+                        "Failed to parse xref section; falling back to scan",
+                        Some(offset),
+                    )?;
+                    self.recover_xref_by_scan()?;
+                    break;
                 }
+                Err(err) => return Err(err),
             };
             let (added, modified, deleted) = self.compute_revision_deltas(&aggregated, &entries);
 
@@ -389,14 +394,29 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
             revision_number = revision_number.saturating_add(1);
 
-            if let Some(prev) = trailer.get("Prev").and_then(|v| v.as_integer()) {
-                if prev <= 0 {
-                    break;
+            match trailer.get("Prev") {
+                None => break,
+                Some(value) => {
+                    let Some(prev) = value.as_integer() else {
+                        let message = "Invalid /Prev xref offset type".to_string();
+                        if self.tolerant {
+                            self.record_anomaly("invalid_prev_type", &message, Some(offset))?;
+                            break;
+                        }
+                        return Err(AstError::ParseError(message));
+                    };
+                    if prev <= 0 {
+                        let message = format!("Invalid /Prev xref offset: {prev}");
+                        if self.tolerant {
+                            self.record_anomaly("invalid_prev", &message, Some(offset))?;
+                            break;
+                        }
+                        return Err(AstError::ParseError(message));
+                    }
+                    offset = u64::try_from(prev).map_err(|_| {
+                        AstError::ParseError("Negative /Prev xref offset".to_string())
+                    })?;
                 }
-                offset = u64::try_from(prev)
-                    .map_err(|_| AstError::ParseError("Negative /Prev xref offset".to_string()))?;
-            } else {
-                break;
             }
         }
 
@@ -430,7 +450,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         };
         let mut recovered = false;
 
-        if !parsed {
+        if !parsed && self.tolerant {
             if let Some((fallback_entries, fallback_trailer)) =
                 self.recover_xref_near_offset(offset)?
             {
@@ -469,10 +489,31 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn read_xref_buffer(&mut self, offset: u64) -> AstResult<Vec<u8>> {
+        let file_size = Self::read_file_size(&mut self.reader)?;
+        if offset >= file_size {
+            return Err(AstError::ParseError(format!(
+                "Xref offset {} is outside the file",
+                offset
+            )));
+        }
+        let remaining = file_size - offset;
+        if remaining > self.limits.budget.max_input_bytes {
+            return Err(AstError::ParseError(format!(
+                "Xref data exceeds resource limit of {} bytes",
+                self.limits.budget.max_input_bytes
+            )));
+        }
+        self.limits
+            .budget
+            .consume_memory(remaining)
+            .map_err(|error| AstError::ParseError(error.to_string()))?;
+
         self.reader.seek(SeekFrom::Start(offset))?;
-        let mut buffer = vec![0u8; XREF_LARGE_BUFFER_SIZE];
-        let n = self.reader.read(&mut buffer)?;
-        buffer.truncate(n);
+        let mut buffer = Vec::new();
+        self.reader
+            .by_ref()
+            .take(remaining)
+            .read_to_end(&mut buffer)?;
         Ok(buffer)
     }
 
@@ -487,20 +528,52 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     > {
         log::debug!("Parsing: detected xref table");
 
-        let (remaining, table_entries) = match parse_xref_table(buffer) {
-            Ok(result) => result,
-            Err(_) => return Ok(None),
-        };
+        let (remaining, table_entries) =
+            match parse_xref_table_with_budget(buffer, &self.limits.budget) {
+                Ok(result) => result,
+                Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                    return Err(AstError::ParseError(
+                        "XRef table exceeds the shared object budget".to_string(),
+                    ));
+                }
+                Err(_) => return Ok(None),
+            };
 
         let mut entries: std::collections::HashMap<ObjectId, XRefEntry> =
             table_entries.into_iter().collect();
 
-        let trailer = match Self::extract_trailer_dict(remaining) {
+        if !Self::skip_whitespace(remaining).starts_with(TRAILER_KEYWORD) {
+            return Ok(None);
+        }
+        let trailer = match Self::extract_trailer_dict_with_budget_checked(
+            remaining,
+            self.limits.max_depth,
+            &self.limits.budget,
+        )
+        .map_err(AstError::ParseError)?
+        {
             Some(dict) => dict,
             None => return Ok(None),
         };
 
-        if let Some(xref_stm) = trailer.get("XRefStm").and_then(|v| v.as_integer()) {
+        if let Some(value) = trailer.get("XRefStm") {
+            let Some(xref_stm) = value.as_integer() else {
+                let message = "Invalid /XRefStm offset type".to_string();
+                if self.tolerant {
+                    self.record_anomaly("invalid_xref_stm_type", &message, None)?;
+                } else {
+                    return Err(AstError::ParseError(message));
+                }
+                return Ok(Some((entries, trailer)));
+            };
+            if xref_stm <= 0 {
+                let message = format!("Invalid /XRefStm offset: {xref_stm}");
+                if self.tolerant {
+                    self.record_anomaly("invalid_xref_stm", &message, None)?;
+                    return Ok(Some((entries, trailer)));
+                }
+                return Err(AstError::ParseError(message));
+            }
             self.document.xref.hybrid_mode = true;
             let xref_stm = u64::try_from(xref_stm)
                 .map_err(|_| AstError::ParseError("Negative /XRefStm offset".to_string()))?;
@@ -511,14 +584,38 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         Ok(Some((entries, trailer)))
     }
 
-    fn extract_trailer_dict(data: &[u8]) -> Option<PdfDictionary> {
-        let trailer_pos = Self::find_pattern(data, TRAILER_KEYWORD)?;
+    fn extract_trailer_dict(data: &[u8], max_depth: usize) -> Option<PdfDictionary> {
+        Self::extract_trailer_dict_with_budget(data, max_depth, &ResourceBudget::default())
+    }
+
+    fn extract_trailer_dict_with_budget(
+        data: &[u8],
+        max_depth: usize,
+        budget: &ResourceBudget,
+    ) -> Option<PdfDictionary> {
+        Self::extract_trailer_dict_with_budget_checked(data, max_depth, budget)
+            .ok()
+            .flatten()
+    }
+
+    fn extract_trailer_dict_with_budget_checked(
+        data: &[u8],
+        max_depth: usize,
+        budget: &ResourceBudget,
+    ) -> Result<Option<PdfDictionary>, String> {
+        let Some(trailer_pos) = Self::find_pattern(data, TRAILER_KEYWORD) else {
+            return Ok(None);
+        };
         let trailer_data = &data[trailer_pos + TRAILER_KEYWORD.len()..];
         let trailer_data = Self::skip_whitespace(trailer_data);
 
-        match object_parser::parse_value(trailer_data) {
-            Ok((_, PdfValue::Dictionary(dict))) => Some(dict),
-            _ => None,
+        match object_parser::parse_value_with_max_depth_and_budget(trailer_data, max_depth, budget)
+        {
+            Ok((_, PdfValue::Dictionary(dict))) => Ok(Some(dict)),
+            Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                Err("resource budget exceeded: trailer parser".to_string())
+            }
+            _ => Ok(None),
         }
     }
 
@@ -532,7 +629,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             PdfDictionary,
         )>,
     > {
-        let (obj_id, stream) = match object_parser::parse_indirect_object(buffer) {
+        let (obj_id, stream) = match object_parser::parse_indirect_object_with_max_depth_and_budget(
+            buffer,
+            self.limits.max_depth,
+            &self.limits.budget,
+        ) {
             Ok((_, (id, PdfValue::Stream(s)))) => (id, s),
             _ => return Ok(None),
         };
@@ -572,8 +673,17 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     )> {
         let buffer = self.read_xref_buffer(offset)?;
 
-        let (obj_id, stream) = match object_parser::parse_indirect_object(&buffer) {
+        let (obj_id, stream) = match object_parser::parse_indirect_object_with_max_depth_and_budget(
+            &buffer,
+            self.limits.max_depth,
+            &self.limits.budget,
+        ) {
             Ok((_, (id, PdfValue::Stream(s)))) => (id, s),
+            Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                return Err(AstError::ParseError(
+                    "resource budget exceeded: xref stream parser".to_string(),
+                ));
+            }
             _ => return Err(AstError::ParseError("Invalid xref stream".to_string())),
         };
 
@@ -603,26 +713,45 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             None => return Ok(entries),
         };
 
-        let filters = stream.get_filters();
+        let filters = match stream.get_filters_with_params_checked() {
+            Ok(filters) => filters,
+            Err(err) if self.tolerant => {
+                self.record_diagnostic(
+                    None,
+                    None,
+                    "xref_stream_filter",
+                    "continued with empty xref entries",
+                    0.9,
+                    raw_data.len() as u64,
+                    &err,
+                )?;
+                return Ok(entries);
+            }
+            Err(err) => {
+                return Err(AstError::ParseError(format!(
+                    "Invalid xref stream filters: {err}"
+                )))
+            }
+        };
         let decoded = match crate::filters::decode_stream_with_budget(
             raw_data,
             &filters,
             &self.limits.budget,
         ) {
             Ok(data) => data,
+            Err(err) if self.tolerant && !err.to_string().contains("resource budget exceeded") => {
+                self.record_diagnostic(
+                    None,
+                    None,
+                    "xref_stream_decode",
+                    "continued with empty xref entries",
+                    0.9,
+                    raw_data.len() as u64,
+                    &err.to_string(),
+                )?;
+                return Ok(entries);
+            }
             Err(err) => {
-                if self.tolerant {
-                    self.record_diagnostic(
-                        None,
-                        None,
-                        "xref_stream_decode",
-                        "continued with empty xref entries",
-                        0.9,
-                        raw_data.len() as u64,
-                        &err.to_string(),
-                    )?;
-                    return Ok(entries);
-                }
                 return Err(AstError::ParseError(format!(
                     "Failed to decode xref stream: {}",
                     err
@@ -662,9 +791,14 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             .get("W")
             .and_then(|v| v.as_array())
             .ok_or_else(|| AstError::ParseError("Missing W in xref stream".to_string()))?;
+        if w_array.len() != 3 {
+            return Err(AstError::ParseError(
+                "Xref field widths must contain exactly 3 entries".to_string(),
+            ));
+        }
 
         let mut widths = [0usize; 3];
-        for (i, w) in w_array.iter().take(3).enumerate() {
+        for (i, w) in w_array.iter().enumerate() {
             let width = w
                 .as_integer()
                 .ok_or_else(|| AstError::ParseError("Invalid xref field width".to_string()))?;
@@ -680,12 +814,13 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn extract_xref_index_ranges(dict: &PdfDictionary) -> AstResult<Vec<(u32, u32)>> {
-        let default_range = || -> AstResult<Vec<(u32, u32)>> {
-            let size = dict.get("Size").and_then(|v| v.as_integer()).unwrap_or(0);
-            let size = u32::try_from(size)
-                .map_err(|_| AstError::ParseError("Invalid xref Size".to_string()))?;
-            Ok(vec![(0, size)])
-        };
+        let size = dict
+            .get("Size")
+            .and_then(|v| v.as_integer())
+            .ok_or_else(|| AstError::ParseError("Missing xref Size".to_string()))?;
+        let size = u32::try_from(size)
+            .map_err(|_| AstError::ParseError("Invalid xref Size".to_string()))?;
+        let default_range = || -> AstResult<Vec<(u32, u32)>> { Ok(vec![(0, size)]) };
 
         let index_array = match dict.get("Index").and_then(|v| v.as_array()) {
             Some(arr) => arr,
@@ -736,11 +871,17 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     AstError::ParseError("Xref entry offset overflow".to_string())
                 })?;
                 if end > data.len() {
-                    break;
+                    return Err(AstError::ParseError(
+                        "Xref stream data is truncated".to_string(),
+                    ));
                 }
                 let object_number = start.checked_add(i).ok_or_else(|| {
                     AstError::ParseError("Xref object number overflow".to_string())
                 })?;
+                self.limits
+                    .budget
+                    .consume_object()
+                    .map_err(|error| AstError::ParseError(error.to_string()))?;
                 let obj_id = ObjectId::new(object_number, 0);
                 let entry_data = &data[offset..end];
                 let entry = self.parse_xref_stream_entry(entry_data, widths)?;
@@ -808,8 +949,18 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn read_recovery_buffer(&mut self, start: u64, end: u64) -> AstResult<Vec<u8>> {
+        let size = end.saturating_sub(start);
+        self.limits
+            .budget
+            .consume_memory(size)
+            .map_err(|error| AstError::ParseError(error.to_string()))?;
         self.reader.seek(SeekFrom::Start(start))?;
-        let mut buffer = vec![0u8; (end - start) as usize];
+        let mut buffer = vec![
+            0u8;
+            usize::try_from(size).map_err(|_| {
+                AstError::ParseError("Recovery buffer size does not fit in usize".to_string())
+            })?
+        ];
         let n = self.reader.read(&mut buffer)?;
         buffer.truncate(n);
         Ok(buffer)
@@ -838,6 +989,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         match self.parse_single_xref_at(absolute) {
             Ok((entries, trailer)) => Ok(Some((entries, trailer))),
+            Err(error) if is_resource_budget_error(&error) => Err(error),
             Err(_) => Ok(None),
         }
     }
@@ -859,8 +1011,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 if absolute == original_offset {
                     continue;
                 }
-                if let Ok((entries, trailer)) = self.parse_xref_stream_at(absolute) {
-                    return Ok(Some((entries, trailer)));
+                match self.parse_xref_stream_at(absolute) {
+                    Ok((entries, trailer)) => return Ok(Some((entries, trailer))),
+                    Err(error) if is_resource_budget_error(&error) => return Err(error),
+                    Err(_) => {}
                 }
             }
         }
@@ -878,10 +1032,20 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 let absolute_pos = pos + obj_pos;
                 self.record_forensic_residual(covered_end, absolute_pos);
                 if let Ok((_, obj_id)) = Self::parse_object_header(&content[absolute_pos..]) {
-                    let object_end = object_parser::parse_indirect_object(&content[absolute_pos..])
-                        .ok()
-                        .map(|(remaining, _)| content.len() - remaining.len())
-                        .unwrap_or_else(|| absolute_pos.saturating_add(1));
+                    let object_end = match object_parser::parse_indirect_object_with_budget(
+                        &content[absolute_pos..],
+                        &self.limits.budget,
+                    ) {
+                        Ok((remaining, _)) => content.len() - remaining.len(),
+                        Err(nom::Err::Failure(error))
+                            if error.code == nom::error::ErrorKind::TooLarge =>
+                        {
+                            return Err(AstError::ParseError(
+                                "resource budget exceeded: xref recovery parser".to_string(),
+                            ));
+                        }
+                        Err(_) => absolute_pos.saturating_add(1),
+                    };
                     let entry = XRefEntry::InUse {
                         offset: absolute_pos as u64,
                         generation: obj_id.generation,
@@ -1029,21 +1193,38 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
     fn parse_xref_table(&mut self, data: &[u8]) -> AstResult<()> {
         // Parse xref entries
-        if let Ok((remaining, entries)) = parse_xref_table(data) {
-            for (obj_id, entry) in entries {
-                self.document.add_xref_entry(obj_id, entry);
+        let (remaining, entries) = match parse_xref_table_with_budget(data, &self.limits.budget) {
+            Ok(result) => result,
+            Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                return Err(AstError::ParseError(
+                    "XRef table exceeds the shared object budget".to_string(),
+                ));
             }
+            Err(_) => return Ok(()),
+        };
+        for (obj_id, entry) in entries {
+            self.document.add_xref_entry(obj_id, entry);
+        }
 
-            // Find and parse trailer
-            if let Some(trailer_pos) = Self::find_pattern(remaining, b"trailer") {
-                let trailer_data = &remaining[trailer_pos + 7..];
-                let trailer_data = Self::skip_whitespace(trailer_data);
+        // Find and parse trailer
+        let remaining = Self::skip_whitespace(remaining);
+        if remaining.starts_with(TRAILER_KEYWORD) {
+            let trailer_pos = 0;
+            let trailer_data = &remaining[trailer_pos + 7..];
+            let trailer_data = Self::skip_whitespace(trailer_data);
 
-                if let Ok((_, PdfValue::Dictionary(dict))) =
-                    object_parser::parse_value(trailer_data)
-                {
-                    self.document.set_trailer(dict);
+            match object_parser::parse_value_with_max_depth_and_budget(
+                trailer_data,
+                self.limits.max_depth,
+                &self.limits.budget,
+            ) {
+                Ok((_, PdfValue::Dictionary(dict))) => self.document.set_trailer(dict),
+                Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                    return Err(AstError::ParseError(
+                        "resource budget exceeded: trailer parser".to_string(),
+                    ));
                 }
+                _ => {}
             }
         }
 
@@ -1052,13 +1233,36 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
     fn parse_xref_stream(&mut self, data: &[u8]) -> AstResult<()> {
         // Parse as indirect object
-        match object_parser::parse_indirect_object(data) {
+        match object_parser::parse_indirect_object_with_max_depth_and_budget(
+            data,
+            self.limits.max_depth,
+            &self.limits.budget,
+        ) {
             Ok((_, (obj_id, value))) => {
                 if let PdfValue::Stream(stream) = value {
                     // Decode stream data
-                    let filters = stream.get_filters();
+                    let filters = match stream.get_filters_with_params_checked() {
+                        Ok(filters) => Some(filters),
+                        Err(err) if self.tolerant => {
+                            self.record_diagnostic(
+                                Some(obj_id),
+                                self.xref_offset,
+                                "xref_stream_filter",
+                                "continued with empty xref entries",
+                                0.9,
+                                stream.raw_data().map_or(0, |data| data.len() as u64),
+                                &err,
+                            )?;
+                            None
+                        }
+                        Err(err) => {
+                            return Err(AstError::ParseError(format!(
+                                "Invalid xref stream filters: {err}"
+                            )))
+                        }
+                    };
 
-                    if let Some(raw_data) = stream.raw_data() {
+                    if let (Some(filters), Some(raw_data)) = (filters, stream.raw_data()) {
                         match crate::filters::decode_stream_with_budget(
                             raw_data,
                             &filters,
@@ -1067,7 +1271,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                             Ok(decoded) => {
                                 self.parse_xref_stream_data(&decoded, &stream.dict)?;
                             }
-                            Err(err) if self.tolerant => {
+                            Err(err)
+                                if self.tolerant
+                                    && !err.to_string().contains("resource budget exceeded") =>
+                            {
                                 self.record_diagnostic(
                                     Some(obj_id),
                                     self.xref_offset,
@@ -1097,6 +1304,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                         entries: Vec::new(),
                     });
                 }
+            }
+            Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                return Err(AstError::ParseError(
+                    "resource budget exceeded: xref stream parser".to_string(),
+                ));
             }
             Err(err) => {
                 return Err(AstError::ParseError(format!(
@@ -1188,43 +1400,148 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     AstError::ParseError("XRef object stream index overflow".to_string())
                 })?,
             },
-            _ => XRefEntry::Free {
-                next_free_object: 0,
-                generation: 65535,
-            },
+            entry_type => {
+                if self.tolerant {
+                    XRefEntry::Free {
+                        next_free_object: 0,
+                        generation: 65535,
+                    }
+                } else {
+                    return Err(AstError::ParseError(format!(
+                        "Invalid XRef entry type: {entry_type}"
+                    )));
+                }
+            }
         };
 
         Ok(entry)
     }
 
     fn parse_document_structure(&mut self) -> AstResult<()> {
-        // Parse catalog
-        if let Some(root_ref) = self
-            .document
-            .trailer
-            .get("Root")
-            .and_then(|v| v.as_reference())
-        {
-            let catalog_value = self.load_object(&root_ref.id())?;
-            let catalog_id = self.add_to_ast(catalog_value, NodeType::Catalog)?;
-            self.document.set_catalog(catalog_id);
-
-            // Parse catalog sub-structures
-            self.parse_catalog_references(catalog_id)?;
-
-            // Parse page tree
-            let pages_ref = if let Some(catalog_node) = self.document.ast.get_node(catalog_id) {
-                catalog_node
-                    .as_dict()
-                    .and_then(|dict| dict.get("Pages"))
-                    .and_then(|v| v.as_reference())
-                    .cloned()
-            } else {
+        let root_ref = match self.document.trailer.get("Root").cloned() {
+            Some(root_value) => match root_value.as_reference().cloned() {
+                Some(root_ref) => Some(root_ref),
+                None if self.tolerant => {
+                    self.record_diagnostic(
+                        None,
+                        None,
+                        "invalid_root",
+                        "skipped_catalog",
+                        1.0,
+                        0,
+                        "Trailer /Root is not an indirect reference",
+                    )?;
+                    None
+                }
+                None => {
+                    return Err(AstError::ParseError(
+                        "Trailer /Root is not an indirect reference".to_string(),
+                    ));
+                }
+            },
+            None if self.tolerant => {
+                self.record_diagnostic(
+                    None,
+                    None,
+                    "missing_root",
+                    "skipped_catalog",
+                    1.0,
+                    0,
+                    "Trailer does not contain a /Root reference",
+                )?;
                 None
+            }
+            None => {
+                return Err(AstError::ParseError(
+                    "Trailer does not contain a /Root reference".to_string(),
+                ));
+            }
+        };
+
+        // Parse catalog
+        if let Some(root_ref) = root_ref {
+            let catalog_value = self.load_object(&root_ref.id())?;
+            let catalog_id = match catalog_value {
+                PdfValue::Dictionary(_) => {
+                    let catalog_id = self.add_to_ast(catalog_value, NodeType::Catalog)?;
+                    self.document.set_catalog(catalog_id);
+                    self.document
+                        .ast
+                        .register_object_node(root_ref.id(), catalog_id);
+                    Some(catalog_id)
+                }
+                _ if self.tolerant => {
+                    self.record_diagnostic(
+                        Some(root_ref.id()),
+                        None,
+                        "invalid_catalog",
+                        "skipped_catalog",
+                        1.0,
+                        0,
+                        "Trailer /Root does not resolve to a dictionary",
+                    )?;
+                    None
+                }
+                _ => {
+                    return Err(AstError::ParseError(
+                        "Trailer /Root does not resolve to a dictionary".to_string(),
+                    ));
+                }
             };
 
-            if let Some(pages_ref) = pages_ref {
-                self.parse_page_tree(&pages_ref, catalog_id)?;
+            if let Some(catalog_id) = catalog_id {
+                // Parse catalog sub-structures
+                self.parse_catalog_references(catalog_id)?;
+                // Parse page tree
+                let pages_value = self
+                    .document
+                    .ast
+                    .get_node(catalog_id)
+                    .and_then(|node| node.as_dict())
+                    .and_then(|dict| dict.get("Pages"))
+                    .cloned();
+                let pages_ref = match pages_value {
+                    Some(PdfValue::Reference(pages_ref)) => Some(pages_ref),
+                    Some(invalid) => {
+                        let message = format!(
+                            "Catalog /Pages must be an indirect reference, got {}",
+                            invalid.type_name()
+                        );
+                        if !self.tolerant {
+                            return Err(AstError::ParseError(message));
+                        }
+                        self.record_diagnostic(
+                            None,
+                            None,
+                            "invalid_pages_root",
+                            "skipped_page_tree",
+                            1.0,
+                            0,
+                            &message,
+                        )?;
+                        None
+                    }
+                    None => {
+                        let message = "Catalog is missing the required /Pages reference";
+                        if !self.tolerant {
+                            return Err(AstError::ParseError(message.to_string()));
+                        }
+                        self.record_diagnostic(
+                            None,
+                            None,
+                            "missing_pages_root",
+                            "skipped_page_tree",
+                            1.0,
+                            0,
+                            message,
+                        )?;
+                        None
+                    }
+                };
+
+                if let Some(pages_ref) = pages_ref {
+                    self.parse_page_tree(&pages_ref, catalog_id)?;
+                }
             }
         }
 
@@ -1234,10 +1551,14 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             .trailer
             .get("Info")
             .and_then(|v| v.as_reference())
+            .cloned()
         {
             let info_value = self.load_object(&info_ref.id())?;
             let info_id = self.add_to_ast(info_value, NodeType::Metadata)?;
             self.document.set_info(info_id);
+            self.document
+                .ast
+                .register_object_node(info_ref.id(), info_id);
         }
 
         // Parse encryption dictionary
@@ -1246,9 +1567,13 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             .trailer
             .get("Encrypt")
             .and_then(|v| v.as_reference())
+            .cloned()
         {
             let encrypt_value = self.load_object(&encrypt_ref.id())?;
-            let _encrypt_id = self.add_to_ast(encrypt_value, NodeType::Encrypt)?;
+            let encrypt_id = self.add_to_ast(encrypt_value, NodeType::Encrypt)?;
+            self.document
+                .ast
+                .register_object_node(encrypt_ref.id(), encrypt_id);
         }
 
         Ok(())
@@ -1296,6 +1621,9 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             PdfValue::Reference(open_action_ref) => {
                 let action_value = self.load_object(&open_action_ref.id())?;
                 let action_id = self.add_to_ast(action_value, NodeType::Action)?;
+                self.document
+                    .ast
+                    .register_object_node(open_action_ref.id(), action_id);
                 self.add_edge(catalog_id, action_id, crate::ast::EdgeType::Reference)?;
             }
             PdfValue::Dictionary(_) => {
@@ -1309,16 +1637,21 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn parse_names_dictionary(&mut self, catalog_dict: &PdfDictionary) -> AstResult<()> {
-        let names_ref = match catalog_dict.get("Names").and_then(|v| v.as_reference()) {
-            Some(r) => r,
-            None => return Ok(()),
+        let (names_object_id, names_value) = match catalog_dict.get("Names") {
+            Some(PdfValue::Reference(reference)) => {
+                (Some(reference.id()), self.load_object(&reference.id())?)
+            }
+            Some(PdfValue::Dictionary(dict)) => (None, PdfValue::Dictionary(dict.clone())),
+            _ => return Ok(()),
         };
-
-        let names_value = self.load_object(&names_ref.id())?;
         let names_dict = match &names_value {
             PdfValue::Dictionary(d) => d,
             _ => return Ok(()),
         };
+        let names_id = self.add_to_ast(names_value.clone(), NodeType::NameTree)?;
+        if let Some(object_id) = names_object_id {
+            self.document.ast.register_object_node(object_id, names_id);
+        }
 
         if let Some(embedded_ref) = names_dict
             .get("EmbeddedFiles")
@@ -1346,6 +1679,9 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             None => return Ok(()),
         };
 
+        let acroform_object_id = acroform_value
+            .as_reference()
+            .map(|reference| reference.id());
         let acroform_loaded = match acroform_value {
             PdfValue::Reference(acro_ref) => Some(self.load_object(&acro_ref.id())?),
             PdfValue::Dictionary(_) => Some(acroform_value.clone()),
@@ -1366,6 +1702,9 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         let acro_id =
             self.add_to_ast(PdfValue::Dictionary(acro_dict.clone()), NodeType::AcroForm)?;
+        if let Some(object_id) = acroform_object_id {
+            self.document.ast.register_object_node(object_id, acro_id);
+        }
         self.add_edge(catalog_id, acro_id, crate::ast::EdgeType::Child)?;
 
         self.parse_form_fields(&acro_dict, acro_id)?;
@@ -1392,7 +1731,8 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     self.document.xfa = Some(xfa_doc);
                 }
             }
-            Err(err) if self.tolerant => {
+            Err(err) if self.tolerant && !err.contains("resource budget exceeded") => {
+                self.record_diagnostic(None, None, "xfa_parse", "skipped_xfa", 0.8, 0, &err)?;
                 log::warn!("Failed to parse XFA data (tolerant): {}", err);
             }
             Err(err) => return Err(AstError::ParseError(err)),
@@ -1432,12 +1772,38 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
     }
 
     fn resolve_xfa_value(&mut self, value: &PdfValue) -> AstResult<PdfValue> {
+        self.resolve_xfa_value_at(value, 0)
+    }
+
+    fn resolve_xfa_value_at(&mut self, value: &PdfValue, depth: usize) -> AstResult<PdfValue> {
+        self.limits
+            .budget
+            .check()
+            .map_err(|err| AstError::ParseError(err.to_string()))?;
+        if depth > self.limits.max_depth {
+            if self.tolerant {
+                self.record_diagnostic(
+                    None,
+                    None,
+                    "xfa_value_depth",
+                    "returned_null",
+                    1.0,
+                    0,
+                    "Maximum XFA value depth exceeded",
+                )?;
+                return Ok(PdfValue::Null);
+            }
+            return Err(AstError::ParseError(format!(
+                "Exceeded max XFA value depth: {}",
+                self.limits.max_depth
+            )));
+        }
         match value {
             PdfValue::Reference(reference) => self.load_object(&reference.id()),
             PdfValue::Array(items) => {
                 let mut resolved = PdfArray::new();
                 for item in items.iter() {
-                    resolved.push(self.resolve_xfa_value(item)?);
+                    resolved.push(self.resolve_xfa_value_at(item, depth + 1)?);
                 }
                 Ok(PdfValue::Array(resolved))
             }
@@ -1463,6 +1829,21 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         depth: usize,
     ) -> AstResult<()> {
         if depth > MAX_FORM_FIELD_DEPTH {
+            if !self.tolerant {
+                return Err(AstError::ParseError(format!(
+                    "Maximum form field depth exceeded: {}",
+                    MAX_FORM_FIELD_DEPTH
+                )));
+            }
+            self.record_diagnostic(
+                None,
+                None,
+                "max_form_field_depth",
+                "skipped_form_field_branch",
+                1.0,
+                0,
+                "Maximum form field depth exceeded; branch skipped",
+            )?;
             return Ok(());
         }
 
@@ -1527,12 +1908,17 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         page_dict: &PdfDictionary,
         page_id: crate::ast::NodeId,
     ) -> AstResult<()> {
-        let annots = match page_dict.get("Annots") {
-            Some(PdfValue::Array(array)) => array,
+        let annots_value = match page_dict.get("Annots").cloned() {
+            Some(PdfValue::Reference(reference)) => self.load_object(&reference.id())?,
+            Some(value) => value,
+            None => return Ok(()),
+        };
+        let annots = match annots_value {
+            PdfValue::Array(array) => array,
             _ => return Ok(()),
         };
 
-        for annot in annots.iter() {
+        for annot in &annots {
             self.process_single_annotation(annot, page_id)?;
         }
 
@@ -1806,70 +2192,290 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         pages_ref: &PdfReference,
         parent_id: crate::ast::NodeId,
     ) -> AstResult<()> {
-        let mut stack = vec![(*pages_ref, parent_id, PdfDictionary::new())];
+        let mut stack = vec![(*pages_ref, parent_id, PdfDictionary::new(), true)];
         let mut visited = std::collections::HashSet::new();
 
-        while let Some((current_ref, current_parent, inherited_resources)) = stack.pop() {
+        while let Some((current_ref, current_parent, inherited_resources, is_root)) = stack.pop() {
             let obj_id = current_ref.id();
             if !visited.insert(obj_id) {
+                if !self.tolerant {
+                    return Err(AstError::ParseError(format!(
+                        "Cycle detected in page tree at object {} {}",
+                        obj_id.number, obj_id.generation
+                    )));
+                }
+                self.record_diagnostic(
+                    Some(obj_id),
+                    None,
+                    "page_tree_cycle",
+                    "skipped_cyclic_page_tree",
+                    1.0,
+                    0,
+                    "Cycle detected in page tree; branch skipped",
+                )?;
                 continue;
             }
 
             let pages_value = self.load_object(&obj_id)?;
-            if let PdfValue::Dictionary(ref pages_dict) = pages_value {
-                let own_resources =
-                    self.resolve_resource_dictionary(pages_dict.get("Resources"))?;
-                let effective_resources =
-                    Self::merge_resource_dictionaries(&inherited_resources, &own_resources);
-                let node_type = if let Some(type_name) = pages_dict.get_type() {
-                    match type_name.without_slash() {
-                        "Pages" => NodeType::Pages,
-                        "Page" => NodeType::Page,
-                        _ => NodeType::Unknown,
-                    }
-                } else {
-                    NodeType::Unknown
-                };
+            match pages_value {
+                PdfValue::Dictionary(ref pages_dict) => {
+                    let own_resources =
+                        self.resolve_resource_dictionary(pages_dict.get("Resources"))?;
+                    let effective_resources =
+                        self.merge_resource_dictionaries(&inherited_resources, &own_resources)?;
+                    let node_type = if let Some(type_name) = pages_dict.get_type() {
+                        match type_name.without_slash() {
+                            "Pages" => NodeType::Pages,
+                            "Page" => NodeType::Page,
+                            _ => NodeType::Unknown,
+                        }
+                    } else {
+                        NodeType::Unknown
+                    };
 
-                let is_page = node_type == NodeType::Page;
-                let mut node_value = pages_value.clone();
-                if !inherited_resources.is_empty() {
-                    if let PdfValue::Dictionary(node_dict) = &mut node_value {
-                        node_dict.insert(
-                            "Resources",
-                            PdfValue::Dictionary(effective_resources.clone()),
+                    if node_type == NodeType::Unknown {
+                        let message = format!(
+                            "Page tree node {} {} has missing or unknown /Type",
+                            obj_id.number, obj_id.generation
                         );
+                        if !self.tolerant {
+                            return Err(AstError::ParseError(message));
+                        }
+                        self.record_diagnostic(
+                            Some(obj_id),
+                            None,
+                            "invalid_page_tree_type",
+                            "skipped_invalid_page_tree_node",
+                            1.0,
+                            0,
+                            &message,
+                        )?;
+                        continue;
                     }
-                }
-                let pages_id = self.add_to_ast(node_value, node_type)?;
-                self.add_edge(current_parent, pages_id, crate::ast::EdgeType::Child)?;
 
-                if !inherited_resources.is_empty() {
-                    if let Some(node) = self.document.ast.get_node_mut(pages_id) {
-                        node.metadata.set_property(
-                            "has_inherited_resources".to_string(),
-                            "true".to_string(),
+                    if is_root && node_type != NodeType::Pages {
+                        let message = format!(
+                            "Catalog /Pages must resolve to a /Pages node, got {:?}",
+                            node_type
                         );
+                        if !self.tolerant {
+                            return Err(AstError::ParseError(message));
+                        }
+                        self.record_diagnostic(
+                            Some(obj_id),
+                            None,
+                            "invalid_pages_root_type",
+                            "skipped_page_tree",
+                            1.0,
+                            0,
+                            &message,
+                        )?;
+                        continue;
                     }
-                }
 
-                if let Some(PdfValue::Array(kids)) = pages_dict.get("Kids") {
-                    for kid in kids.iter() {
-                        if let Some(kid_ref) = kid.as_reference() {
-                            stack.push((*kid_ref, pages_id, effective_resources.clone()));
+                    self.validate_page_tree_fields(obj_id, pages_dict, &node_type)?;
+
+                    let is_page = node_type == NodeType::Page;
+                    let mut node_value = pages_value.clone();
+                    if !inherited_resources.is_empty() {
+                        if let PdfValue::Dictionary(node_dict) = &mut node_value {
+                            node_dict.insert(
+                                "Resources",
+                                PdfValue::Dictionary(effective_resources.clone()),
+                            );
                         }
                     }
-                }
+                    let pages_id = self.add_to_ast(node_value, node_type)?;
+                    self.document.ast.register_object_node(obj_id, pages_id);
+                    self.add_edge(current_parent, pages_id, crate::ast::EdgeType::Child)?;
 
-                if is_page {
-                    if let Some(aa_value) = pages_dict.get("AA") {
-                        self.parse_additional_actions(aa_value, pages_id)?;
+                    if !inherited_resources.is_empty() {
+                        if let Some(node) = self.document.ast.get_node_mut(pages_id) {
+                            node.metadata.set_property(
+                                "has_inherited_resources".to_string(),
+                                "true".to_string(),
+                            );
+                        }
                     }
-                    self.parse_page_annotations(pages_dict, pages_id)?;
+
+                    if let Some(kids_value) = pages_dict.get("Kids").cloned() {
+                        let kids_value = match kids_value {
+                            PdfValue::Reference(reference) => self.load_object(&reference.id())?,
+                            value => value,
+                        };
+                        match kids_value {
+                            PdfValue::Array(kids) => {
+                                for kid in kids.iter() {
+                                    if let Some(kid_ref) = kid.as_reference() {
+                                        stack.push((
+                                            *kid_ref,
+                                            pages_id,
+                                            effective_resources.clone(),
+                                            false,
+                                        ));
+                                    } else {
+                                        let message = format!(
+                                            "Page tree /Kids entry must be a reference, got {}",
+                                            kid.type_name()
+                                        );
+                                        if !self.tolerant {
+                                            return Err(AstError::ParseError(message));
+                                        }
+                                        self.record_diagnostic(
+                                            Some(obj_id),
+                                            None,
+                                            "invalid_page_tree_kid",
+                                            "skipped_invalid_page_tree_kid",
+                                            1.0,
+                                            0,
+                                            &message,
+                                        )?;
+                                    }
+                                }
+                            }
+                            invalid => {
+                                let message = format!(
+                                    "Page tree /Kids must be an array, got {}",
+                                    invalid.type_name()
+                                );
+                                if !self.tolerant {
+                                    return Err(AstError::ParseError(message));
+                                }
+                                self.record_diagnostic(
+                                    Some(obj_id),
+                                    None,
+                                    "invalid_page_tree_kids",
+                                    "skipped_invalid_page_tree_kids",
+                                    1.0,
+                                    0,
+                                    &message,
+                                )?;
+                            }
+                        }
+                    }
+
+                    if is_page {
+                        if let Some(aa_value) = pages_dict.get("AA") {
+                            self.parse_additional_actions(aa_value, pages_id)?;
+                        }
+                        self.parse_page_annotations(pages_dict, pages_id)?;
+                    }
+                }
+                invalid => {
+                    let message = format!(
+                        "Page tree node must be a dictionary, got {}",
+                        invalid.type_name()
+                    );
+                    if !self.tolerant {
+                        return Err(AstError::ParseError(message));
+                    }
+                    self.record_diagnostic(
+                        Some(obj_id),
+                        None,
+                        "invalid_page_tree_node",
+                        "skipped_invalid_page_tree_node",
+                        1.0,
+                        0,
+                        &message,
+                    )?;
                 }
             }
         }
 
+        Ok(())
+    }
+
+    fn validate_page_tree_fields(
+        &mut self,
+        obj_id: ObjectId,
+        pages_dict: &PdfDictionary,
+        node_type: &NodeType,
+    ) -> AstResult<()> {
+        let required_fields = if *node_type == NodeType::Pages {
+            [
+                Some((
+                    "Kids",
+                    "missing_page_tree_kids",
+                    "Page tree /Pages node is missing required /Kids",
+                )),
+                Some((
+                    "Count",
+                    "missing_page_tree_count",
+                    "Page tree /Pages node is missing required /Count",
+                )),
+                None,
+            ]
+        } else {
+            [
+                Some((
+                    "Parent",
+                    "missing_page_parent",
+                    "Page tree /Page node is missing required /Parent",
+                )),
+                None,
+                None,
+            ]
+        };
+        for (key, error_code, message) in required_fields.into_iter().flatten() {
+            if pages_dict.contains_key(key) {
+                continue;
+            }
+            if !self.tolerant {
+                return Err(AstError::ParseError(message.to_string()));
+            }
+            self.record_diagnostic(
+                Some(obj_id),
+                None,
+                error_code,
+                "continued_with_missing_page_tree_field",
+                1.0,
+                0,
+                message,
+            )?;
+        }
+
+        if *node_type == NodeType::Pages {
+            let count = match pages_dict.get("Count") {
+                Some(PdfValue::Reference(reference)) => Some(self.load_object(&reference.id())?),
+                Some(value) => Some(value.clone()),
+                None => None,
+            };
+            if let Some(count) = count {
+                if !matches!(count, PdfValue::Integer(value) if value >= 0) {
+                    let message = "Page tree /Pages node /Count must be a non-negative integer";
+                    if !self.tolerant {
+                        return Err(AstError::ParseError(message.to_string()));
+                    }
+                    self.record_diagnostic(
+                        Some(obj_id),
+                        None,
+                        "invalid_page_tree_count",
+                        "continued_with_invalid_page_tree_count",
+                        1.0,
+                        0,
+                        message,
+                    )?;
+                }
+            }
+        }
+
+        if *node_type == NodeType::Page
+            && !matches!(pages_dict.get("Parent"), Some(PdfValue::Reference(_)))
+        {
+            let message = "Page tree /Page node /Parent must be an indirect reference";
+            if !self.tolerant {
+                return Err(AstError::ParseError(message.to_string()));
+            }
+            self.record_diagnostic(
+                Some(obj_id),
+                None,
+                "invalid_page_parent",
+                "continued_with_invalid_page_parent",
+                1.0,
+                0,
+                message,
+            )?;
+        }
         Ok(())
     }
 
@@ -1884,13 +2490,35 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             PdfValue::Reference(reference) => self.load_object(&reference.id())?,
             value => value.clone(),
         };
-        Ok(match resolved {
-            PdfValue::Dictionary(dict) => dict,
-            _ => PdfDictionary::new(),
-        })
+        match resolved {
+            PdfValue::Dictionary(dict) => Ok(dict),
+            invalid => {
+                let message = format!(
+                    "Page Resources must be a dictionary, got {}",
+                    invalid.type_name()
+                );
+                if !self.tolerant {
+                    return Err(AstError::ParseError(message));
+                }
+                self.record_diagnostic(
+                    None,
+                    None,
+                    "invalid_resources",
+                    "ignored_invalid_resources",
+                    1.0,
+                    0,
+                    &message,
+                )?;
+                Ok(PdfDictionary::new())
+            }
+        }
     }
 
-    fn merge_resource_dictionaries(parent: &PdfDictionary, child: &PdfDictionary) -> PdfDictionary {
+    fn merge_resource_dictionaries(
+        &mut self,
+        parent: &PdfDictionary,
+        child: &PdfDictionary,
+    ) -> AstResult<PdfDictionary> {
         const CATEGORIES: &[&str] = &[
             "ColorSpace",
             "ExtGState",
@@ -1903,13 +2531,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         let mut merged = parent.clone();
         for (name, value) in child.iter() {
-            if CATEGORIES.contains(&name.as_str()) {
-                let mut category = parent
-                    .get(name.as_str())
-                    .and_then(PdfValue::as_dict)
-                    .cloned()
-                    .unwrap_or_default();
-                if let Some(child_category) = value.as_dict() {
+            if CATEGORIES.contains(&name.without_slash()) {
+                let mut category = self.resolve_resource_dictionary(parent.get(name.as_str()))?;
+                let child_category = self.resolve_resource_dictionary(Some(value))?;
+                if matches!(value, PdfValue::Dictionary(_) | PdfValue::Reference(_)) {
                     for (resource_name, resource_value) in child_category {
                         category.insert(resource_name.clone(), resource_value.clone());
                     }
@@ -1921,7 +2546,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 merged.insert(name.clone(), value.clone());
             }
         }
-        merged
+        Ok(merged)
     }
 
     fn load_object(&mut self, obj_id: &ObjectId) -> AstResult<PdfValue> {
@@ -1957,11 +2582,6 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             if let Some(cached) = self.object_cache.get(obj_id).cloned() {
                 return Ok(cached);
             }
-            self.limits
-                .budget
-                .consume_object()
-                .map_err(|err| AstError::ParseError(err.to_string()))?;
-
             // Get object location from xref
             let entry = match self.document.xref.entries.get(obj_id).copied() {
                 Some(entry) => entry,
@@ -1987,21 +2607,48 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
             let value = match entry {
                 XRefEntry::InUse { offset, .. } => {
-                    let buffer = self.read_object_buffer(offset)?;
+                    let buffer = match self.read_object_buffer(offset) {
+                        Ok(buffer) => buffer,
+                        Err(err) if self.tolerant && !is_resource_budget_error(&err) => {
+                            self.record_diagnostic(
+                                Some(*obj_id),
+                                Some(offset),
+                                "object_buffer",
+                                "returned Null",
+                                1.0,
+                                0,
+                                &err.to_string(),
+                            )?;
+                            return Ok(PdfValue::Null);
+                        }
+                        Err(err) => return Err(err),
+                    };
 
-                    let parsed = match object_parser::parse_indirect_stream_prefix(&buffer) {
-                        Ok((_, (_, dict))) => {
-                            if let Some(PdfValue::Reference(length_ref)) = dict.get("Length") {
-                                match self.load_object(&length_ref.id()) {
+                    let parsed =
+                        match object_parser::parse_indirect_stream_prefix_with_max_depth_and_budget(
+                            &buffer,
+                            self.limits.max_depth,
+                            &self.limits.budget,
+                        ) {
+                            Ok((_, (_, dict))) => {
+                                if let Some(PdfValue::Reference(length_ref)) = dict.get("Length") {
+                                    match self.load_object(&length_ref.id()) {
                                     Ok(PdfValue::Integer(length)) if length >= 0 => {
                                         match usize::try_from(length) {
                                             Ok(length) => {
-                                                object_parser::parse_indirect_object_with_stream_length(
-                                                    &buffer, length,
+                                                object_parser::parse_indirect_object_with_stream_length_and_max_depth_and_budget(
+                                                    &buffer,
+                                                    length,
+                                                    self.limits.max_depth,
+                                                    &self.limits.budget,
                                                 )
                                             }
                                             Err(_) if self.tolerant => {
-                                                object_parser::parse_indirect_object(&buffer)
+                                                object_parser::parse_indirect_object_with_max_depth_and_budget(
+                                                    &buffer,
+                                                    self.limits.max_depth,
+                                                    &self.limits.budget,
+                                                )
                                             }
                                             Err(_) => {
                                                 return Err(AstError::ParseError(
@@ -2011,29 +2658,53 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                                         }
                                     }
                                     Ok(_) if self.tolerant => {
-                                        object_parser::parse_indirect_object(&buffer)
+                                        object_parser::parse_indirect_object_with_max_depth_and_budget(
+                                            &buffer,
+                                            self.limits.max_depth,
+                                            &self.limits.budget,
+                                        )
                                     }
                                     Ok(_) => {
                                         return Err(AstError::ParseError(
                                             "Indirect stream Length is not an integer".to_string(),
                                         ));
                                     }
+                                    Err(err) if is_resource_budget_error(&err) => return Err(err),
                                     Err(err) if self.tolerant => {
                                         log::warn!(
                                             "Failed to resolve indirect stream Length for object {}: {}",
                                             obj_id.number,
                                             err
                                         );
-                                        object_parser::parse_indirect_object(&buffer)
+                                        object_parser::parse_indirect_object_with_max_depth_and_budget(
+                                            &buffer,
+                                            self.limits.max_depth,
+                                            &self.limits.budget,
+                                        )
                                     }
                                     Err(err) => return Err(err),
                                 }
-                            } else {
-                                object_parser::parse_indirect_object(&buffer)
+                                } else {
+                                    object_parser::parse_indirect_object_with_max_depth_and_budget(
+                                        &buffer,
+                                        self.limits.max_depth,
+                                        &self.limits.budget,
+                                    )
+                                }
                             }
-                        }
-                        Err(_) => object_parser::parse_indirect_object(&buffer),
-                    };
+                            Err(err) if is_parser_budget_error(&err) => {
+                                return Err(AstError::ParseError(
+                                    "resource budget exceeded: object parser".to_string(),
+                                ));
+                            }
+                            Err(_) => {
+                                object_parser::parse_indirect_object_with_max_depth_and_budget(
+                                    &buffer,
+                                    self.limits.max_depth,
+                                    &self.limits.budget,
+                                )
+                            }
+                        };
 
                     match parsed {
                         Ok((_, (parsed_id, mut value))) => {
@@ -2041,7 +2712,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                                 if let PdfValue::Stream(stream) = &mut value {
                                     let result = self.resolve_indirect_stream_length(stream);
                                     if let Err(err) = result {
-                                        if !self.tolerant {
+                                        if !self.tolerant || is_resource_budget_error(&err) {
                                             return Err(err);
                                         }
                                         self.record_diagnostic(
@@ -2087,6 +2758,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                                     parsed_id.generation
                                 )));
                             }
+                        }
+                        Err(err) if is_parser_budget_error(&err) => {
+                            return Err(AstError::ParseError(
+                                "resource budget exceeded: object parser".to_string(),
+                            ));
                         }
                         Err(err) if self.tolerant => {
                             self.record_diagnostic(
@@ -2145,7 +2821,34 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             .checked_mul(1024 * 1024)
             .ok_or_else(|| AstError::ParseError("Object size limit overflow".to_string()))?
             as u64;
+        if self.object_offsets.is_empty() {
+            self.refresh_object_offsets()?;
+        }
         let next_offset = self
+            .object_offsets
+            .get(
+                self.object_offsets
+                    .partition_point(|candidate| *candidate <= offset),
+            )
+            .copied()
+            .unwrap_or(file_size);
+        let bound = next_offset
+            .saturating_sub(offset)
+            .min(file_size.saturating_sub(offset))
+            .min(max_bytes);
+        self.limits
+            .budget
+            .consume_decoded(bound)
+            .map_err(|error| AstError::ParseError(error.to_string()))?;
+
+        self.reader.seek(SeekFrom::Start(offset))?;
+        let mut buffer = Vec::new();
+        self.reader.by_ref().take(bound).read_to_end(&mut buffer)?;
+        Ok(buffer)
+    }
+
+    fn refresh_object_offsets(&mut self) -> AstResult<()> {
+        let mut offsets: Vec<u64> = self
             .document
             .xref
             .entries
@@ -2154,28 +2857,38 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 XRefEntry::InUse { offset, .. } => Some(*offset),
                 _ => None,
             })
-            .filter(|candidate| *candidate > offset)
-            .min()
-            .unwrap_or(file_size);
-        let bound = next_offset
-            .saturating_sub(offset)
-            .min(file_size.saturating_sub(offset))
-            .min(max_bytes);
-
-        self.reader.seek(SeekFrom::Start(offset))?;
-        let mut buffer = Vec::new();
-        self.reader.by_ref().take(bound).read_to_end(&mut buffer)?;
-        Ok(buffer)
+            .collect();
+        offsets.sort_unstable();
+        offsets.dedup();
+        let bytes = offsets
+            .len()
+            .checked_mul(std::mem::size_of::<u64>())
+            .ok_or_else(|| AstError::ParseError("Object offset index is too large".to_string()))?;
+        self.limits
+            .budget
+            .consume_memory(bytes as u64)
+            .map_err(|error| AstError::ParseError(error.to_string()))?;
+        self.object_offsets = offsets;
+        Ok(())
     }
 
     fn read_limited_input(&mut self) -> AstResult<Vec<u8>> {
         self.reader.seek(SeekFrom::Start(0))?;
         let max_bytes = self.limits.budget.max_input_bytes;
         let mut buffer = Vec::new();
-        self.reader
-            .by_ref()
-            .take(max_bytes.saturating_add(1))
-            .read_to_end(&mut buffer)?;
+        let mut chunk = [0u8; 8192];
+        let mut limited = self.reader.by_ref().take(max_bytes.saturating_add(1));
+        loop {
+            let bytes_read = limited.read(&mut chunk)?;
+            if bytes_read == 0 {
+                break;
+            }
+            self.limits
+                .budget
+                .consume_memory(bytes_read as u64)
+                .map_err(|error| AstError::ParseError(error.to_string()))?;
+            buffer.extend_from_slice(&chunk[..bytes_read]);
+        }
         if buffer.len() as u64 > max_bytes {
             return Err(AstError::ParseError(format!(
                 "Input exceeds resource limit of {} bytes",
@@ -2206,7 +2919,6 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 stream.data.len()
             )));
         }
-        stream.data.truncate(length);
         Ok(())
     }
 
@@ -2216,7 +2928,26 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         if let PdfValue::Stream(stream) = stream_value {
             // Decode stream
-            let filters = stream.get_filters();
+            let filters = match stream.get_filters_with_params_checked() {
+                Ok(filters) => filters,
+                Err(err) if self.tolerant => {
+                    self.record_diagnostic(
+                        Some(ObjectId::new(stream_obj, 0)),
+                        None,
+                        "object_stream_filter",
+                        "returned Null",
+                        1.0,
+                        stream.raw_data().map_or(0, |data| data.len() as u64),
+                        &err,
+                    )?;
+                    return Ok(PdfValue::Null);
+                }
+                Err(err) => {
+                    return Err(AstError::ParseError(format!(
+                        "Invalid object stream filters: {err}"
+                    )))
+                }
+            };
             if let Some(raw_data) = stream.raw_data() {
                 match crate::filters::decode_stream_with_budget(
                     raw_data,
@@ -2226,7 +2957,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     Ok(decoded) => {
                         return match self.parse_object_from_stream(&decoded, index, &stream.dict) {
                             Ok(value) => Ok(value),
-                            Err(err) if self.tolerant => {
+                            Err(err) if self.tolerant && !is_resource_budget_error(&err) => {
                                 self.record_diagnostic(
                                     Some(ObjectId::new(stream_obj, 0)),
                                     None,
@@ -2241,7 +2972,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                             Err(err) => Err(err),
                         };
                     }
-                    Err(err) if !self.tolerant => {
+                    Err(err)
+                        if !self.tolerant
+                            || err.to_string().contains("resource budget exceeded") =>
+                    {
                         return Err(AstError::ParseError(format!(
                             "Failed to decode object stream: {}",
                             err
@@ -2328,8 +3062,13 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             return Ok(PdfValue::Null);
         }
 
-        let offsets = object_parser::parse_object_stream_offsets(data, n, first)
-            .map_err(AstError::ParseError)?;
+        let offsets = object_parser::parse_object_stream_offsets_with_budget(
+            data,
+            n,
+            first,
+            &self.limits.budget,
+        )
+        .map_err(AstError::ParseError)?;
 
         // Find the object at the requested index
         let obj_offset = offsets[index];
@@ -2342,16 +3081,30 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         let obj_data = data
             .get(obj_offset..next_offset)
             .ok_or_else(|| AstError::ParseError("Invalid object stream offsets".to_string()))?;
-        match object_parser::parse_value(obj_data) {
-            Ok((_, value)) => Ok(value),
-            Err(err) if self.tolerant => {
-                log::warn!("Failed to parse compressed object: {:?}", err);
+        match object_parser::parse_value_with_max_depth_and_budget(
+            obj_data,
+            self.limits.max_depth,
+            &self.limits.budget,
+        ) {
+            Ok((remaining, value)) => {
+                let remaining = crate::parser::lexer::skip_whitespace_and_comments(remaining)
+                    .map(|(remaining, _)| remaining)
+                    .unwrap_or(remaining);
+                if !self.tolerant && !remaining.is_empty() {
+                    return Err(AstError::ParseError(
+                        "Residual bytes after compressed object".to_string(),
+                    ));
+                }
+                Ok(value)
+            }
+            Err(err) => {
+                let message = format!("Failed to parse compressed object: {:?}", err);
+                if !self.tolerant || is_parser_budget_error(&err) {
+                    return Err(AstError::ParseError(message));
+                }
+                log::warn!("{message}");
                 Ok(PdfValue::Null)
             }
-            Err(err) => Err(AstError::ParseError(format!(
-                "Failed to parse compressed object: {:?}",
-                err
-            ))),
         }
     }
 
@@ -2394,21 +3147,45 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         metadata_value: &PdfValue,
         catalog_id: crate::ast::NodeId,
     ) -> AstResult<()> {
+        let metadata_object_id = metadata_value
+            .as_reference()
+            .map(|reference| reference.id());
         let stream = match self.resolve_metadata_stream(metadata_value)? {
             Some(s) => s,
             None => return Ok(()),
         };
 
         let metadata_id = self.create_xmp_stream_node(&stream, catalog_id)?;
+        if let Some(object_id) = metadata_object_id {
+            self.document
+                .ast
+                .register_object_node(object_id, metadata_id);
+        }
 
         let decoded = match self.decode_xmp_stream(&stream) {
-            Some(data) => data,
-            None => return Ok(()),
+            Ok(data) => data,
+            Err(err) if self.tolerant && !err.contains("resource budget exceeded") => {
+                self.record_diagnostic(None, None, "xmp_decode", "skipped_xmp", 0.8, 0, &err)?;
+                return Ok(());
+            }
+            Err(err) => return Err(AstError::ParseError(err)),
         };
 
-        let xmp = match XmpMetadata::parse_from_stream(&decoded) {
+        let xmp = match XmpMetadata::parse_from_stream_with_budget(&decoded, &self.limits.budget) {
             Ok(metadata) => metadata,
-            Err(_) => return Ok(()),
+            Err(err) if self.tolerant && !err.contains("resource budget exceeded") => {
+                self.record_diagnostic(
+                    None,
+                    None,
+                    "xmp_parse",
+                    "skipped_xmp",
+                    0.8,
+                    decoded.len() as u64,
+                    &err,
+                )?;
+                return Ok(());
+            }
+            Err(err) => return Err(AstError::ParseError(err)),
         };
 
         let packet_id = self.create_xmp_packet_node(&xmp, metadata_id)?;
@@ -2453,8 +3230,8 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         Ok(metadata_id)
     }
 
-    fn decode_xmp_stream(&self, stream: &PdfStream) -> Option<Vec<u8>> {
-        stream.decode_with_budget(&self.limits.budget).ok()
+    fn decode_xmp_stream(&self, stream: &PdfStream) -> Result<Vec<u8>, String> {
+        stream.decode_with_budget(&self.limits.budget)
     }
 
     fn create_xmp_packet_node(
@@ -2816,6 +3593,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         // Create a new reader for the reference resolver
         let buffer = self.read_limited_input()?;
+        self.limits
+            .budget
+            .consume_memory(buffer.len() as u64)
+            .map_err(|error| AstError::ParseError(error.to_string()))?;
+        self.document.original_bytes = Some(buffer.clone());
         let cursor = Cursor::new(buffer);
 
         // Create reference resolver using existing document xref information
@@ -2828,23 +3610,42 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         // Resolve all references in the AST
         if let Err(err) = resolver.resolve_references(&mut self.document.ast) {
-            if self.tolerant {
+            if self.tolerant && !err.starts_with("resource budget exceeded:") {
                 log::warn!("Reference resolution error (tolerant): {}", err);
             } else {
                 return Err(AstError::ParseError(err));
             }
         }
 
+        let resolver_map = resolver.get_object_node_map();
+        let catalog = self
+            .document
+            .catalog
+            .and_then(|catalog_id| self.document.ast.get_node(catalog_id))
+            .and_then(|node| node.as_dict())
+            .cloned();
+        if let Some(catalog) = catalog {
+            let mut output_intents =
+                crate::parser::output_intents::OutputIntentsParser::new_with_budget(
+                    &mut self.document.ast,
+                    &resolver_map,
+                    &self.limits.budget,
+                );
+            output_intents
+                .parse_output_intents_with_budget(&catalog)
+                .map_err(|error| AstError::ParseError(error.to_string()))?;
+        }
         Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{PdfFileParser, XRefEntry};
+    use super::{PdfFileParser, XRefEntry, MAX_FORM_FIELD_DEPTH};
+    use crate::ast::NodeType;
     use crate::parser::ParseMode;
-    use crate::performance::PerformanceLimits;
-    use crate::types::{ObjectId, PdfValue};
+    use crate::performance::{PerformanceLimits, ResourceBudget};
+    use crate::types::{ObjectId, PdfArray, PdfDictionary, PdfReference, PdfStream, PdfValue};
     use std::io::{BufReader, Cursor};
 
     #[test]
@@ -2852,6 +3653,206 @@ mod tests {
         type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
         assert!(Parser::parse_object_header(b"-1 0 obj").is_err());
         assert!(Parser::parse_object_header(b"1 -1 obj").is_err());
+    }
+
+    #[test]
+    fn resolves_indirect_page_annotation_arrays() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut data = b"%PDF-1.7\n".to_vec();
+        let annotations_offset = data.len() as u64;
+        data.extend_from_slice(b"8 0 obj\n[<< /Subtype /Link >>]\nendobj\n");
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("valid header should construct parser");
+        parser.document.xref.entries.insert(
+            ObjectId::new(8, 0),
+            XRefEntry::InUse {
+                offset: annotations_offset,
+                generation: 0,
+            },
+        );
+        let page_id = parser
+            .add_to_ast(PdfValue::Dictionary(PdfDictionary::new()), NodeType::Page)
+            .expect("page node should be created");
+        let mut page_dict = PdfDictionary::new();
+        page_dict.insert("Annots", PdfValue::Reference(PdfReference::new(8, 0)));
+
+        parser
+            .parse_page_annotations(&page_dict, page_id)
+            .expect("indirect annotation array should parse");
+        assert_eq!(
+            parser
+                .document
+                .ast
+                .find_nodes_by_type(NodeType::Annotation)
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn resolves_indirect_resource_category_dictionaries() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut data = b"%PDF-1.7\n".to_vec();
+        let category_offset = data.len() as u64;
+        data.extend_from_slice(b"8 0 obj\n<< /F1 null >>\nendobj\n");
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("valid header should construct parser");
+        parser.document.xref.entries.insert(
+            ObjectId::new(8, 0),
+            XRefEntry::InUse {
+                offset: category_offset,
+                generation: 0,
+            },
+        );
+
+        let mut parent = PdfDictionary::new();
+        parent.insert("Font", PdfValue::Reference(PdfReference::new(8, 0)));
+        let mut child = PdfDictionary::new();
+        let mut child_fonts = PdfDictionary::new();
+        child_fonts.insert("F2", PdfValue::Null);
+        child.insert("Font", PdfValue::Dictionary(child_fonts));
+        let merged = parser
+            .merge_resource_dictionaries(&parent, &child)
+            .expect("indirect resource category should resolve");
+        assert!(matches!(
+            merged.get("Font"),
+            Some(PdfValue::Dictionary(fonts))
+                if fonts.get("F1") == Some(&PdfValue::Null)
+                    && fonts.get("F2") == Some(&PdfValue::Null)
+        ));
+
+        let mut empty_child = PdfDictionary::new();
+        empty_child.insert("Font", PdfValue::Dictionary(PdfDictionary::new()));
+        let merged_empty = parser
+            .merge_resource_dictionaries(&parent, &empty_child)
+            .expect("empty resource category should still inherit");
+        assert!(matches!(
+            merged_empty.get("Font"),
+            Some(PdfValue::Dictionary(fonts)) if fonts.get("F1") == Some(&PdfValue::Null)
+        ));
+    }
+
+    #[test]
+    fn strict_xref_stream_rejects_unknown_entry_type() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("valid header should construct parser");
+
+        let error = parser
+            .parse_xref_stream_entry(&[3, 0, 0], &[1, 1, 1])
+            .expect_err("strict mode must reject unknown XRef entry types");
+        assert!(error.to_string().contains("Invalid XRef entry type"));
+    }
+
+    #[test]
+    fn xref_stream_entries_respect_object_budget() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let limits = PerformanceLimits {
+            budget: ResourceBudget::new(1024, 1024, 1024, 10, 1, 100, 100, 8),
+            ..PerformanceLimits::default()
+        };
+        let parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            limits,
+        )
+        .expect("valid header should construct parser");
+
+        let error = parser
+            .parse_xref_entries_from_data(&[1, 0, 0, 1, 0, 1], &[1, 1, 1], 3, &[(0, 2)])
+            .expect_err("xref entries must consume the shared object budget");
+        assert!(error.to_string().contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn tolerant_xfa_parse_records_diagnostic() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Tolerant,
+            10,
+            PerformanceLimits::default(),
+        )
+        .expect("valid header should construct parser");
+        let mut acroform = PdfDictionary::new();
+        acroform.insert(
+            "XFA",
+            PdfValue::Stream(PdfStream::new(PdfDictionary::new(), b"<xfa>".to_vec())),
+        );
+
+        parser
+            .process_xfa_document(&acroform)
+            .expect("tolerant XFA parsing should continue");
+        assert!(parser
+            .document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "xfa_parse"));
+    }
+
+    #[test]
+    fn strict_xfa_value_resolution_rejects_excessive_depth() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut limits = PerformanceLimits {
+            max_depth: 1,
+            ..PerformanceLimits::default()
+        };
+        limits.refresh_budget();
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            limits,
+        )
+        .expect("valid header should construct parser");
+        let nested = PdfValue::Array(PdfArray::from(vec![PdfValue::Array(PdfArray::from(vec![
+            PdfValue::Integer(1),
+        ]))]));
+
+        let error = parser
+            .resolve_xfa_value(&nested)
+            .expect_err("strict mode must bound XFA value recursion");
+        assert!(error.to_string().contains("XFA value depth"));
+    }
+
+    #[test]
+    fn strict_xmp_parse_error_is_not_silenced() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("valid header should construct parser");
+        let catalog_id = parser
+            .add_to_ast(
+                PdfValue::Dictionary(PdfDictionary::new()),
+                NodeType::Catalog,
+            )
+            .expect("catalog node should be created");
+        let stream = PdfStream::new(PdfDictionary::new(), b"<".to_vec());
+
+        let error = parser
+            .parse_xmp_metadata(&PdfValue::Stream(stream), catalog_id)
+            .expect_err("strict mode must reject malformed XMP");
+        assert!(error.to_string().contains("XML parse error"));
     }
 
     #[test]
@@ -2895,5 +3896,470 @@ mod tests {
             panic!("expected stream");
         };
         assert_eq!(stream.raw_data(), Some(stream_data.as_slice()));
+    }
+
+    #[test]
+    fn indirect_stream_length_validation_preserves_observed_bytes() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let data = b"%PDF-1.7\n5 0 obj\n3\nendobj\n".to_vec();
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("parser should initialize");
+        parser.document.xref.entries.insert(
+            ObjectId::new(5, 0),
+            XRefEntry::InUse {
+                offset: 9,
+                generation: 0,
+            },
+        );
+
+        let length_ref = PdfReference::new(5, 0);
+        let mut dict = PdfDictionary::new();
+        dict.insert("Length", PdfValue::Reference(length_ref));
+        let mut stream = PdfStream::new(dict, b"abcd".to_vec());
+        parser
+            .resolve_indirect_stream_length(&mut stream)
+            .expect("declared length should validate");
+
+        assert_eq!(
+            stream.dict.get("Length"),
+            Some(&PdfValue::Reference(length_ref))
+        );
+        assert_eq!(stream.raw_data(), Some(b"abcd".as_slice()));
+    }
+
+    #[test]
+    fn reads_xref_data_beyond_the_legacy_buffer_size() {
+        let mut data = b"%PDF-1.7\n".to_vec();
+        data.resize(300 * 1024, b'x');
+        let parser = PdfFileParser::new_with_limits(
+            BufReader::new(Cursor::new(data.clone())),
+            ParseMode::Tolerant,
+            100,
+            PerformanceLimits::default(),
+        )
+        .expect("parser should initialize");
+        let mut parser = parser;
+        let buffer = parser.read_xref_buffer(0).expect("xref data should read");
+        assert_eq!(buffer.len(), data.len());
+    }
+
+    #[test]
+    fn lossless_input_is_not_limited_by_per_stream_decode_size() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let limits = PerformanceLimits {
+            budget: ResourceBudget::new(1024, 1024, 1, 10, 10, 10, 10, 8),
+            ..PerformanceLimits::default()
+        };
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            limits,
+        )
+        .expect("parser should initialize");
+
+        assert_eq!(
+            parser
+                .read_limited_input()
+                .expect("lossless input should use the total memory budget"),
+            b"%PDF-1.7\n"
+        );
+    }
+
+    #[test]
+    fn ignores_invalid_linearization_dictionaries() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let negative_length =
+            b"1 0 obj\n<< /Linearized 1.0 /L -1 /H [0 0] /O 1 /E 1 /N 1 /T 1 >>\nendobj\n";
+        let missing_length =
+            b"1 0 obj\n<< /Linearized 1.0 /H [0 0] /O 1 /E 1 /N 1 /T 1 >>\nendobj\n";
+
+        assert!(Parser::try_parse_linearization_dict(negative_length).is_none());
+        assert!(Parser::try_parse_linearization_dict(missing_length).is_none());
+    }
+
+    #[test]
+    fn linearization_budget_exhaustion_is_propagated() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let budget = ResourceBudget::new(0, 1024, 1024, 10, 10, 10, 10, 8);
+        let result = Parser::try_parse_linearization_dict_with_budget(
+            b"1 0 obj\n<< /Linearized 1.0 >>\nendobj\n",
+            &budget,
+        );
+
+        assert!(matches!(
+            result,
+            Err(error) if error.contains("resource budget exceeded")
+        ));
+    }
+
+    #[test]
+    fn xref_recovery_object_budget_exhaustion_is_propagated() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let data = b"%PDF-1.7\n2 0 obj\nnull\nendobj\n".to_vec();
+        let limits = PerformanceLimits {
+            budget: ResourceBudget::new(1024, 1024, 1024, 10, 0, 10, 10, 8),
+            ..PerformanceLimits::default()
+        };
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Tolerant,
+            10,
+            limits,
+        )
+        .expect("parser should initialize");
+
+        let error = parser
+            .recover_xref_by_scan()
+            .expect_err("xref recovery object budget must propagate");
+        assert!(error.to_string().contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn tolerant_reference_resolution_budget_exhaustion_is_not_swallowed() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let limits = PerformanceLimits {
+            budget: ResourceBudget::new(1024, 1024, 1024, 10, 10, 1, 10, 8),
+            ..PerformanceLimits::default()
+        };
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Tolerant,
+            10,
+            limits,
+        )
+        .expect("parser should initialize");
+        let catalog_id = parser
+            .add_to_ast(
+                PdfValue::Dictionary(PdfDictionary::new()),
+                NodeType::Catalog,
+            )
+            .expect("catalog node should consume the only node budget unit");
+        parser.document.set_catalog(catalog_id);
+
+        let error = parser
+            .resolve_all_references()
+            .expect_err("tolerant mode must propagate reference budget errors");
+        assert!(error.to_string().contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn load_object_budget_exhaustion_is_not_recovered_as_null() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let data = b"%PDF-1.7\n2 0 obj\nnull\nendobj\n".to_vec();
+        let limits = PerformanceLimits {
+            budget: ResourceBudget::new(1024, 1024, 1024, 10, 0, 10, 10, 8),
+            ..PerformanceLimits::default()
+        };
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Tolerant,
+            10,
+            limits,
+        )
+        .expect("parser should initialize");
+        parser.document.xref.entries.insert(
+            ObjectId::new(2, 0),
+            XRefEntry::InUse {
+                offset: 9,
+                generation: 0,
+            },
+        );
+
+        let error = parser
+            .load_object(&ObjectId::new(2, 0))
+            .expect_err("object budget must propagate from the main loader");
+        assert!(error.to_string().contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn object_stream_offset_budget_exhaustion_is_not_recovered_as_null() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let data = b"%PDF-1.7\n".to_vec();
+        let limits = PerformanceLimits {
+            budget: ResourceBudget::new(1024, 1024, 1024, 10, 0, 10, 10, 8),
+            ..PerformanceLimits::default()
+        };
+        let parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Tolerant,
+            10,
+            limits,
+        )
+        .expect("parser should initialize");
+        let mut dict = PdfDictionary::new();
+        dict.insert("N", PdfValue::Integer(1));
+        dict.insert("First", PdfValue::Integer(3));
+
+        let error = parser
+            .parse_object_from_stream(b"0 0", 0, &dict)
+            .expect_err("object stream offset budget must propagate");
+        assert!(error.to_string().contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn rejects_missing_or_negative_xref_stream_size() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let missing_size = PdfDictionary::new();
+        assert!(Parser::extract_xref_index_ranges(&missing_size).is_err());
+
+        let mut negative_size = PdfDictionary::new();
+        negative_size.insert("Size", PdfValue::Integer(-1));
+        assert!(Parser::extract_xref_index_ranges(&negative_size).is_err());
+    }
+
+    #[test]
+    fn rejects_xref_stream_width_arrays_with_wrong_length() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut dict = PdfDictionary::new();
+        dict.insert("W", PdfValue::Array(vec![PdfValue::Integer(1)].into()));
+        assert!(Parser::extract_xref_field_widths(&dict).is_err());
+
+        dict.insert(
+            "W",
+            PdfValue::Array(
+                vec![
+                    PdfValue::Integer(1),
+                    PdfValue::Integer(2),
+                    PdfValue::Integer(3),
+                    PdfValue::Integer(4),
+                ]
+                .into(),
+            ),
+        );
+        assert!(Parser::extract_xref_field_widths(&dict).is_err());
+    }
+
+    #[test]
+    fn trailer_parsing_honors_configured_nesting_limit() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let trailer = b"trailer << /Nested [1] >>";
+        assert!(Parser::extract_trailer_dict(trailer, 0).is_none());
+        assert!(Parser::extract_trailer_dict(trailer, 256).is_some());
+    }
+
+    #[test]
+    fn trailer_parsing_respects_shared_input_budget() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let trailer = b"trailer << /Name (long value) >>";
+        let budget = crate::performance::ResourceBudget::new(1, 1024, 1024, 100, 10, 10, 10, 8);
+        assert!(Parser::extract_trailer_dict_with_budget(trailer, 256, &budget).is_none());
+    }
+
+    #[test]
+    fn xref_table_rejects_residual_entries_before_trailer() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Tolerant,
+            10,
+            PerformanceLimits::default(),
+        )
+        .expect("parser should initialize");
+        let malformed =
+            b"xref\n0 1\n0000000000 65535 f \n0000000010 00000 n \ntrailer\n<< /Size 1 >>";
+
+        assert!(parser
+            .parse_xref_table_section(malformed)
+            .expect("xref parsing should be controlled")
+            .is_none());
+    }
+
+    #[test]
+    fn strict_mode_does_not_recover_malformed_xref() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let valid_xref = b"xref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size 1 >>\n";
+        let malformed_xref =
+            b"xref\n0 1\n0000000000 65535 f \n0000000010 00000 n \ntrailer\n<< /Size 1 >>\n";
+        let mut data = b"%PDF-1.7\n".to_vec();
+        data.extend_from_slice(valid_xref);
+        data.resize(100, b'\n');
+        let malformed_offset = data.len() as u64;
+        data.extend_from_slice(malformed_xref);
+
+        let mut strict = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data.clone())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("strict parser should initialize");
+        assert!(strict.parse_single_xref_at(malformed_offset).is_err());
+
+        let mut tolerant = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Tolerant,
+            10,
+            PerformanceLimits::default(),
+        )
+        .expect("tolerant parser should initialize");
+        assert!(tolerant.parse_single_xref_at(malformed_offset).is_ok());
+    }
+
+    #[test]
+    fn strict_mode_rejects_xref_prev_cycles() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let data = b"%PDF-1.7\nxref\n0 1\n0000000000 65535 f \ntrailer\n<< /Size 1 /Prev 9 >>\n";
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data.to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("strict parser should initialize");
+        parser.xref_offset = Some(9);
+
+        assert!(parser.parse_xref_chain().is_err());
+    }
+
+    #[test]
+    fn strict_mode_rejects_page_tree_cycles() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let data = b"%PDF-1.7\n1 0 obj\n<< /Type /Pages /Kids [1 0 R] /Count 1 >>\nendobj\n";
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data.to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("strict parser should initialize");
+        parser.document.xref.entries.insert(
+            ObjectId::new(1, 0),
+            XRefEntry::InUse {
+                offset: 9,
+                generation: 0,
+            },
+        );
+        let root = parser
+            .document
+            .ast
+            .create_node(crate::ast::NodeType::Root, PdfValue::Null);
+
+        let error = parser
+            .parse_page_tree(&PdfReference::new(1, 0), root)
+            .expect_err("strict page-tree parsing must reject cycles");
+        assert!(error.to_string().contains("Cycle detected"));
+
+        let mut tolerant = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data.to_vec())),
+            ParseMode::Tolerant,
+            10,
+            PerformanceLimits::default(),
+        )
+        .expect("tolerant parser should initialize");
+        tolerant.document.xref.entries.insert(
+            ObjectId::new(1, 0),
+            XRefEntry::InUse {
+                offset: 9,
+                generation: 0,
+            },
+        );
+        let tolerant_root = tolerant
+            .document
+            .ast
+            .create_node(crate::ast::NodeType::Root, PdfValue::Null);
+        tolerant
+            .parse_page_tree(&PdfReference::new(1, 0), tolerant_root)
+            .expect("tolerant page-tree parsing should cut cycles");
+        assert!(tolerant
+            .document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "page_tree_cycle"));
+    }
+
+    #[test]
+    fn strict_mode_rejects_form_field_depth_overflow() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut value = PdfValue::Null;
+        for _ in 0..=MAX_FORM_FIELD_DEPTH {
+            value = PdfValue::Array(PdfArray::from(vec![value]));
+        }
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("strict parser should initialize");
+        let root = parser
+            .document
+            .ast
+            .create_node(crate::ast::NodeType::Root, PdfValue::Null);
+
+        let error = parser
+            .parse_form_field_value(&value, root, 0)
+            .expect_err("strict form parsing must reject excessive depth");
+        assert!(error.to_string().contains("Maximum form field depth"));
+    }
+
+    #[test]
+    fn strict_document_structure_requires_valid_root_reference() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("strict parser should initialize");
+        let error = parser
+            .parse_document_structure()
+            .expect_err("strict parsing must reject a missing /Root");
+        assert!(error.to_string().contains("does not contain a /Root"));
+
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("strict parser should initialize");
+        parser.document.trailer.insert("Root", PdfValue::Integer(1));
+        let error = parser
+            .parse_document_structure()
+            .expect_err("strict parsing must reject a non-reference /Root");
+        assert!(error.to_string().contains("not an indirect reference"));
+    }
+
+    #[test]
+    fn strict_object_stream_objects_reject_residual_bytes() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut dict = PdfDictionary::new();
+        dict.insert("N", PdfValue::Integer(1));
+        dict.insert("First", PdfValue::Integer(4));
+        let data = b"1 0 42 trailing";
+
+        let strict = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("strict parser should initialize");
+        assert!(strict
+            .parse_object_from_stream(data, 0, &dict)
+            .expect_err("strict object streams must reject residual bytes")
+            .to_string()
+            .contains("Residual bytes"));
+
+        let tolerant = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Tolerant,
+            10,
+            PerformanceLimits::default(),
+        )
+        .expect("tolerant parser should initialize");
+        assert_eq!(
+            tolerant
+                .parse_object_from_stream(data, 0, &dict)
+                .expect("tolerant object streams should recover"),
+            PdfValue::Integer(42)
+        );
     }
 }

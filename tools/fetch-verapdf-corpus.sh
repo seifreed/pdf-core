@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_url="${PDF_CORPUS_REPO_URL:-https://github.com/seifreed/pdf-core-corpus.git}"
-commit="${PDF_CORPUS_COMMIT:-9979a2a8618dcdf23ad3f20c760c1f06e5b36fe6}"
+commit="${PDF_CORPUS_COMMIT:-344a1c906b158568f47af5f5e9ee8371dddc30c7}"
 source_path="${1:-fixtures}"
 destination="${2:-.external-corpus/verapdf}"
 max_files="${MAX_FILES:-0}"
@@ -14,13 +14,18 @@ repo_dir="$temporary_dir/repo"
 git clone --filter=blob:none --no-checkout --depth 1 "$repo_url" "$repo_dir"
 git -C "$repo_dir" fetch --depth 1 origin "$commit"
 git -C "$repo_dir" sparse-checkout init --no-cone
-git -C "$repo_dir" sparse-checkout set --no-cone "$source_path"
+git -C "$repo_dir" sparse-checkout set --no-cone "$source_path" \
+    RULE-MAPPINGS.json RULE-COVERAGE.json
 git -C "$repo_dir" checkout --detach "$commit"
 
 source_dir="$repo_dir/$source_path"
 test -d "$source_dir"
 rm -rf "$destination"
 mkdir -p "$destination"
+
+for manifest in RULE-MAPPINGS.json RULE-COVERAGE.json; do
+    cp "$repo_dir/$manifest" "$(dirname "$destination")/$manifest"
+done
 
 count=0
 while IFS= read -r -d '' source_file; do

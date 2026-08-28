@@ -29,6 +29,7 @@ The next release will be cut after the full CI and signed-tag checklist passes.
   parsed indirect document references are now resolved before stream decoding.
 - Added JBIG2 segment, bitmap-dimension, and organization preflight so
   unbounded inputs are rejected before the decoder allocates or iterates.
+- Added bounded validation for standalone random-access segment organization.
 - Made the Node release artifact portable through platform-specific optional
   native packages and a checked-in platform loader.
 

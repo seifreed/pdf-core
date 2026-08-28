@@ -14,6 +14,10 @@ pub struct ObjectNodeMap {
     object_to_node: HashMap<ObjectId, NodeId>,
 }
 
+fn is_parser_budget_error<I>(error: &nom::Err<nom::error::Error<I>>) -> bool {
+    matches!(error, nom::Err::Failure(error) if error.code == nom::error::ErrorKind::TooLarge)
+}
+
 fn stream_uses_jbig2(filter: Option<&PdfValue>) -> bool {
     match filter {
         Some(PdfValue::Name(name)) => name.without_slash() == "JBIG2Decode",
@@ -66,6 +70,7 @@ pub struct ReferenceResolver<R: BufRead + Seek> {
     object_to_node: HashMap<ObjectId, NodeId>, // Maps ObjectId to NodeId
     resolved_objects: HashSet<ObjectId>,
     pending_references: VecDeque<(NodeId, PdfReference)>, // (source_node, reference)
+    queued_references: HashSet<(NodeId, ObjectId)>,
     tolerant: bool,
     limits: PerformanceLimits,
 }
@@ -81,9 +86,14 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             object_to_node: HashMap::new(),
             resolved_objects: HashSet::new(),
             pending_references: VecDeque::new(),
+            queued_references: HashSet::new(),
             tolerant,
             limits,
         })
+    }
+
+    pub fn get_object_node_map(&self) -> ObjectNodeMap {
+        ObjectNodeMap::from_map(self.object_to_node.clone())
     }
 
     /// Create resolver using existing document xref information
@@ -126,6 +136,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             object_to_node: HashMap::new(),
             resolved_objects: HashSet::new(),
             pending_references: VecDeque::new(),
+            queued_references: HashSet::new(),
             tolerant,
             limits,
         }
@@ -137,14 +148,15 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         limits: &PerformanceLimits,
     ) -> Result<HashMap<ObjectId, u64>, String> {
         // Find startxref offset
+        let file_size = reader
+            .seek(SeekFrom::End(0))
+            .map_err(|e| format!("Seek error: {}", e))?;
+        let tail_size = file_size.min(1024);
         reader
-            .seek(SeekFrom::End(-1024))
+            .seek(SeekFrom::Start(file_size.saturating_sub(tail_size)))
             .map_err(|e| format!("Seek error: {}", e))?;
 
-        let mut buffer = Vec::new();
-        reader
-            .read_to_end(&mut buffer)
-            .map_err(|e| format!("Read error: {}", e))?;
+        let buffer = Self::read_limited(reader, tail_size, &limits.budget)?;
 
         let content = String::from_utf8_lossy(&buffer);
 
@@ -171,13 +183,17 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .seek(SeekFrom::Start(offset))
             .map_err(|e| format!("Seek error: {}", e))?;
 
-        let buffer = Self::read_limited(reader, limits.budget.max_input_bytes)?;
+        let buffer = Self::read_limited(reader, limits.budget.max_input_bytes, &limits.budget)?;
 
         // Try to parse as xref stream first (PDF 1.5+)
         if buffer.starts_with(b"<<") || buffer.iter().take(20).any(|&b| b.is_ascii_digit()) {
             // Might be xref stream object
             if let Ok((_, (_obj_id, PdfValue::Stream(stream)))) =
-                object_parser::parse_indirect_object(&buffer)
+                object_parser::parse_indirect_object_with_max_depth_and_budget(
+                    &buffer,
+                    limits.max_depth,
+                    &limits.budget,
+                )
             {
                 return crate::parser::xref::parse_xref_stream_with_limits(&stream, limits).map(
                     |entries| {
@@ -247,7 +263,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .seek(SeekFrom::Start(0))
             .map_err(|e| format!("Seek error: {}", e))?;
 
-        let content = Self::read_limited(reader, limits.budget.max_input_bytes)?;
+        let content = Self::read_limited(reader, limits.budget.max_input_bytes, &limits.budget)?;
 
         let mut xref_table = HashMap::new();
         let mut pos = 0;
@@ -272,13 +288,26 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         Ok(xref_table)
     }
 
-    fn read_limited(reader: &mut R, max_bytes: u64) -> Result<Vec<u8>, String> {
+    fn read_limited(
+        reader: &mut R,
+        max_bytes: u64,
+        budget: &crate::performance::ResourceBudget,
+    ) -> Result<Vec<u8>, String> {
         let mut content = Vec::new();
-        reader
-            .by_ref()
-            .take(max_bytes.saturating_add(1))
-            .read_to_end(&mut content)
-            .map_err(|e| format!("Read error: {}", e))?;
+        let mut chunk = [0u8; 8192];
+        let mut limited = reader.by_ref().take(max_bytes.saturating_add(1));
+        loop {
+            let bytes_read = limited
+                .read(&mut chunk)
+                .map_err(|e| format!("Read error: {}", e))?;
+            if bytes_read == 0 {
+                break;
+            }
+            budget
+                .consume_memory(bytes_read as u64)
+                .map_err(|error| error.to_string())?;
+            content.extend_from_slice(&chunk[..bytes_read]);
+        }
         if content.len() as u64 > max_bytes {
             return Err(format!(
                 "Input exceeds resource limit of {} bytes",
@@ -320,16 +349,16 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         use nom::{
             bytes::complete::tag,
             character::complete::{digit1, space1},
-            combinator::map,
+            combinator::map_opt,
             sequence::tuple,
         };
 
-        map(
+        map_opt(
             tuple((digit1, space1, digit1, space1, tag(b"obj"))),
             |(num, _, gen, _, _)| {
-                let num = std::str::from_utf8(num).unwrap_or("0").parse().unwrap_or(0);
-                let gen = std::str::from_utf8(gen).unwrap_or("0").parse().unwrap_or(0);
-                ObjectId::new(num, gen)
+                let num = std::str::from_utf8(num).ok()?.parse().ok()?;
+                let gen = std::str::from_utf8(gen).ok()?.parse().ok()?;
+                Some(ObjectId::new(num, gen))
             },
         )(data)
     }
@@ -337,7 +366,14 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
     /// Resolve all references in the AST with proper edge creation
     pub fn resolve_references(&mut self, ast: &mut PdfAstGraph) -> Result<(), String> {
         // First pass: collect all references from existing nodes
-        let nodes = ast.get_all_nodes();
+        let nodes = ast
+            .get_all_nodes_with_budget(&self.limits.budget)
+            .map_err(|err| err.to_string())?;
+        for obj_id in self.xref_table.keys().copied() {
+            if let Some(node) = ast.get_node_by_object(obj_id) {
+                self.object_to_node.insert(obj_id, node.id);
+            }
+        }
         for node in &nodes {
             self.collect_references_from_node(node.id, &node.value);
         }
@@ -364,10 +400,11 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                         }
                         node_id
                     }
-                    Err(e) => {
+                    Err(e) if self.tolerant && !e.starts_with("resource budget exceeded:") => {
                         warn!("Failed to resolve reference {}: {}", obj_id, e);
                         continue;
                     }
+                    Err(e) => return Err(e),
                 }
             } else {
                 continue; // Already resolved but not found in map
@@ -384,13 +421,12 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 source_node, target_node, obj_id
             );
         }
-
         // Third pass: resolve indirect Length references in streams
         self.resolve_stream_lengths(ast)?;
 
         // Resolve direct stream values for JBIG2 globals before any stream AST
         // decoding pass consumes the filter parameters.
-        self.resolve_jbig2_globals(ast);
+        self.resolve_jbig2_globals(ast)?;
 
         // Fourth pass: build page resource nodes (colorspaces, ICC profiles)
         self.build_page_resources(ast)?;
@@ -445,7 +481,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 for (cs_name, cs_value) in colorspaces.iter() {
                     let mut parser =
                         ColorSpaceParser::new_with_limits(ast, &resolver_map, &self.limits);
-                    if let Some(cs_id) = parser.parse_colorspace(cs_value) {
+                    let cs_id = parser
+                        .parse_colorspace_with_budget(cs_value)
+                        .map_err(|error| error.to_string())?;
+                    if let Some(cs_id) = cs_id {
                         self.add_edge(ast, node_id, cs_id, EdgeType::Resource)?;
                         if let Some(cs_node) = ast.get_node_mut(cs_id) {
                             cs_node
@@ -465,7 +504,9 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         while let Some(current) = stack.pop() {
             match current {
                 PdfValue::Reference(pdf_ref) => {
-                    self.pending_references.push_back((node_id, *pdf_ref));
+                    if self.queued_references.insert((node_id, pdf_ref.id())) {
+                        self.pending_references.push_back((node_id, *pdf_ref));
+                    }
                 }
                 PdfValue::Array(array) => {
                     for item in array.iter() {
@@ -493,61 +534,33 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         obj_id: ObjectId,
         ast: &mut PdfAstGraph,
     ) -> Result<NodeId, String> {
-        self.limits
-            .budget
-            .consume_object()
-            .map_err(|err| err.to_string())?;
         if let Some(&offset) = self.xref_table.get(&obj_id) {
-            // Read and parse the object
-            self.reader
-                .seek(SeekFrom::Start(offset))
-                .map_err(|e| format!("Seek error: {}", e))?;
-
-            let mut buffer = Vec::new();
-            let max_bytes = self.limits.max_object_size_mb.saturating_mul(1024 * 1024);
-            let mut total_read = 0usize;
-            let mut chunk = vec![0u8; 65536];
-            let mut found_endobj = false;
-
-            while total_read < max_bytes {
-                let to_read = std::cmp::min(chunk.len(), max_bytes - total_read);
-                let bytes_read = self
-                    .reader
-                    .read(&mut chunk[..to_read])
-                    .map_err(|e| format!("Read error: {}", e))?;
-                if bytes_read == 0 {
-                    break;
-                }
-                buffer.extend_from_slice(&chunk[..bytes_read]);
-                total_read += bytes_read;
-
-                if buffer.windows(6).any(|w| w == b"endobj") {
-                    found_endobj = true;
-                    break;
-                }
-            }
-
-            if !found_endobj && total_read >= max_bytes && !self.tolerant {
-                return Err(format!(
-                    "Object {} exceeds max size {}MB",
-                    obj_id.number, self.limits.max_object_size_mb
-                ));
-            }
+            let buffer = self.read_object_buffer(offset)?;
 
             // Resolve an indirect stream length before parsing stream bytes.
-            let parsed = match object_parser::parse_indirect_stream_prefix(&buffer) {
+            let parsed = match object_parser::parse_indirect_stream_prefix_with_max_depth(
+                &buffer,
+                self.limits.max_depth,
+            ) {
                 Ok((_, (_, dict))) => {
                     if let Some(PdfValue::Reference(length_ref)) = dict.get("Length") {
-                        match self.load_object_value(length_ref.id()) {
+                        match self.load_object_value(length_ref.id())? {
                             Some(PdfValue::Integer(length)) if length >= 0 => {
                                 match usize::try_from(length) {
                                     Ok(length) => {
-                                        object_parser::parse_indirect_object_with_stream_length(
-                                            &buffer, length,
+                                        object_parser::parse_indirect_object_with_stream_length_and_max_depth_and_budget(
+                                            &buffer,
+                                            length,
+                                            self.limits.max_depth,
+                                            &self.limits.budget,
                                         )
                                     }
                                     Err(_) if self.tolerant => {
-                                        object_parser::parse_indirect_object(&buffer)
+                                        object_parser::parse_indirect_object_with_max_depth_and_budget(
+                                            &buffer,
+                                            self.limits.max_depth,
+                                            &self.limits.budget,
+                                        )
                                     }
                                     Err(_) => {
                                         return Err(
@@ -557,36 +570,87 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                                 }
                             }
                             Some(_) if self.tolerant => {
-                                object_parser::parse_indirect_object(&buffer)
+                                object_parser::parse_indirect_object_with_max_depth_and_budget(
+                                    &buffer,
+                                    self.limits.max_depth,
+                                    &self.limits.budget,
+                                )
                             }
                             Some(_) => {
                                 return Err("Indirect stream Length is not an integer".to_string())
                             }
-                            None if self.tolerant => object_parser::parse_indirect_object(&buffer),
+                            None if self.tolerant => {
+                                object_parser::parse_indirect_object_with_max_depth_and_budget(
+                                    &buffer,
+                                    self.limits.max_depth,
+                                    &self.limits.budget,
+                                )
+                            }
                             None => {
                                 return Err("Failed to resolve indirect stream Length".to_string())
                             }
                         }
                     } else {
-                        object_parser::parse_indirect_object(&buffer)
+                        object_parser::parse_indirect_object_with_max_depth_and_budget(
+                            &buffer,
+                            self.limits.max_depth,
+                            &self.limits.budget,
+                        )
                     }
                 }
-                Err(_) => object_parser::parse_indirect_object(&buffer),
+                Err(_) => object_parser::parse_indirect_object_with_max_depth_and_budget(
+                    &buffer,
+                    self.limits.max_depth,
+                    &self.limits.budget,
+                ),
             };
 
             // Try to parse the object
             match parsed {
                 Ok((rest, (parsed_obj_id, value))) => {
                     if parsed_obj_id != obj_id {
-                        warn!(
-                            "Object ID mismatch: expected {:?}, got {:?}",
-                            obj_id, parsed_obj_id
+                        let message = format!(
+                            "Object ID mismatch: expected {} {}, got {} {}",
+                            obj_id.number,
+                            obj_id.generation,
+                            parsed_obj_id.number,
+                            parsed_obj_id.generation
                         );
+                        if !self.tolerant {
+                            return Err(message);
+                        }
+                        warn!("{message}");
+
+                        let node_id =
+                            self.create_node(ast, NodeType::Object(obj_id), PdfValue::Null)?;
+                        ast.register_object_node(obj_id, node_id);
+                        if let Some(node) = ast.get_node_mut(node_id) {
+                            node.metadata.offset = Some(offset);
+                            node.metadata.size = Some(buffer.len() - rest.len());
+                            node.metadata.errors.push(crate::ast::node::ParseError {
+                                code: crate::ast::node::ErrorCode::InvalidReference,
+                                message,
+                                offset: Some(offset),
+                                recoverable: true,
+                            });
+                            node.metadata
+                                .warnings
+                                .push("Discarded object bytes after ObjectId mismatch".to_string());
+                            node.metadata.properties.insert(
+                                "object_id".to_string(),
+                                format!("{} {} R", obj_id.number, obj_id.generation),
+                            );
+                            node.metadata
+                                .properties
+                                .insert("recovery".to_string(), "object_id_mismatch".to_string());
+                        }
+                        return Ok(node_id);
                     }
 
                     // Create node with proper type
                     let node_type = self.determine_node_type(&value, obj_id);
                     let node_id = self.create_node(ast, node_type, value)?;
+                    ast.register_object_node(obj_id, node_id);
 
                     // Add metadata
                     if let Some(node) = ast.get_node_mut(node_id) {
@@ -643,11 +707,15 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
                     Ok(node_id)
                 }
+                Err(e) if is_parser_budget_error(&e) => {
+                    Err("resource budget exceeded: object parser".to_string())
+                }
                 Err(e) => {
                     if self.tolerant {
-                        if let Some(recovered) = self.parse_object_value_fallback(&buffer) {
+                        if let Some(recovered) = self.parse_object_value_fallback(&buffer)? {
                             let node_type = self.determine_node_type(&recovered, obj_id);
                             let node_id = self.create_node(ast, node_type, recovered)?;
+                            ast.register_object_node(obj_id, node_id);
                             if let Some(node) = ast.get_node_mut(node_id) {
                                 node.metadata.offset = Some(offset);
                                 node.metadata.size = Some(buffer.len());
@@ -665,6 +733,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
 
                         let node_id =
                             self.create_node(ast, NodeType::Object(obj_id), PdfValue::Null)?;
+                        ast.register_object_node(obj_id, node_id);
                         if let Some(node) = ast.get_node_mut(node_id) {
                             node.metadata.offset = Some(offset);
                             node.metadata.size = Some(buffer.len());
@@ -697,6 +766,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 .map_err(|e| format!("Compressed object {} error: {}", obj_id.number, e))?;
             let node_type = self.determine_node_type(&value, obj_id);
             let node_id = self.create_node(ast, node_type, value)?;
+            ast.register_object_node(obj_id, node_id);
 
             if let Some(node) = ast.get_node_mut(node_id) {
                 node.metadata.offset = meta.file_offset;
@@ -734,6 +804,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             Ok(node_id)
         } else if self.tolerant {
             let node_id = self.create_node(ast, NodeType::Object(obj_id), PdfValue::Null)?;
+            ast.register_object_node(obj_id, node_id);
             if let Some(node) = ast.get_node_mut(node_id) {
                 node.metadata.errors.push(crate::ast::node::ParseError {
                     code: crate::ast::node::ErrorCode::MissingObject,
@@ -754,15 +825,25 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         }
     }
 
-    fn parse_object_value_fallback(&self, buffer: &[u8]) -> Option<PdfValue> {
-        let obj_pos = buffer.windows(3).position(|w| w == b"obj")?;
+    fn parse_object_value_fallback(&self, buffer: &[u8]) -> Result<Option<PdfValue>, String> {
+        let Some(obj_pos) = buffer.windows(3).position(|w| w == b"obj") else {
+            return Ok(None);
+        };
         let mut pos = obj_pos + 3;
         while pos < buffer.len() && buffer[pos].is_ascii_whitespace() {
             pos += 1;
         }
-        object_parser::parse_value(&buffer[pos..])
-            .ok()
-            .map(|(_, value)| value)
+        match object_parser::parse_value_with_max_depth_and_budget(
+            &buffer[pos..],
+            self.limits.max_depth,
+            &self.limits.budget,
+        ) {
+            Ok((_, value)) => Ok(Some(value)),
+            Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                Err("resource budget exceeded: object value fallback".to_string())
+            }
+            Err(_) => Ok(None),
+        }
     }
 
     fn resolve_compressed_object(
@@ -797,47 +878,20 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .get(&stream_id)
             .copied()
             .ok_or_else(|| format!("Object stream {} offset missing", stream_object))?;
+        let buffer = self.read_object_buffer(offset)?;
 
-        self.reader
-            .seek(SeekFrom::Start(offset))
-            .map_err(|e| format!("Seek error: {}", e))?;
-
-        let mut buffer = Vec::new();
-        let max_bytes = self.limits.max_object_size_mb.saturating_mul(1024 * 1024);
-        let mut total_read = 0usize;
-        let mut chunk = vec![0u8; 65536];
-        let mut found_endobj = false;
-
-        while total_read < max_bytes {
-            let to_read = std::cmp::min(chunk.len(), max_bytes - total_read);
-            let bytes_read = self
-                .reader
-                .read(&mut chunk[..to_read])
-                .map_err(|e| format!("Read error: {}", e))?;
-            if bytes_read == 0 {
-                break;
-            }
-            buffer.extend_from_slice(&chunk[..bytes_read]);
-            total_read += bytes_read;
-
-            if buffer.windows(6).any(|w| w == b"endobj") {
-                found_endobj = true;
-                break;
-            }
-        }
-
-        if !found_endobj && !self.tolerant {
-            return Err("Object stream missing endobj".to_string());
-        }
-
-        let (_, (_obj_id, value)) = object_parser::parse_indirect_object(&buffer)
-            .map_err(|e| format!("Failed to parse object stream: {:?}", e))?;
+        let (_, (_obj_id, value)) = object_parser::parse_indirect_object_with_max_depth_and_budget(
+            &buffer,
+            self.limits.max_depth,
+            &self.limits.budget,
+        )
+        .map_err(|e| format!("Failed to parse object stream: {:?}", e))?;
         let stream = match value {
             PdfValue::Stream(stream) => stream,
             _ => return Err("Object stream is not a stream".to_string()),
         };
 
-        let filters = stream.get_filters();
+        let filters = stream.get_filters_with_params_checked()?;
         let raw = stream
             .raw_data()
             .ok_or_else(|| "Object stream has no data".to_string())?;
@@ -874,7 +928,12 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             return Err("Object stream index out of range".to_string());
         }
 
-        let offsets = object_parser::parse_object_stream_offsets(data, n, first)?;
+        let offsets = object_parser::parse_object_stream_offsets_with_budget(
+            data,
+            n,
+            first,
+            &self.limits.budget,
+        )?;
         let start = offsets[index];
         let next_offset = offsets
             .iter()
@@ -890,8 +949,12 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         let slice = data
             .get(start..next_offset)
             .ok_or_else(|| "Invalid object stream offsets".to_string())?;
-        let (_, value) =
-            object_parser::parse_value(slice).map_err(|e| format!("Parse value error: {:?}", e))?;
+        let (_, value) = object_parser::parse_value_with_max_depth_and_budget(
+            slice,
+            self.limits.max_depth,
+            &self.limits.budget,
+        )
+        .map_err(|e| format!("Parse value error: {:?}", e))?;
         Ok((value, start, next_offset - start))
     }
 
@@ -943,14 +1006,18 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                             .seek(SeekFrom::Start(offset))
                             .map_err(|e| format!("Seek error: {}", e))?;
 
-                        let mut buffer = vec![0u8; 1024];
+                        let mut buffer = [0u8; 1024];
                         let bytes_read = self
                             .reader
                             .read(&mut buffer)
                             .map_err(|e| format!("Read error: {}", e))?;
 
                         if let Ok((_, (_, PdfValue::Integer(length)))) =
-                            object_parser::parse_indirect_object(&buffer[..bytes_read])
+                            object_parser::parse_indirect_object_with_max_depth_and_budget(
+                                &buffer[..bytes_read],
+                                self.limits.max_depth,
+                                &self.limits.budget,
+                            )
                         {
                             let length = usize::try_from(length)
                                 .map_err(|_| "Indirect stream Length must be non-negative")?;
@@ -965,22 +1032,17 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             }
         }
 
-        // Apply the resolved lengths
+        // Keep the declared /Length and raw bytes intact; record the resolved value separately.
         for (node_id, length) in updates {
             if let Some(node) = ast.get_node_mut(node_id) {
                 if let PdfValue::Stream(ref mut stream) = node.value {
-                    // Update the Length entry
-                    stream
-                        .dict
-                        .insert("Length", PdfValue::Integer(length as i64));
-
-                    // If we have raw data, validate/truncate to correct length
-                    if let StreamData::Raw(ref mut data) = stream.data {
-                        if data.len() > length {
-                            data.truncate(length);
-                            debug!("Truncated stream data to resolved length {}", length);
-                        }
-                    }
+                    stream.lossless.declared_length = Some(length as u64);
+                    node.metadata
+                        .properties
+                        .insert("resolved_length".to_string(), length.to_string());
+                    node.metadata
+                        .properties
+                        .insert("observed_length".to_string(), stream.data.len().to_string());
                 }
             }
         }
@@ -988,7 +1050,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         Ok(())
     }
 
-    fn resolve_jbig2_globals(&mut self, ast: &mut PdfAstGraph) {
+    fn resolve_jbig2_globals(&mut self, ast: &mut PdfAstGraph) -> Result<(), String> {
         let node_ids: Vec<NodeId> = ast.get_all_nodes().iter().map(|node| node.id).collect();
 
         for node_id in node_ids {
@@ -1002,10 +1064,10 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 None => continue,
             };
 
-            let changed = dict
-                .get_mut("DecodeParms")
-                .map(|params| self.resolve_jbig2_globals_value(params, ast))
-                .unwrap_or(false);
+            let changed = match dict.get_mut("DecodeParms") {
+                Some(params) => self.resolve_jbig2_globals_value(params, ast)?,
+                None => false,
+            };
             if changed {
                 if let Some(node) = ast.get_node_mut(node_id) {
                     if let PdfValue::Stream(stream) = &mut node.value {
@@ -1014,23 +1076,35 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 }
             }
         }
+        Ok(())
     }
 
-    fn resolve_jbig2_globals_value(&mut self, value: &mut PdfValue, ast: &PdfAstGraph) -> bool {
+    fn resolve_jbig2_globals_value(
+        &mut self,
+        value: &mut PdfValue,
+        ast: &PdfAstGraph,
+    ) -> Result<bool, String> {
         match value {
             PdfValue::Dictionary(dict) => self.resolve_jbig2_globals_dict(dict, ast),
-            PdfValue::Array(values) => values
-                .iter_mut()
-                .map(|value| self.resolve_jbig2_globals_value(value, ast))
-                .any(|changed| changed),
-            _ => false,
+            PdfValue::Array(values) => {
+                let mut changed = false;
+                for value in values.iter_mut() {
+                    changed |= self.resolve_jbig2_globals_value(value, ast)?;
+                }
+                Ok(changed)
+            }
+            _ => Ok(false),
         }
     }
 
-    fn resolve_jbig2_globals_dict(&mut self, dict: &mut PdfDictionary, ast: &PdfAstGraph) -> bool {
+    fn resolve_jbig2_globals_dict(
+        &mut self,
+        dict: &mut PdfDictionary,
+        ast: &PdfAstGraph,
+    ) -> Result<bool, String> {
         let reference = match dict.get("JBIG2Globals") {
             Some(PdfValue::Reference(reference)) => *reference,
-            _ => return false,
+            _ => return Ok(false),
         };
         let Some(mut stream) = self
             .object_to_node
@@ -1039,32 +1113,67 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .and_then(|node| node.as_stream())
             .cloned()
         else {
-            return false;
+            return Ok(false);
         };
 
         if let Some(raw) = stream.raw_data() {
-            let filters = stream.get_filters_with_params();
-            if let Ok(decoded) = decode_stream_with_budget(raw, &filters, &self.limits.budget) {
-                stream.data = StreamData::Decoded(decoded);
+            let filters = match stream.get_filters_with_params_checked() {
+                Ok(filters) => filters,
+                Err(_error) if self.tolerant => {
+                    dict.insert("JBIG2Globals", PdfValue::Stream(stream));
+                    return Ok(true);
+                }
+                Err(error) => return Err(error),
+            };
+            match decode_stream_with_budget(raw, &filters, &self.limits.budget) {
+                Ok(decoded) => stream.set_decoded(decoded),
+                Err(error) => {
+                    let message = format!("Failed to decode JBIG2Globals: {error}");
+                    if !self.tolerant || message.contains("resource budget exceeded:") {
+                        return Err(message);
+                    }
+                }
             }
         }
         dict.insert("JBIG2Globals", PdfValue::Stream(stream));
-        true
+        Ok(true)
     }
 
     /// Build AST nodes from content streams
     fn build_content_stream_ast(&mut self, ast: &mut PdfAstGraph) -> Result<(), String> {
         let nodes = ast.get_all_nodes();
-        let mut content_streams = Vec::new();
-
-        // Find all content streams
-        for node in nodes {
-            if matches!(node.node_type, NodeType::ContentStream)
-                || (matches!(node.node_type, NodeType::Page) && node.as_dict().is_some())
-            {
-                content_streams.push(node.id);
+        let has_pages = nodes
+            .iter()
+            .any(|node| matches!(node.node_type, NodeType::Page));
+        let mut referenced_content_streams = HashSet::new();
+        if has_pages {
+            let mut visited = HashSet::new();
+            for node in &nodes {
+                if !matches!(node.node_type, NodeType::Page) {
+                    continue;
+                }
+                if let Some(dict) = node.as_dict() {
+                    if let Some(contents) = dict.get("Contents") {
+                        Self::collect_content_stream_ids(
+                            contents,
+                            ast,
+                            &self.object_to_node,
+                            &mut referenced_content_streams,
+                            &mut visited,
+                        );
+                    }
+                }
             }
         }
+
+        let content_streams: Vec<NodeId> = nodes
+            .iter()
+            .filter(|node| {
+                matches!(node.node_type, NodeType::ContentStream)
+                    && (!has_pages || referenced_content_streams.contains(&node.id))
+            })
+            .map(|node| node.id)
+            .collect();
 
         // Process each content stream
         for stream_node_id in content_streams {
@@ -1077,11 +1186,37 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                         crate::types::stream::StreamData::Decoded(data) => data,
                         _ => continue, // Skip lazy streams for now
                     };
-                    let filters = stream.get_filters();
+                    let filters = match stream.get_filters_with_params_checked() {
+                        Ok(filters) => filters,
+                        Err(error) => {
+                            let message = format!("Failed to resolve stream filters: {error}");
+                            self.record_stream_issue(
+                                ast,
+                                stream_node_id,
+                                crate::ast::ErrorCode::CorruptedStream,
+                                message.clone(),
+                                "stream_decode_skipped",
+                            );
+                            if !self.tolerant {
+                                return Err(message);
+                            }
+                            continue;
+                        }
+                    };
                     match decode_stream_with_budget(data, &filters, &self.limits.budget) {
                         Ok(decoded) => decoded,
                         Err(e) => {
-                            warn!("Failed to decode stream: {}", e);
+                            let message = format!("Failed to decode stream: {}", e);
+                            self.record_stream_issue(
+                                ast,
+                                stream_node_id,
+                                crate::ast::ErrorCode::CorruptedStream,
+                                message.clone(),
+                                "stream_decode_skipped",
+                            );
+                            if !self.tolerant || message.contains("resource budget exceeded:") {
+                                return Err(message);
+                            }
                             continue;
                         }
                     }
@@ -1095,55 +1230,126 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                     continue;
                 };
 
-                // Parse content stream operators
-                let mut parser = content_stream::ContentStreamParser::new();
-                match parser.parse(&stream_data) {
-                    Ok(operators) => {
-                        let indexed =
-                            content_operands::parse_content_stream_with_offsets(&stream_data);
-                        if indexed.is_empty() {
-                            // fallback to operator list only
-                            for (i, op) in operators.iter().enumerate() {
-                                let op_node_id = self.create_operator_node(ast, op, i)?;
-                                self.add_edge(ast, stream_node_id, op_node_id, EdgeType::Child)?;
-                            }
-                            info!(
-                                "Created {} operator nodes for stream {:?}",
-                                operators.len(),
-                                stream_node_id
-                            );
-                        } else {
-                            for (i, item) in indexed.iter().enumerate() {
-                                let op_node_id =
-                                    self.create_operator_node(ast, &item.operator, i)?;
-                                if let Some(node) = ast.get_node_mut(op_node_id) {
-                                    node.metadata.offset = Some(item.offset as u64);
-                                    node.metadata.properties.insert(
-                                        "stream_local_offset".to_string(),
-                                        item.offset.to_string(),
-                                    );
-                                    node.metadata.properties.insert(
-                                        "content_operator_index".to_string(),
-                                        i.to_string(),
-                                    );
-                                }
-                                self.add_edge(ast, stream_node_id, op_node_id, EdgeType::Child)?;
-                            }
-                            info!(
-                                "Created {} operator nodes with offsets for stream {:?}",
-                                indexed.len(),
-                                stream_node_id
-                            );
+                let indexed_result = if self.tolerant {
+                    content_operands::parse_content_stream_with_offsets_with_budget(
+                        &stream_data,
+                        &self.limits.budget,
+                    )
+                    .map_err(|error| error.to_string())
+                } else {
+                    content_operands::parse_content_stream_with_offsets_strict_with_budget(
+                        &stream_data,
+                        &self.limits.budget,
+                    )
+                };
+                let indexed = match indexed_result {
+                    Ok(indexed) => indexed,
+                    Err(error) => {
+                        let message = format!("Failed to parse content stream: {}", error);
+                        self.record_stream_issue(
+                            ast,
+                            stream_node_id,
+                            crate::ast::ErrorCode::InvalidSyntax,
+                            message.clone(),
+                            "content_stream_skipped",
+                        );
+                        if !self.tolerant {
+                            return Err(message);
                         }
+                        continue;
                     }
-                    Err(e) => {
-                        warn!("Failed to parse content stream: {:?}", e);
+                };
+
+                for (i, item) in indexed.iter().enumerate() {
+                    let op_node_id = self.create_operator_node(ast, &item.operator, i)?;
+                    if let Some(node) = ast.get_node_mut(op_node_id) {
+                        node.metadata.offset = Some(item.offset as u64);
+                        node.metadata
+                            .properties
+                            .insert("stream_local_offset".to_string(), item.offset.to_string());
+                        node.metadata
+                            .properties
+                            .insert("content_operator_index".to_string(), i.to_string());
                     }
+                    self.add_edge(ast, stream_node_id, op_node_id, EdgeType::Child)?;
                 }
+                info!(
+                    "Created {} operator nodes with offsets for stream {:?}",
+                    indexed.len(),
+                    stream_node_id
+                );
             }
         }
 
         Ok(())
+    }
+
+    fn collect_content_stream_ids(
+        value: &PdfValue,
+        ast: &PdfAstGraph,
+        object_to_node: &HashMap<ObjectId, NodeId>,
+        streams: &mut HashSet<NodeId>,
+        visited: &mut HashSet<NodeId>,
+    ) {
+        match value {
+            PdfValue::Array(values) => {
+                for value in values {
+                    Self::collect_content_stream_ids(value, ast, object_to_node, streams, visited);
+                }
+            }
+            PdfValue::Reference(reference) => {
+                let Some(&node_id) = object_to_node.get(&reference.id()) else {
+                    return;
+                };
+                if !visited.insert(node_id) {
+                    return;
+                }
+                let Some(node) = ast.get_node(node_id) else {
+                    return;
+                };
+                if matches!(node.value, PdfValue::Stream(_)) {
+                    streams.insert(node_id);
+                } else if let PdfValue::Array(values) = &node.value {
+                    for value in values {
+                        Self::collect_content_stream_ids(
+                            value,
+                            ast,
+                            object_to_node,
+                            streams,
+                            visited,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn record_stream_issue(
+        &self,
+        ast: &mut PdfAstGraph,
+        stream_node_id: NodeId,
+        code: crate::ast::ErrorCode,
+        message: String,
+        recovery: &str,
+    ) {
+        if let Some(node) = ast.get_node_mut(stream_node_id) {
+            let offset = node.metadata.offset;
+            if let PdfValue::Stream(stream) = &mut node.value {
+                stream.record_parse_error(message.clone());
+                stream.record_recovery(recovery);
+            }
+            node.metadata.errors.push(crate::ast::ParseError {
+                code,
+                message: message.clone(),
+                offset,
+                recoverable: self.tolerant,
+            });
+            node.metadata.warnings.push(message);
+            node.metadata
+                .properties
+                .insert("recovery".to_string(), recovery.to_string());
+        }
     }
 
     fn build_javascript_nodes(&mut self, ast: &mut PdfAstGraph) -> Result<(), String> {
@@ -1169,7 +1375,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             }
 
             let resolved = match js_value {
-                PdfValue::Reference(r) => match self.load_object_value(r.id()) {
+                PdfValue::Reference(r) => match self.load_object_value(r.id())? {
                     Some(value) => value,
                     None if self.tolerant => PdfValue::Null,
                     None => return Err(format!("Failed to resolve JavaScript object {}", r.id())),
@@ -1235,7 +1441,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         value: &PdfValue,
     ) -> Result<(), String> {
         let resolved = match value {
-            PdfValue::Reference(r) => match self.load_object_value(r.id()) {
+            PdfValue::Reference(r) => match self.load_object_value(r.id())? {
                 Some(value) => value,
                 None if self.tolerant => PdfValue::Null,
                 None => return Err(format!("Failed to resolve font encoding object {}", r.id())),
@@ -1259,7 +1465,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         value: &PdfValue,
     ) -> Result<(), String> {
         let resolved = match value {
-            PdfValue::Reference(r) => match self.load_object_value(r.id()) {
+            PdfValue::Reference(r) => match self.load_object_value(r.id())? {
                 Some(value) => value,
                 None if self.tolerant => PdfValue::Null,
                 None => return Err(format!("Failed to resolve ToUnicode object {}", r.id())),
@@ -1283,36 +1489,79 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             &resolver_map,
             &self.limits.budget,
         );
-        if let Some(node_id) = cmap_parser.parse_tounicode_stream(&stream) {
-            self.add_edge(ast, font_id, node_id, EdgeType::Child)?;
+        match cmap_parser.parse_tounicode_stream_with_budget(&stream) {
+            Ok(Some(node_id)) => self.add_edge(ast, font_id, node_id, EdgeType::Child)?,
+            Ok(None) => {}
+            Err(error) => {
+                return Err(format!("Failed to parse ToUnicode CMap: {error}"));
+            }
         }
         Ok(())
     }
 
-    fn load_object_value(&mut self, obj_id: ObjectId) -> Option<PdfValue> {
-        self.limits.budget.consume_object().ok()?;
-        let offset = self.xref_table.get(&obj_id).copied()?;
-        self.reader.seek(SeekFrom::Start(offset)).ok()?;
-        let mut buffer = Vec::new();
-        let max_bytes = self.limits.max_object_size_mb.saturating_mul(1024 * 1024);
-        let mut total_read = 0usize;
-        let mut chunk = vec![0u8; 65536];
-        while total_read < max_bytes {
-            let to_read = std::cmp::min(chunk.len(), max_bytes - total_read);
-            let bytes_read = self.reader.read(&mut chunk[..to_read]).ok()?;
-            if bytes_read == 0 {
-                break;
+    fn load_object_value(&mut self, obj_id: ObjectId) -> Result<Option<PdfValue>, String> {
+        let Some(offset) = self.xref_table.get(&obj_id).copied() else {
+            return Ok(None);
+        };
+        let buffer = match self.read_object_buffer(offset) {
+            Ok(buffer) => buffer,
+            Err(error) if error.starts_with("resource budget exceeded:") => return Err(error),
+            Err(_) => return Ok(None),
+        };
+
+        match object_parser::parse_indirect_object_with_max_depth_and_budget(
+            &buffer,
+            self.limits.max_depth,
+            &self.limits.budget,
+        ) {
+            Ok((_, (_, value))) => Ok(Some(value)),
+            Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                Err("resource budget exceeded: object parser".to_string())
             }
-            buffer.extend_from_slice(&chunk[..bytes_read]);
-            total_read += bytes_read;
-            if buffer.windows(6).any(|w| w == b"endobj") {
-                break;
-            }
+            Err(_) => Ok(None),
+        }
+    }
+
+    fn read_object_buffer(&mut self, offset: u64) -> Result<Vec<u8>, String> {
+        let file_size = self
+            .reader
+            .seek(SeekFrom::End(0))
+            .map_err(|e| format!("Seek error: {}", e))?;
+        if offset >= file_size {
+            return Err(format!("Object offset {} is outside the file", offset));
         }
 
-        object_parser::parse_indirect_object(&buffer)
-            .ok()
-            .map(|(_, (_, value))| value)
+        let max_bytes =
+            self.limits
+                .max_object_size_mb
+                .checked_mul(1024 * 1024)
+                .ok_or_else(|| "Object size limit overflow".to_string())? as u64;
+        let next_offset = self
+            .xref_table
+            .values()
+            .copied()
+            .filter(|candidate| *candidate > offset)
+            .min()
+            .unwrap_or(file_size);
+        let bound = next_offset
+            .saturating_sub(offset)
+            .min(file_size.saturating_sub(offset))
+            .min(max_bytes);
+        self.limits
+            .budget
+            .consume_memory(bound)
+            .map_err(|error| error.to_string())?;
+
+        self.reader
+            .seek(SeekFrom::Start(offset))
+            .map_err(|e| format!("Seek error: {}", e))?;
+        let mut buffer = Vec::new();
+        self.reader
+            .by_ref()
+            .take(bound)
+            .read_to_end(&mut buffer)
+            .map_err(|e| format!("Read error: {}", e))?;
+        Ok(buffer)
     }
 
     fn create_operator_node(
@@ -1407,7 +1656,43 @@ struct CompressedObjectMeta {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::PdfName;
     use std::io::Cursor;
+
+    #[test]
+    fn resolved_semantic_nodes_keep_their_object_identity() {
+        let data = b"2 0 obj\n<< /Type /Page >>\nendobj\n".to_vec();
+        let mut document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        document.xref.entries.insert(
+            ObjectId::new(2, 0),
+            XRefEntry::InUse {
+                offset: 0,
+                generation: 0,
+            },
+        );
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(data),
+            &document,
+            false,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut ast = PdfAstGraph::new();
+
+        let node_id = resolver
+            .resolve_object(ObjectId::new(2, 0), &mut ast)
+            .expect("object should resolve");
+
+        assert_eq!(
+            ast.get_node_by_object(ObjectId::new(2, 0))
+                .map(|node| node.id),
+            Some(node_id)
+        );
+        assert!(matches!(
+            ast.get_node(node_id).map(|node| &node.value),
+            Some(PdfValue::Dictionary(dict))
+                if dict.get("Type") == Some(&PdfValue::Name(PdfName::new("Page")))
+        ));
+    }
 
     #[test]
     fn test_object_header_parsing() {
@@ -1417,6 +1702,14 @@ mod tests {
         let (_, obj_id) = result.unwrap();
         assert_eq!(obj_id.number, 123);
         assert_eq!(obj_id.generation, 0);
+    }
+
+    #[test]
+    fn rejects_object_header_numeric_overflow() {
+        assert!(
+            ReferenceResolver::<Cursor<Vec<u8>>>::parse_object_header(b"4294967296 0 obj").is_err()
+        );
+        assert!(ReferenceResolver::<Cursor<Vec<u8>>>::parse_object_header(b"1 65536 obj").is_err());
     }
 
     #[test]
@@ -1452,6 +1745,296 @@ mod tests {
     }
 
     #[test]
+    fn reference_collection_deduplicates_repeated_object_references() {
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(Vec::new()),
+            &PdfDocument::new(crate::ast::PdfVersion::new(1, 7)),
+            true,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut dict = PdfDictionary::new();
+        let reference = PdfValue::Reference(PdfReference::new(5, 0));
+        dict.insert("First", reference.clone());
+        dict.insert("Second", reference);
+        let mut ast = PdfAstGraph::new();
+        let node_id = ast.create_node(NodeType::Root, PdfValue::Dictionary(dict));
+
+        resolver.collect_references_from_node(node_id, &ast.get_node(node_id).unwrap().value);
+
+        assert_eq!(resolver.pending_references.len(), 1);
+    }
+
+    #[test]
+    fn content_stream_failures_are_recorded_or_rejected_by_mode() {
+        let mut dictionary = PdfDictionary::new();
+        dictionary.insert(
+            "Filter",
+            PdfValue::Name(crate::types::PdfName::new("FlateDecode")),
+        );
+
+        let make_ast = || {
+            let mut ast = PdfAstGraph::new();
+            ast.create_node(
+                NodeType::ContentStream,
+                PdfValue::Stream(crate::types::PdfStream::new(
+                    dictionary.clone(),
+                    b"not a flate stream".to_vec(),
+                )),
+            );
+            ast
+        };
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+
+        let mut tolerant = ReferenceResolver::from_document(
+            Cursor::new(Vec::new()),
+            &document,
+            true,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut tolerant_ast = make_ast();
+        tolerant
+            .build_content_stream_ast(&mut tolerant_ast)
+            .expect("tolerant mode should preserve the failure and continue");
+        let tolerant_node = tolerant_ast.get_node(crate::ast::NodeId::new(0)).unwrap();
+        assert!(tolerant_node.is_error());
+        assert_eq!(
+            tolerant_node.metadata.properties.get("recovery"),
+            Some(&"stream_decode_skipped".to_string())
+        );
+
+        let mut strict = ReferenceResolver::from_document(
+            Cursor::new(Vec::new()),
+            &document,
+            false,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut strict_ast = make_ast();
+        assert!(strict.build_content_stream_ast(&mut strict_ast).is_err());
+    }
+
+    #[test]
+    fn strict_content_ast_only_parses_page_contents() {
+        let mut ast = PdfAstGraph::new();
+        let mut page = PdfDictionary::new();
+        page.insert(
+            "Contents",
+            PdfValue::Reference(crate::types::PdfReference::new(1, 0)),
+        );
+        ast.create_node(NodeType::Page, PdfValue::Dictionary(page));
+
+        let content_id = ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream(crate::types::PdfStream::new(
+                PdfDictionary::new(),
+                b"1 0 m".to_vec(),
+            )),
+        );
+        let binary_id = ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream(crate::types::PdfStream::new(
+                PdfDictionary::new(),
+                vec![0, 0, 12, 72, 76, 105, 110, 111],
+            )),
+        );
+
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(Vec::new()),
+            &document,
+            false,
+            crate::performance::PerformanceLimits::default(),
+        );
+        resolver
+            .object_to_node
+            .insert(ObjectId::new(1, 0), content_id);
+
+        resolver
+            .build_content_stream_ast(&mut ast)
+            .expect("referenced page content should parse");
+        assert!(ast
+            .get_all_nodes()
+            .iter()
+            .any(|node| matches!(node.node_type, NodeType::ContentOperator)));
+        assert!(ast
+            .get_node(binary_id)
+            .expect("binary stream should exist")
+            .metadata
+            .errors
+            .is_empty());
+    }
+
+    #[test]
+    fn content_stream_budget_exhaustion_is_not_recovered() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(1024, 1024, 0, 10, 10, 10, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let mut resolver =
+            ReferenceResolver::from_document(Cursor::new(Vec::new()), &document, true, limits);
+        let mut ast = PdfAstGraph::new();
+        ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream(crate::types::PdfStream::new(
+                PdfDictionary::new(),
+                b"content".to_vec(),
+            )),
+        );
+
+        let error = resolver
+            .build_content_stream_ast(&mut ast)
+            .expect_err("content stream budget must propagate");
+        assert!(error.contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn reference_resolution_budget_exhaustion_is_not_skipped_in_tolerant_mode() {
+        let mut document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        document.xref.entries.insert(
+            ObjectId::new(2, 0),
+            XRefEntry::InUse {
+                offset: 0,
+                generation: 0,
+            },
+        );
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(1024, 1024, 1024, 10, 0, 10, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(b"2 0 obj\nnull\nendobj\n".to_vec()),
+            &document,
+            true,
+            limits,
+        );
+        let mut root = PdfDictionary::new();
+        root.insert("Reference", PdfValue::Reference(PdfReference::new(2, 0)));
+        let mut ast = PdfAstGraph::new();
+        ast.create_node(NodeType::Root, PdfValue::Dictionary(root));
+        resolver
+            .pending_references
+            .push_back((NodeId(0), PdfReference::new(2, 0)));
+
+        let error = resolver
+            .resolve_references(&mut ast)
+            .expect_err("reference budget must propagate in tolerant mode");
+        assert!(error.contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn jbig2_globals_budget_exhaustion_is_not_recovered() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(1024, 1024, 0, 10, 10, 10, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let mut resolver =
+            ReferenceResolver::from_document(Cursor::new(Vec::new()), &document, true, limits);
+        let mut ast = PdfAstGraph::new();
+        let globals_id = ast.create_node(
+            NodeType::Object(ObjectId::new(9, 0)),
+            PdfValue::Stream(crate::types::PdfStream::new(
+                PdfDictionary::new(),
+                b"globals".to_vec(),
+            )),
+        );
+        resolver
+            .object_to_node
+            .insert(ObjectId::new(9, 0), globals_id);
+
+        let mut dict = PdfDictionary::new();
+        dict.insert("JBIG2Globals", PdfValue::Reference(PdfReference::new(9, 0)));
+        let error = resolver
+            .resolve_jbig2_globals_dict(&mut dict, &ast)
+            .expect_err("JBIG2 globals budget must propagate");
+        assert!(error.contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn page_color_space_budget_exhaustion_is_propagated() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let resolver =
+            ReferenceResolver::from_document(Cursor::new(Vec::new()), &document, false, limits);
+
+        let mut colorspaces = PdfDictionary::new();
+        colorspaces.insert("CS1", PdfValue::Name(PdfName::new("DeviceRGB")));
+        let mut resources = PdfDictionary::new();
+        resources.insert("ColorSpace", PdfValue::Dictionary(colorspaces));
+        let mut page = PdfDictionary::new();
+        page.insert("Resources", PdfValue::Dictionary(resources));
+
+        let mut ast = PdfAstGraph::new();
+        ast.create_node(NodeType::Page, PdfValue::Dictionary(page));
+
+        let error = resolver
+            .build_page_resources(&mut ast)
+            .expect_err("page resource budget must propagate");
+        assert!(error.contains("Nodes"));
+    }
+
+    #[test]
+    fn indirect_object_parser_budget_exhaustion_is_not_treated_as_missing() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(0, 1024, 1024, 10, 10, 10, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(b"2 0 obj\nnull\nendobj\n".to_vec()),
+            &document,
+            true,
+            limits,
+        );
+        resolver.xref_table.insert(ObjectId::new(2, 0), 0);
+
+        let error = resolver
+            .load_object_value(ObjectId::new(2, 0))
+            .expect_err("object parser budget must propagate");
+        assert!(error.contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn stream_prefix_inspection_does_not_consume_object_budget_twice() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(1024, 1024, 1024, 100, 1, 10, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(b"2 0 obj\n<< /Length 3 >>\nstream\nabc\nendstream\nendobj\n".to_vec()),
+            &document,
+            false,
+            limits,
+        );
+        resolver.xref_table.insert(ObjectId::new(2, 0), 0);
+
+        let mut ast = PdfAstGraph::new();
+        resolver
+            .resolve_object(ObjectId::new(2, 0), &mut ast)
+            .expect("valid stream should consume one object budget unit");
+    }
+
+    #[test]
+    fn fallback_object_parser_budget_exhaustion_is_not_recovered() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(0, 1024, 1024, 10, 10, 10, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let resolver =
+            ReferenceResolver::from_document(Cursor::new(Vec::new()), &document, true, limits);
+
+        let error = resolver
+            .parse_object_value_fallback(b"malformed obj\nnull")
+            .expect_err("fallback parser budget must propagate");
+        assert!(error.contains("resource budget exceeded"));
+    }
+
+    #[test]
     fn xref_scan_respects_input_budget() {
         let mut limits = crate::performance::PerformanceLimits::default();
         limits.budget.max_input_bytes = 1024;
@@ -1461,6 +2044,30 @@ mod tests {
             result,
             Err(error) if error.contains("Input exceeds resource limit")
         ));
+    }
+
+    #[test]
+    fn xref_scan_is_not_limited_by_per_stream_decode_size() {
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(1024, 1024, 1, 10, 10, 10, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let result = ReferenceResolver::new(Cursor::new(vec![0u8; 16]), true, limits);
+
+        assert!(
+            result.is_ok(),
+            "raw xref input uses the total memory budget"
+        );
+    }
+
+    #[test]
+    fn resolver_handles_inputs_smaller_than_xref_tail_window() {
+        let result = ReferenceResolver::new(
+            Cursor::new(vec![0u8; 16]),
+            true,
+            crate::performance::PerformanceLimits::default(),
+        );
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -1484,5 +2091,148 @@ mod tests {
 
         let error = resolver.resolve_stream_lengths(&mut ast).unwrap_err();
         assert!(error.contains("non-negative"));
+    }
+
+    #[test]
+    fn resolves_indirect_length_preserving_lossless_stream_state() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(b"2 0 obj\n3\nendobj\n".to_vec()),
+            &document,
+            true,
+            crate::performance::PerformanceLimits::default(),
+        );
+        resolver.xref_table.insert(ObjectId::new(2, 0), 0);
+
+        let mut dict = PdfDictionary::new();
+        let length_ref = PdfReference::new(2, 0);
+        dict.insert("Length", PdfValue::Reference(length_ref));
+        let mut ast = PdfAstGraph::new();
+        let node_id = ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream(crate::types::PdfStream::new(dict, b"abcd".to_vec())),
+        );
+
+        resolver
+            .resolve_stream_lengths(&mut ast)
+            .expect("indirect length should resolve");
+        let node = ast.get_node(node_id).expect("stream node");
+        let stream = node.value.as_stream().expect("stream value");
+        assert_eq!(
+            stream.dict.get("Length"),
+            Some(&PdfValue::Reference(length_ref))
+        );
+        assert_eq!(stream.raw_data(), Some(b"abcd".as_slice()));
+        assert_eq!(stream.lossless.declared_length, Some(3));
+        assert_eq!(stream.lossless.observed_length, 4);
+        assert_eq!(
+            node.metadata.properties.get("resolved_length"),
+            Some(&"3".to_string())
+        );
+        assert_eq!(
+            node.metadata.properties.get("observed_length"),
+            Some(&"4".to_string())
+        );
+    }
+
+    #[test]
+    fn object_id_mismatch_is_strict_or_null_recovery() {
+        let data = b"2 0 obj\n<< /Type /Page >>\nendobj\n".to_vec();
+        let mut document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        document.xref.entries.insert(
+            ObjectId::new(1, 0),
+            XRefEntry::InUse {
+                offset: 0,
+                generation: 0,
+            },
+        );
+
+        let mut strict = ReferenceResolver::from_document(
+            Cursor::new(data.clone()),
+            &document,
+            false,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut strict_ast = PdfAstGraph::new();
+        assert!(strict
+            .resolve_object(ObjectId::new(1, 0), &mut strict_ast)
+            .is_err());
+
+        let mut tolerant = ReferenceResolver::from_document(
+            Cursor::new(data),
+            &document,
+            true,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut tolerant_ast = PdfAstGraph::new();
+        let node_id = tolerant
+            .resolve_object(ObjectId::new(1, 0), &mut tolerant_ast)
+            .expect("tolerant mismatch should recover");
+        let node = tolerant_ast.get_node(node_id).expect("recovery node");
+        assert!(matches!(node.value, PdfValue::Null));
+        assert!(node.is_error());
+        assert_eq!(
+            node.metadata.properties.get("recovery"),
+            Some(&"object_id_mismatch".to_string())
+        );
+    }
+
+    #[test]
+    fn stream_data_can_contain_endobj_without_truncating_resolution() {
+        let mut data =
+            b"2 0 obj\n<< /Length 12 >>\nstream\nabcendobjxyz\nendstream\nendobj\n".to_vec();
+        let next_offset = data.len() as u64;
+        data.extend_from_slice(b"3 0 obj\n42\nendobj\n");
+
+        let mut document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        document.xref.entries.insert(
+            ObjectId::new(2, 0),
+            XRefEntry::InUse {
+                offset: 0,
+                generation: 0,
+            },
+        );
+        document.xref.entries.insert(
+            ObjectId::new(3, 0),
+            XRefEntry::InUse {
+                offset: next_offset,
+                generation: 0,
+            },
+        );
+
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(data),
+            &document,
+            false,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut ast = PdfAstGraph::new();
+        let node_id = resolver
+            .resolve_object(ObjectId::new(2, 0), &mut ast)
+            .expect("stream object should resolve");
+        let node = ast.get_node(node_id).expect("stream node");
+        let stream = node.value.as_stream().expect("stream value");
+        assert_eq!(stream.raw_data(), Some(b"abcendobjxyz".as_slice()));
+    }
+
+    #[test]
+    fn strict_reference_resolution_rejects_missing_objects() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(Vec::new()),
+            &document,
+            false,
+            crate::performance::PerformanceLimits::default(),
+        );
+        let mut dict = PdfDictionary::new();
+        dict.insert("Missing", PdfValue::Reference(PdfReference::new(9, 0)));
+        let mut ast = PdfAstGraph::new();
+        let root = ast.create_node(NodeType::Root, PdfValue::Dictionary(dict));
+        resolver.collect_references_from_node(root, &ast.get_node(root).unwrap().value.clone());
+
+        let error = resolver
+            .resolve_references(&mut ast)
+            .expect_err("strict resolution must reject a missing object");
+        assert!(error.contains("not found in xref table"));
     }
 }

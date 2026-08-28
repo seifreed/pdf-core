@@ -1,22 +1,37 @@
 use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
-use crate::filters::decode_stream_with_limits;
+use crate::filters::decode_stream_with_budget;
 use crate::metadata::icc::parse_icc_profile;
 use crate::parser::reference_resolver::ObjectNodeMap;
-use crate::types::{PdfDictionary, PdfValue};
-use std::collections::HashMap;
+use crate::performance::{ResourceBudget, ResourceBudgetError};
+use crate::types::{PdfArray, PdfDictionary, PdfValue};
+use std::collections::{HashMap, HashSet};
 
 pub struct PageTreeParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
     resources_cache: HashMap<NodeId, PdfDictionary>,
+    budget: ResourceBudget,
+    visited: HashSet<NodeId>,
+    budget_error: Option<ResourceBudgetError>,
 }
 
 impl<'a> PageTreeParser<'a> {
     pub fn new(ast: &'a mut PdfAstGraph, resolver: &'a ObjectNodeMap) -> Self {
+        Self::new_with_budget(ast, resolver, &ResourceBudget::default())
+    }
+
+    pub fn new_with_budget(
+        ast: &'a mut PdfAstGraph,
+        resolver: &'a ObjectNodeMap,
+        budget: &ResourceBudget,
+    ) -> Self {
         PageTreeParser {
             ast,
             resolver,
             resources_cache: HashMap::new(),
+            budget: budget.clone(),
+            visited: HashSet::new(),
+            budget_error: None,
         }
     }
 
@@ -25,16 +40,55 @@ impl<'a> PageTreeParser<'a> {
         pages_dict: &PdfDictionary,
         parent_id: NodeId,
     ) -> Vec<NodeId> {
+        self.budget_error = None;
+        self.parse_page_tree_at_depth(pages_dict, parent_id, 0, &PdfDictionary::new())
+    }
+
+    pub fn parse_page_tree_with_budget(
+        &mut self,
+        pages_dict: &PdfDictionary,
+        parent_id: NodeId,
+    ) -> Result<Vec<NodeId>, ResourceBudgetError> {
+        self.budget_error = None;
+        let pages = self.parse_page_tree_at_depth(pages_dict, parent_id, 0, &PdfDictionary::new());
+        match self.budget_error.take() {
+            Some(error) => Err(error),
+            None => Ok(pages),
+        }
+    }
+
+    fn parse_page_tree_at_depth(
+        &mut self,
+        pages_dict: &PdfDictionary,
+        parent_id: NodeId,
+        depth: usize,
+        inherited_resources: &PdfDictionary,
+    ) -> Vec<NodeId> {
         let mut page_nodes = Vec::new();
+        if depth > self.budget.max_depth {
+            self.budget_error = Some(ResourceBudgetError::Depth);
+            return page_nodes;
+        }
 
         // Get parent resources for inheritance
-        let parent_resources = self.extract_resources(pages_dict);
+        let parent_resources =
+            self.merge_resources(inherited_resources, &self.extract_resources(pages_dict));
 
         // Process Kids array
-        if let Some(PdfValue::Array(kids)) = pages_dict.get("Kids") {
-            for kid_ref in kids.iter() {
+        if let Some(kids) = pages_dict
+            .get("Kids")
+            .and_then(|value| self.resolve_array(value))
+        {
+            for kid_ref in &kids {
+                if let Err(error) = self.budget.check() {
+                    self.budget_error = Some(error);
+                    break;
+                }
                 if let PdfValue::Reference(obj_id) = kid_ref {
                     if let Some(kid_node_id) = self.resolver.get_node_id(&obj_id.id()) {
+                        if !self.visited.insert(kid_node_id) {
+                            continue;
+                        }
                         if let Some(kid_node) = self.ast.get_node(kid_node_id) {
                             if let Some(kid_dict) = kid_node.as_dict() {
                                 let kid_dict = kid_dict.clone();
@@ -50,12 +104,16 @@ impl<'a> PageTreeParser<'a> {
                                         );
                                         self.resources_cache.insert(kid_node_id, child_resources);
 
-                                        let child_pages =
-                                            self.parse_page_tree(&kid_dict, kid_node_id);
+                                        let child_pages = self.parse_page_tree_at_depth(
+                                            &kid_dict,
+                                            kid_node_id,
+                                            depth + 1,
+                                            &parent_resources,
+                                        );
                                         page_nodes.extend(child_pages);
 
                                         // Link pages node to parent
-                                        self.ast.add_edge(
+                                        self.add_edge(
                                             parent_id,
                                             kid_node_id,
                                             crate::ast::EdgeType::Child,
@@ -71,7 +129,7 @@ impl<'a> PageTreeParser<'a> {
                                         page_nodes.push(page_id);
 
                                         // Link page to parent
-                                        self.ast.add_edge(
+                                        self.add_edge(
                                             parent_id,
                                             page_id,
                                             crate::ast::EdgeType::Child,
@@ -115,29 +173,32 @@ impl<'a> PageTreeParser<'a> {
         }
 
         // Process page contents
-        if let Some(PdfValue::Reference(contents_ref)) = page_dict.get("Contents") {
-            if let Some(contents_id) = self.resolver.get_node_id(&contents_ref.id()) {
-                self.ast
-                    .add_edge(node_id, contents_id, crate::ast::EdgeType::Content);
-            }
-        } else if let Some(PdfValue::Array(contents_array)) = page_dict.get("Contents") {
-            for content_ref in contents_array.iter() {
+        if let Some(contents_array) = page_dict
+            .get("Contents")
+            .and_then(|value| self.resolve_array(value))
+        {
+            for content_ref in &contents_array {
                 if let PdfValue::Reference(obj_id) = content_ref {
                     if let Some(content_id) = self.resolver.get_node_id(&obj_id.id()) {
-                        self.ast
-                            .add_edge(node_id, content_id, crate::ast::EdgeType::Content);
+                        self.add_edge(node_id, content_id, crate::ast::EdgeType::Content);
                     }
                 }
+            }
+        } else if let Some(PdfValue::Reference(contents_ref)) = page_dict.get("Contents") {
+            if let Some(contents_id) = self.resolver.get_node_id(&contents_ref.id()) {
+                self.add_edge(node_id, contents_id, crate::ast::EdgeType::Content);
             }
         }
 
         // Process annotations
-        if let Some(PdfValue::Array(annots)) = page_dict.get("Annots") {
-            for annot_ref in annots.iter() {
+        if let Some(annots) = page_dict
+            .get("Annots")
+            .and_then(|value| self.resolve_array(value))
+        {
+            for annot_ref in &annots {
                 if let PdfValue::Reference(obj_id) = annot_ref {
                     if let Some(annot_id) = self.resolver.get_node_id(&obj_id.id()) {
-                        self.ast
-                            .add_edge(node_id, annot_id, crate::ast::EdgeType::Annotation);
+                        self.add_edge(node_id, annot_id, crate::ast::EdgeType::Annotation);
 
                         // Update annotation node type
                         if let Some(annot_node) = self.ast.get_node_mut(annot_id) {
@@ -154,22 +215,49 @@ impl<'a> PageTreeParser<'a> {
         node_id
     }
 
-    fn extract_resources(&self, dict: &PdfDictionary) -> PdfDictionary {
-        if let Some(PdfValue::Dictionary(resources)) = dict.get("Resources") {
-            resources.clone()
-        } else if let Some(PdfValue::Reference(res_ref)) = dict.get("Resources") {
-            // Resolve indirect reference to resources dictionary
-            if let Some(res_node_id) = self.resolver.get_node_id(&res_ref.id()) {
-                if let Some(res_node) = self.ast.get_node(res_node_id) {
-                    if let Some(res_dict) = res_node.as_dict() {
-                        return res_dict.clone();
-                    }
-                }
-            }
-            PdfDictionary::new()
-        } else {
-            PdfDictionary::new()
+    fn resolve_array(&self, value: &PdfValue) -> Option<PdfArray> {
+        match value {
+            PdfValue::Array(array) => Some(array.clone()),
+            PdfValue::Reference(reference) => self
+                .resolver
+                .get_node_id(&reference.id())
+                .and_then(|node_id| self.ast.get_node(node_id))
+                .and_then(|node| node.as_array())
+                .cloned(),
+            _ => None,
         }
+    }
+
+    fn resolve_dict(&self, value: &PdfValue) -> Option<PdfDictionary> {
+        match value {
+            PdfValue::Dictionary(dict) => Some(dict.clone()),
+            PdfValue::Reference(reference) => self
+                .resolver
+                .get_node_id(&reference.id())
+                .and_then(|node_id| self.ast.get_node(node_id))
+                .and_then(|node| node.as_dict())
+                .cloned(),
+            _ => None,
+        }
+    }
+
+    fn resolve_name(&self, value: &PdfValue) -> Option<String> {
+        match value {
+            PdfValue::Name(name) => Some(name.without_slash().to_string()),
+            PdfValue::Reference(reference) => self
+                .resolver
+                .get_node_id(&reference.id())
+                .and_then(|node_id| self.ast.get_node(node_id))
+                .and_then(|node| node.value.as_name())
+                .map(|name| name.without_slash().to_string()),
+            _ => None,
+        }
+    }
+
+    fn extract_resources(&self, dict: &PdfDictionary) -> PdfDictionary {
+        dict.get("Resources")
+            .and_then(|value| self.resolve_dict(value))
+            .unwrap_or_default()
     }
 
     fn merge_resources(&self, parent: &PdfDictionary, child: &PdfDictionary) -> PdfDictionary {
@@ -190,15 +278,13 @@ impl<'a> PageTreeParser<'a> {
         for category in &categories {
             let parent_cat = parent
                 .get(category)
-                .and_then(|v| v.as_dict())
-                .cloned()
-                .unwrap_or_else(PdfDictionary::new);
+                .and_then(|value| self.resolve_dict(value))
+                .unwrap_or_default();
 
             let child_cat = child
                 .get(category)
-                .and_then(|v| v.as_dict())
-                .cloned()
-                .unwrap_or_else(PdfDictionary::new);
+                .and_then(|value| self.resolve_dict(value))
+                .unwrap_or_default();
 
             if !child_cat.is_empty() {
                 let mut merged_cat = parent_cat;
@@ -217,12 +303,14 @@ impl<'a> PageTreeParser<'a> {
 
     fn process_page_resources(&mut self, page_id: NodeId, resources: &PdfDictionary) {
         // Process fonts
-        if let Some(PdfValue::Dictionary(fonts)) = resources.get("Font") {
+        if let Some(fonts) = resources
+            .get("Font")
+            .and_then(|value| self.resolve_dict(value))
+        {
             for (font_name, font_ref) in fonts.iter() {
                 if let PdfValue::Reference(obj_id) = font_ref {
                     if let Some(font_id) = self.resolver.get_node_id(&obj_id.id()) {
-                        self.ast
-                            .add_edge(page_id, font_id, crate::ast::EdgeType::Resource);
+                        self.add_edge(page_id, font_id, crate::ast::EdgeType::Resource);
 
                         // Update font node
                         let font_type = if let Some(font_node) = self.ast.get_node(font_id) {
@@ -243,12 +331,14 @@ impl<'a> PageTreeParser<'a> {
         }
 
         // Process XObjects (images, forms)
-        if let Some(PdfValue::Dictionary(xobjects)) = resources.get("XObject") {
+        if let Some(xobjects) = resources
+            .get("XObject")
+            .and_then(|value| self.resolve_dict(value))
+        {
             for (xobj_name, xobj_ref) in xobjects.iter() {
                 if let PdfValue::Reference(obj_id) = xobj_ref {
                     if let Some(xobj_id) = self.resolver.get_node_id(&obj_id.id()) {
-                        self.ast
-                            .add_edge(page_id, xobj_id, crate::ast::EdgeType::Resource);
+                        self.add_edge(page_id, xobj_id, crate::ast::EdgeType::Resource);
 
                         // Update XObject node
                         let xobj_type = if let Some(xobj_node) = self.ast.get_node(xobj_id) {
@@ -269,12 +359,14 @@ impl<'a> PageTreeParser<'a> {
         }
 
         // Process ExtGState (graphics state)
-        if let Some(PdfValue::Dictionary(gstates)) = resources.get("ExtGState") {
+        if let Some(gstates) = resources
+            .get("ExtGState")
+            .and_then(|value| self.resolve_dict(value))
+        {
             for (gs_name, gs_ref) in gstates.iter() {
                 if let PdfValue::Reference(obj_id) = gs_ref {
                     if let Some(gs_id) = self.resolver.get_node_id(&obj_id.id()) {
-                        self.ast
-                            .add_edge(page_id, gs_id, crate::ast::EdgeType::Resource);
+                        self.add_edge(page_id, gs_id, crate::ast::EdgeType::Resource);
 
                         if let Some(gs_node) = self.ast.get_node_mut(gs_id) {
                             gs_node.node_type = NodeType::ExtGState;
@@ -288,19 +380,24 @@ impl<'a> PageTreeParser<'a> {
         }
 
         // Process ColorSpace
-        if let Some(PdfValue::Dictionary(colorspaces)) = resources.get("ColorSpace") {
+        if let Some(colorspaces) = resources
+            .get("ColorSpace")
+            .and_then(|value| self.resolve_dict(value))
+        {
             for (cs_name, cs_value) in colorspaces.iter() {
                 self.process_colorspace(page_id, cs_name.as_str(), cs_value);
             }
         }
 
         // Process Pattern
-        if let Some(PdfValue::Dictionary(patterns)) = resources.get("Pattern") {
+        if let Some(patterns) = resources
+            .get("Pattern")
+            .and_then(|value| self.resolve_dict(value))
+        {
             for (pattern_name, pattern_ref) in patterns.iter() {
                 if let PdfValue::Reference(obj_id) = pattern_ref {
                     if let Some(pattern_id) = self.resolver.get_node_id(&obj_id.id()) {
-                        self.ast
-                            .add_edge(page_id, pattern_id, crate::ast::EdgeType::Resource);
+                        self.add_edge(page_id, pattern_id, crate::ast::EdgeType::Resource);
 
                         if let Some(pattern_node) = self.ast.get_node_mut(pattern_id) {
                             pattern_node.node_type = NodeType::Pattern;
@@ -315,12 +412,14 @@ impl<'a> PageTreeParser<'a> {
         }
 
         // Process Shading
-        if let Some(PdfValue::Dictionary(shadings)) = resources.get("Shading") {
+        if let Some(shadings) = resources
+            .get("Shading")
+            .and_then(|value| self.resolve_dict(value))
+        {
             for (shading_name, shading_ref) in shadings.iter() {
                 if let PdfValue::Reference(obj_id) = shading_ref {
                     if let Some(shading_id) = self.resolver.get_node_id(&obj_id.id()) {
-                        self.ast
-                            .add_edge(page_id, shading_id, crate::ast::EdgeType::Resource);
+                        self.add_edge(page_id, shading_id, crate::ast::EdgeType::Resource);
 
                         if let Some(shading_node) = self.ast.get_node_mut(shading_id) {
                             shading_node.node_type = NodeType::Shading;
@@ -345,6 +444,17 @@ impl<'a> PageTreeParser<'a> {
                     "Type0" => NodeType::CIDFont,
                     _ => NodeType::Font,
                 }
+            } else if let Some(subtype) = dict
+                .get("Subtype")
+                .and_then(|value| self.resolve_name(value))
+            {
+                match subtype.as_str() {
+                    "Type1" => NodeType::Type1Font,
+                    "TrueType" => NodeType::TrueTypeFont,
+                    "Type3" => NodeType::Type3Font,
+                    "Type0" => NodeType::CIDFont,
+                    _ => NodeType::Font,
+                }
             } else {
                 NodeType::Font
             }
@@ -362,6 +472,16 @@ impl<'a> PageTreeParser<'a> {
                     "PS" => NodeType::XObject,
                     _ => NodeType::XObject,
                 }
+            } else if let Some(subtype) = dict
+                .get("Subtype")
+                .and_then(|value| self.resolve_name(value))
+            {
+                match subtype.as_str() {
+                    "Image" => NodeType::ImageXObject,
+                    "Form" => NodeType::FormXObject,
+                    "PS" => NodeType::XObject,
+                    _ => NodeType::XObject,
+                }
             } else {
                 NodeType::XObject
             }
@@ -374,6 +494,10 @@ impl<'a> PageTreeParser<'a> {
         match value {
             PdfValue::Name(cs_name) => {
                 // Simple color space name
+                if let Err(error) = self.budget.consume_node() {
+                    self.budget_error = Some(error);
+                    return;
+                }
                 let node_id = self.ast.next_node_id();
                 let cs_node_id = self.ast.add_node(AstNode::new(
                     node_id,
@@ -381,8 +505,7 @@ impl<'a> PageTreeParser<'a> {
                     PdfValue::Name(cs_name.clone()),
                 ));
 
-                self.ast
-                    .add_edge(page_id, cs_node_id, crate::ast::EdgeType::Resource);
+                self.add_edge(page_id, cs_node_id, crate::ast::EdgeType::Resource);
 
                 if let Some(cs_node) = self.ast.get_node_mut(cs_node_id) {
                     cs_node
@@ -404,12 +527,15 @@ impl<'a> PageTreeParser<'a> {
 
                     let node_id = self.ast.next_node_id();
                     let is_icc_based = node_type == NodeType::ICCBased;
+                    if let Err(error) = self.budget.consume_node() {
+                        self.budget_error = Some(error);
+                        return;
+                    }
                     let cs_node_id =
                         self.ast
                             .add_node(AstNode::new(node_id, node_type, value.clone()));
 
-                    self.ast
-                        .add_edge(page_id, cs_node_id, crate::ast::EdgeType::Resource);
+                    self.add_edge(page_id, cs_node_id, crate::ast::EdgeType::Resource);
 
                     if let Some(cs_node) = self.ast.get_node_mut(cs_node_id) {
                         cs_node
@@ -421,11 +547,7 @@ impl<'a> PageTreeParser<'a> {
                     if is_icc_based && cs_array.len() > 1 {
                         if let Some(PdfValue::Reference(icc_ref)) = cs_array.get(1) {
                             if let Some(icc_id) = self.resolver.get_node_id(&icc_ref.id()) {
-                                self.ast.add_edge(
-                                    cs_node_id,
-                                    icc_id,
-                                    crate::ast::EdgeType::Reference,
-                                );
+                                self.add_edge(cs_node_id, icc_id, crate::ast::EdgeType::Reference);
                                 if let Some(stream) = self
                                     .ast
                                     .get_node(icc_id)
@@ -443,11 +565,25 @@ impl<'a> PageTreeParser<'a> {
             PdfValue::Reference(obj_id) => {
                 // Indirect reference to color space
                 if let Some(cs_id) = self.resolver.get_node_id(&obj_id.id()) {
-                    self.ast
-                        .add_edge(page_id, cs_id, crate::ast::EdgeType::Resource);
+                    self.add_edge(page_id, cs_id, crate::ast::EdgeType::Resource);
 
+                    let node_type = self
+                        .ast
+                        .get_node(cs_id)
+                        .and_then(|node| node.value.as_array())
+                        .and_then(|array| array.get(0))
+                        .and_then(PdfValue::as_name)
+                        .map(|name| match name.without_slash() {
+                            "ICCBased" => NodeType::ICCBased,
+                            "Separation" => NodeType::Separation,
+                            "DeviceN" => NodeType::DeviceN,
+                            "Indexed" => NodeType::Indexed,
+                            "Pattern" => NodeType::Pattern,
+                            _ => NodeType::ColorSpace,
+                        })
+                        .unwrap_or(NodeType::ColorSpace);
                     if let Some(cs_node) = self.ast.get_node_mut(cs_id) {
-                        cs_node.node_type = NodeType::ColorSpace;
+                        cs_node.node_type = node_type;
                         cs_node
                             .metadata
                             .set_property("resource_name".to_string(), name.to_string());
@@ -464,21 +600,34 @@ impl<'a> PageTreeParser<'a> {
             None => return,
         };
 
-        let filters = stream.get_filters();
-        let decoded = decode_stream_with_limits(raw, &filters, 10 * 1024 * 1024, 50)
-            .unwrap_or_else(|_| raw.to_vec());
+        let filters = match stream.get_filters_with_params_checked() {
+            Ok(filters) => filters,
+            Err(_) => return,
+        };
+        let decoded = match decode_stream_with_budget(raw, &filters, &self.budget) {
+            Ok(decoded) => decoded,
+            Err(message) => {
+                if let Some(error) = budget_error_from_message(&message.to_string()) {
+                    self.budget_error = Some(error);
+                }
+                return;
+            }
+        };
 
         let info = match parse_icc_profile(&decoded) {
             Some(info) => info,
             None => return,
         };
 
+        if let Err(error) = self.budget.consume_node() {
+            self.budget_error = Some(error);
+            return;
+        }
         let node_id = self.ast.next_node_id();
         let profile_id =
             self.ast
                 .add_node(AstNode::new(node_id, NodeType::Metadata, PdfValue::Null));
-        self.ast
-            .add_edge(icc_id, profile_id, crate::ast::EdgeType::Child);
+        self.add_edge(icc_id, profile_id, crate::ast::EdgeType::Child);
 
         if let Some(node) = self.ast.get_node_mut(profile_id) {
             node.metadata
@@ -496,6 +645,14 @@ impl<'a> PageTreeParser<'a> {
             node.metadata.set_property("icc_pcs".to_string(), info.pcs);
             node.metadata
                 .set_property("icc_signature".to_string(), info.signature);
+        }
+    }
+
+    fn add_edge(&mut self, from: NodeId, to: NodeId, edge_type: crate::ast::EdgeType) {
+        if let Err(error) = self.budget.consume_edge() {
+            self.budget_error = Some(error);
+        } else {
+            self.ast.add_edge(from, to, edge_type);
         }
     }
 
@@ -540,5 +697,317 @@ impl<'a> PageTreeParser<'a> {
         }
 
         resources
+    }
+}
+
+fn budget_error_from_message(message: &str) -> Option<ResourceBudgetError> {
+    [
+        ("InputBytes", ResourceBudgetError::InputBytes),
+        ("DecodedBytes", ResourceBudgetError::DecodedBytes),
+        ("Objects", ResourceBudgetError::Objects),
+        ("Nodes", ResourceBudgetError::Nodes),
+        ("Edges", ResourceBudgetError::Edges),
+        ("Depth", ResourceBudgetError::Depth),
+        ("Deadline", ResourceBudgetError::Deadline),
+        ("Cancelled", ResourceBudgetError::Cancelled),
+    ]
+    .into_iter()
+    .find_map(|(name, error)| message.contains(name).then_some(error))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::AstNode;
+    use crate::types::{ObjectId, PdfName, PdfReference};
+
+    #[test]
+    fn page_tree_parser_terminates_on_cycles() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.add_node(AstNode::new(NodeId(0), NodeType::Catalog, PdfValue::Null));
+        let mut pages_dict = PdfDictionary::new();
+        pages_dict.insert(
+            "Type",
+            PdfValue::Name(crate::types::primitive::PdfName::new("Pages")),
+        );
+        pages_dict.insert(
+            "Kids",
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(1, 0))].into()),
+        );
+        let pages_id = ast.add_node(AstNode::new(
+            NodeId(1),
+            NodeType::Pages,
+            PdfValue::Dictionary(pages_dict.clone()),
+        ));
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), pages_id);
+        let mut parser = PageTreeParser::new(&mut ast, &resolver);
+
+        assert!(parser.parse_page_tree(&pages_dict, root_id).is_empty());
+    }
+
+    #[test]
+    fn page_tree_parser_respects_resource_budgets() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.add_node(AstNode::new(NodeId(0), NodeType::Catalog, PdfValue::Null));
+        let page_id = ast.add_node(AstNode::new(
+            NodeId(1),
+            NodeType::Page,
+            PdfValue::Dictionary(PdfDictionary::new()),
+        ));
+        let mut resources = PdfDictionary::new();
+        resources.insert(
+            "ColorSpace",
+            PdfValue::Dictionary({
+                let mut colorspaces = PdfDictionary::new();
+                colorspaces.insert(
+                    "CS1",
+                    PdfValue::Name(crate::types::primitive::PdfName::new("DeviceRGB")),
+                );
+                colorspaces
+            }),
+        );
+        let mut pages_dict = PdfDictionary::new();
+        pages_dict.insert(
+            "Kids",
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(1, 0))].into()),
+        );
+        let mut page_dict = PdfDictionary::new();
+        page_dict.insert(
+            "Type",
+            PdfValue::Name(crate::types::primitive::PdfName::new("Page")),
+        );
+        page_dict.insert("Resources", PdfValue::Dictionary(resources));
+        if let Some(node) = ast.get_node_mut(page_id) {
+            node.value = PdfValue::Dictionary(page_dict);
+        }
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), page_id);
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 0, 8);
+        let mut parser = PageTreeParser::new_with_budget(&mut ast, &resolver, &budget);
+
+        parser.parse_page_tree(&pages_dict, root_id);
+        assert_eq!(ast.node_count(), 2);
+        assert_eq!(ast.edge_count(), 0);
+    }
+
+    #[test]
+    fn page_tree_parser_reports_resource_budget_exhaustion() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.add_node(AstNode::new(NodeId(0), NodeType::Catalog, PdfValue::Null));
+        let page_id = ast.add_node(AstNode::new(
+            NodeId(1),
+            NodeType::Page,
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Type", PdfValue::Name(PdfName::new("Page")));
+                dict.insert(
+                    "Resources",
+                    PdfValue::Dictionary({
+                        let mut resources = PdfDictionary::new();
+                        resources.insert(
+                            "ColorSpace",
+                            PdfValue::Dictionary({
+                                let mut colorspaces = PdfDictionary::new();
+                                colorspaces
+                                    .insert("CS1", PdfValue::Name(PdfName::new("DeviceRGB")));
+                                colorspaces
+                            }),
+                        );
+                        resources
+                    }),
+                );
+                dict
+            }),
+        ));
+        let mut pages_dict = PdfDictionary::new();
+        pages_dict.insert(
+            "Kids",
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(1, 0))].into()),
+        );
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), page_id);
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 8);
+        let mut parser = PageTreeParser::new_with_budget(&mut ast, &resolver, &budget);
+
+        assert_eq!(
+            parser
+                .parse_page_tree_with_budget(&pages_dict, root_id)
+                .expect_err("page resource budget must propagate"),
+            ResourceBudgetError::Nodes
+        );
+    }
+
+    #[test]
+    fn page_tree_parser_reports_depth_budget_exhaustion() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.add_node(AstNode::new(NodeId(0), NodeType::Catalog, PdfValue::Null));
+        let nested_pages_id = ast.add_node(AstNode::new(
+            NodeId(1),
+            NodeType::Pages,
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Type", PdfValue::Name(PdfName::new("Pages")));
+                dict.insert(
+                    "Kids",
+                    PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(2, 0))].into()),
+                );
+                dict
+            }),
+        ));
+        let page_id = ast.add_node(AstNode::new(
+            NodeId(2),
+            NodeType::Page,
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Type", PdfValue::Name(PdfName::new("Page")));
+                dict
+            }),
+        ));
+        let mut pages_dict = PdfDictionary::new();
+        pages_dict.insert(
+            "Kids",
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(1, 0))].into()),
+        );
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), nested_pages_id);
+        resolver.insert(ObjectId::new(2, 0), page_id);
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 10, 10, 0);
+        let mut parser = PageTreeParser::new_with_budget(&mut ast, &resolver, &budget);
+
+        assert_eq!(
+            parser
+                .parse_page_tree_with_budget(&pages_dict, root_id)
+                .expect_err("page tree depth must propagate"),
+            ResourceBudgetError::Depth
+        );
+    }
+
+    #[test]
+    fn page_tree_parser_propagates_resources_through_nested_pages() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.add_node(AstNode::new(NodeId(0), NodeType::Catalog, PdfValue::Null));
+        let nested_pages_id = ast.add_node(AstNode::new(
+            NodeId(1),
+            NodeType::Pages,
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Type", PdfValue::Name(PdfName::new("Pages")));
+                dict.insert(
+                    "Kids",
+                    PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(2, 0))].into()),
+                );
+                dict
+            }),
+        ));
+        let page_id = ast.add_node(AstNode::new(
+            NodeId(2),
+            NodeType::Page,
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Type", PdfValue::Name(PdfName::new("Page")));
+                dict
+            }),
+        ));
+
+        let mut resources = PdfDictionary::new();
+        resources.insert(
+            "ColorSpace",
+            PdfValue::Dictionary({
+                let mut colorspaces = PdfDictionary::new();
+                colorspaces.insert("CS1", PdfValue::Reference(PdfReference::new(9, 0)));
+                colorspaces
+            }),
+        );
+        let colorspace_id = ast.add_node(AstNode::new(
+            NodeId(9),
+            NodeType::Unknown,
+            PdfValue::Array(vec![PdfValue::Name(PdfName::new("Indexed"))].into()),
+        ));
+        let resources_id = ast.add_node(AstNode::new(
+            NodeId(3),
+            NodeType::Unknown,
+            PdfValue::Dictionary(resources),
+        ));
+        let root_kids_id = ast.add_node(AstNode::new(
+            NodeId(4),
+            NodeType::Unknown,
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(1, 0))].into()),
+        ));
+        let mut root_pages = PdfDictionary::new();
+        root_pages.insert("Type", PdfValue::Name(PdfName::new("Pages")));
+        root_pages.insert("Kids", PdfValue::Reference(PdfReference::new(4, 0)));
+        root_pages.insert("Resources", PdfValue::Reference(PdfReference::new(3, 0)));
+
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), nested_pages_id);
+        resolver.insert(ObjectId::new(2, 0), page_id);
+        resolver.insert(ObjectId::new(3, 0), resources_id);
+        resolver.insert(ObjectId::new(4, 0), root_kids_id);
+        resolver.insert(ObjectId::new(9, 0), colorspace_id);
+        let mut parser = PageTreeParser::new(&mut ast, &resolver);
+
+        assert_eq!(parser.parse_page_tree(&root_pages, root_id), vec![page_id]);
+        assert_eq!(
+            ast.get_node(page_id)
+                .and_then(|node| node.metadata.properties.get("has_inherited_resources"))
+                .map(String::as_str),
+            Some("true")
+        );
+        assert_eq!(ast.find_nodes_by_type(NodeType::Indexed).len(), 1);
+        assert_eq!(ast.edge_count(), 3);
+    }
+
+    #[test]
+    fn page_tree_parser_resolves_indirect_contents_and_annots() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.add_node(AstNode::new(NodeId(0), NodeType::Catalog, PdfValue::Null));
+        let page_id = ast.add_node(AstNode::new(
+            NodeId(1),
+            NodeType::Page,
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Type", PdfValue::Name(PdfName::new("Page")));
+                dict.insert("Contents", PdfValue::Reference(PdfReference::new(5, 0)));
+                dict.insert("Annots", PdfValue::Reference(PdfReference::new(6, 0)));
+                dict
+            }),
+        ));
+        let content_id = ast.add_node(AstNode::new(NodeId(3), NodeType::Unknown, PdfValue::Null));
+        let annotation_id = ast.add_node(AstNode::new(
+            NodeId(4),
+            NodeType::Unknown,
+            PdfValue::Dictionary(PdfDictionary::new()),
+        ));
+        let contents_array_id = ast.add_node(AstNode::new(
+            NodeId(5),
+            NodeType::Unknown,
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(3, 0))].into()),
+        ));
+        let annots_array_id = ast.add_node(AstNode::new(
+            NodeId(6),
+            NodeType::Unknown,
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(4, 0))].into()),
+        ));
+        let mut pages_dict = PdfDictionary::new();
+        pages_dict.insert(
+            "Kids",
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(1, 0))].into()),
+        );
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), page_id);
+        resolver.insert(ObjectId::new(3, 0), content_id);
+        resolver.insert(ObjectId::new(4, 0), annotation_id);
+        resolver.insert(ObjectId::new(5, 0), contents_array_id);
+        resolver.insert(ObjectId::new(6, 0), annots_array_id);
+        let mut parser = PageTreeParser::new(&mut ast, &resolver);
+
+        assert_eq!(parser.parse_page_tree(&pages_dict, root_id), vec![page_id]);
+        assert_eq!(ast.edge_count(), 3);
+        assert_eq!(
+            ast.get_node(annotation_id)
+                .map(|node| node.node_type.clone()),
+            Some(NodeType::Annotation)
+        );
     }
 }

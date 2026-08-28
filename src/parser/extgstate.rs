@@ -1,34 +1,68 @@
 use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
 use crate::parser::reference_resolver::ObjectNodeMap;
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::types::{PdfDictionary, PdfValue};
 
 /// Parser for ExtGState (Extended Graphics State) parameters
 pub struct ExtGStateParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
+    budget: ResourceBudget,
+    budget_error: Option<ResourceBudgetError>,
 }
 
 impl<'a> ExtGStateParser<'a> {
     pub fn new(ast: &'a mut PdfAstGraph, resolver: &'a ObjectNodeMap) -> Self {
-        ExtGStateParser { ast, resolver }
+        Self::new_with_budget(ast, resolver, &ResourceBudget::default())
+    }
+
+    pub fn new_with_budget(
+        ast: &'a mut PdfAstGraph,
+        resolver: &'a ObjectNodeMap,
+        budget: &ResourceBudget,
+    ) -> Self {
+        ExtGStateParser {
+            ast,
+            resolver,
+            budget: budget.clone(),
+            budget_error: None,
+        }
     }
 
     pub fn parse_extgstate(&mut self, gs_dict: &PdfDictionary, gs_id: NodeId) {
+        self.budget_error = None;
+        self.parse_extgstate_inner(gs_dict, gs_id);
+    }
+
+    pub fn parse_extgstate_with_budget(
+        &mut self,
+        gs_dict: &PdfDictionary,
+        gs_id: NodeId,
+    ) -> Result<(), ResourceBudgetError> {
+        self.budget_error = None;
+        self.parse_extgstate_inner(gs_dict, gs_id);
+        match self.budget_error.take() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    fn parse_extgstate_inner(&mut self, gs_dict: &PdfDictionary, gs_id: NodeId) {
         // Extract values first to avoid borrow checker issues
-        let line_width = gs_dict.get("LW").and_then(|v| match v {
-            PdfValue::Real(lw) => Some(lw.to_string()),
-            _ => None,
-        });
+        let line_width = gs_dict
+            .get("LW")
+            .and_then(|value| self.get_number(value))
+            .map(|value| value.to_string());
 
-        let line_cap = gs_dict.get("LC").and_then(|v| match v {
-            PdfValue::Integer(lc) => Some(lc.to_string()),
-            _ => None,
-        });
+        let line_cap = gs_dict
+            .get("LC")
+            .and_then(|value| self.get_number(value))
+            .map(|value| value.to_string());
 
-        let line_join = gs_dict.get("LJ").and_then(|v| match v {
-            PdfValue::Integer(lj) => Some(lj.to_string()),
-            _ => None,
-        });
+        let line_join = gs_dict
+            .get("LJ")
+            .and_then(|value| self.get_number(value))
+            .map(|value| value.to_string());
 
         let miter_limit = gs_dict
             .get("ML")
@@ -50,10 +84,10 @@ impl<'a> ExtGStateParser<'a> {
             _ => None,
         });
 
-        let overprint_mode = gs_dict.get("OPM").and_then(|v| match v {
-            PdfValue::Integer(opm) => Some(opm.to_string()),
-            _ => None,
-        });
+        let overprint_mode = gs_dict
+            .get("OPM")
+            .and_then(|value| self.get_number(value))
+            .map(|value| value.to_string());
 
         let flatness = gs_dict
             .get("FL")
@@ -204,6 +238,10 @@ impl<'a> ExtGStateParser<'a> {
             }
             Some(PdfValue::Dictionary(smask_dict)) => {
                 // Create soft mask node
+                if let Err(error) = self.budget.consume_node() {
+                    self.budget_error = Some(error);
+                    return;
+                }
                 let smask_node = AstNode::new(
                     self.ast.next_node_id(),
                     NodeType::Unknown,
@@ -212,8 +250,7 @@ impl<'a> ExtGStateParser<'a> {
                 let smask_id = self.ast.add_node(smask_node);
 
                 // Link to ExtGState
-                self.ast
-                    .add_edge(gs_id, smask_id, crate::ast::EdgeType::Reference);
+                self.add_edge(gs_id, smask_id, crate::ast::EdgeType::Reference);
 
                 // Parse soft mask parameters
                 self.parse_soft_mask_dict(smask_dict, smask_id);
@@ -225,8 +262,7 @@ impl<'a> ExtGStateParser<'a> {
             }
             Some(PdfValue::Reference(obj_id)) => {
                 if let Some(smask_id) = self.resolver.get_node_id(&obj_id.object_id()) {
-                    self.ast
-                        .add_edge(gs_id, smask_id, crate::ast::EdgeType::Reference);
+                    self.add_edge(gs_id, smask_id, crate::ast::EdgeType::Reference);
 
                     if let Some(node) = self.ast.get_node_mut(gs_id) {
                         node.metadata
@@ -278,8 +314,7 @@ impl<'a> ExtGStateParser<'a> {
 
         // Add edge after releasing the mutable borrow
         if let Some(group_id) = group_id {
-            self.ast
-                .add_edge(smask_id, group_id, crate::ast::EdgeType::Reference);
+            self.add_edge(smask_id, group_id, crate::ast::EdgeType::Reference);
         }
 
         // Handle transfer function
@@ -293,8 +328,7 @@ impl<'a> ExtGStateParser<'a> {
                 }
                 PdfValue::Reference(tr_ref) => {
                     if let Some(tr_id) = self.resolver.get_node_id(&tr_ref.object_id()) {
-                        self.ast
-                            .add_edge(smask_id, tr_id, crate::ast::EdgeType::Reference);
+                        self.add_edge(smask_id, tr_id, crate::ast::EdgeType::Reference);
                         if let Some(node) = self.ast.get_node_mut(smask_id) {
                             node.metadata.set_property(
                                 "transfer_function".to_string(),
@@ -320,8 +354,7 @@ impl<'a> ExtGStateParser<'a> {
                 }
                 PdfValue::Reference(tr_ref) => {
                     if let Some(tr_id) = self.resolver.get_node_id(&tr_ref.object_id()) {
-                        self.ast
-                            .add_edge(gs_id, tr_id, crate::ast::EdgeType::Reference);
+                        self.add_edge(gs_id, tr_id, crate::ast::EdgeType::Reference);
 
                         if let Some(node) = self.ast.get_node_mut(tr_id) {
                             node.node_type = NodeType::Function;
@@ -333,8 +366,7 @@ impl<'a> ExtGStateParser<'a> {
                     for (i, func) in funcs.iter().enumerate() {
                         if let PdfValue::Reference(func_ref) = func {
                             if let Some(func_id) = self.resolver.get_node_id(&func_ref.id()) {
-                                self.ast
-                                    .add_edge(gs_id, func_id, crate::ast::EdgeType::Reference);
+                                self.add_edge(gs_id, func_id, crate::ast::EdgeType::Reference);
 
                                 if let Some(node) = self.ast.get_node_mut(func_id) {
                                     node.node_type = NodeType::Function;
@@ -370,8 +402,7 @@ impl<'a> ExtGStateParser<'a> {
             }
             PdfValue::Reference(tr_ref) => {
                 if let Some(tr_id) = self.resolver.get_node_id(&tr_ref.object_id()) {
-                    self.ast
-                        .add_edge(gs_id, tr_id, crate::ast::EdgeType::Reference);
+                    self.add_edge(gs_id, tr_id, crate::ast::EdgeType::Reference);
                 }
             }
             _ => {}
@@ -384,8 +415,7 @@ impl<'a> ExtGStateParser<'a> {
                 // First element is font reference
                 if let PdfValue::Reference(font_ref) = &font_arr[0] {
                     if let Some(font_id) = self.resolver.get_node_id(&font_ref.id()) {
-                        self.ast
-                            .add_edge(gs_id, font_id, crate::ast::EdgeType::Reference);
+                        self.add_edge(gs_id, font_id, crate::ast::EdgeType::Reference);
 
                         if let Some(node) = self.ast.get_node_mut(font_id) {
                             node.node_type = NodeType::Font;
@@ -414,8 +444,7 @@ impl<'a> ExtGStateParser<'a> {
             }
             Some(PdfValue::Reference(ht_ref)) => {
                 if let Some(ht_id) = self.resolver.get_node_id(&ht_ref.id()) {
-                    self.ast
-                        .add_edge(gs_id, ht_id, crate::ast::EdgeType::Reference);
+                    self.add_edge(gs_id, ht_id, crate::ast::EdgeType::Reference);
 
                     if let Some(node) = self.ast.get_node_mut(gs_id) {
                         node.metadata
@@ -425,14 +454,17 @@ impl<'a> ExtGStateParser<'a> {
             }
             Some(PdfValue::Dictionary(ht_dict)) => {
                 // Inline halftone dictionary
+                if let Err(error) = self.budget.consume_node() {
+                    self.budget_error = Some(error);
+                    return;
+                }
                 let ht_node = AstNode::new(
                     self.ast.next_node_id(),
                     NodeType::Unknown,
                     PdfValue::Dictionary(ht_dict.clone()),
                 );
                 let ht_id = self.ast.add_node(ht_node);
-                self.ast
-                    .add_edge(gs_id, ht_id, crate::ast::EdgeType::Reference);
+                self.add_edge(gs_id, ht_id, crate::ast::EdgeType::Reference);
 
                 if let Some(node) = self.ast.get_node_mut(gs_id) {
                     node.metadata
@@ -475,8 +507,7 @@ impl<'a> ExtGStateParser<'a> {
             }
             PdfValue::Reference(func_ref) => {
                 if let Some(func_id) = self.resolver.get_node_id(&func_ref.id()) {
-                    self.ast
-                        .add_edge(gs_id, func_id, crate::ast::EdgeType::Reference);
+                    self.add_edge(gs_id, func_id, crate::ast::EdgeType::Reference);
 
                     if let Some(node) = self.ast.get_node_mut(func_id) {
                         node.node_type = NodeType::Function;
@@ -493,7 +524,127 @@ impl<'a> ExtGStateParser<'a> {
         match value {
             PdfValue::Integer(i) => Some(*i as f64),
             PdfValue::Real(r) => Some(*r),
+            PdfValue::Reference(reference) => self
+                .resolver
+                .get_node_id(&reference.id())
+                .and_then(|node_id| self.ast.get_node(node_id))
+                .and_then(|node| match &node.value {
+                    PdfValue::Integer(integer) => Some(*integer as f64),
+                    PdfValue::Real(real) => Some(*real),
+                    _ => None,
+                }),
             _ => None,
         }
+    }
+
+    fn add_edge(&mut self, from: NodeId, to: NodeId, edge_type: crate::ast::EdgeType) {
+        if let Err(error) = self.budget.consume_edge() {
+            self.budget_error = Some(error);
+        } else {
+            self.ast.add_edge(from, to, edge_type);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::AstNode;
+
+    #[test]
+    fn extgstate_parser_respects_node_and_edge_budgets() {
+        let mut ast = PdfAstGraph::new();
+        let gs_id = ast.add_node(AstNode::new(
+            NodeId(0),
+            NodeType::ExtGState,
+            PdfValue::Dictionary(PdfDictionary::new()),
+        ));
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 1, 1, 8);
+        let mut parser = ExtGStateParser::new_with_budget(&mut ast, &resolver, &budget);
+        let mut gs_dict = PdfDictionary::new();
+        gs_dict.insert("SMask", PdfValue::Dictionary(PdfDictionary::new()));
+        gs_dict.insert("HT", PdfValue::Dictionary(PdfDictionary::new()));
+
+        parser.parse_extgstate(&gs_dict, gs_id);
+        assert_eq!(ast.node_count(), 2);
+        assert_eq!(ast.edge_count(), 1);
+    }
+
+    #[test]
+    fn extgstate_parser_reports_node_budget_exhaustion() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 8);
+        let mut parser = ExtGStateParser::new_with_budget(&mut ast, &resolver, &budget);
+        let mut gs_dict = PdfDictionary::new();
+        gs_dict.insert("SMask", PdfValue::Dictionary(PdfDictionary::new()));
+
+        assert_eq!(
+            parser
+                .parse_extgstate_with_budget(&gs_dict, NodeId(0))
+                .expect_err("ExtGState node budget must propagate"),
+            ResourceBudgetError::Nodes
+        );
+    }
+
+    #[test]
+    fn extgstate_parser_resolves_indirect_numeric_parameters() {
+        let mut ast = PdfAstGraph::new();
+        let gs_id = ast.add_node(AstNode::new(
+            NodeId(0),
+            NodeType::ExtGState,
+            PdfValue::Dictionary(PdfDictionary::new()),
+        ));
+        let width_id = ast.add_node(AstNode::new(
+            NodeId(1),
+            NodeType::Unknown,
+            PdfValue::Real(2.5),
+        ));
+        let cap_id = ast.add_node(AstNode::new(
+            NodeId(2),
+            NodeType::Unknown,
+            PdfValue::Integer(1),
+        ));
+        let mode_id = ast.add_node(AstNode::new(
+            NodeId(3),
+            NodeType::Unknown,
+            PdfValue::Integer(0),
+        ));
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(crate::types::ObjectId::new(1, 0), width_id);
+        resolver.insert(crate::types::ObjectId::new(2, 0), cap_id);
+        resolver.insert(crate::types::ObjectId::new(3, 0), mode_id);
+        let mut gs_dict = PdfDictionary::new();
+        gs_dict.insert(
+            "LW",
+            PdfValue::Reference(crate::types::PdfReference::new(1, 0)),
+        );
+        gs_dict.insert(
+            "LC",
+            PdfValue::Reference(crate::types::PdfReference::new(2, 0)),
+        );
+        gs_dict.insert(
+            "OPM",
+            PdfValue::Reference(crate::types::PdfReference::new(3, 0)),
+        );
+
+        let mut parser = ExtGStateParser::new(&mut ast, &resolver);
+        parser.parse_extgstate(&gs_dict, gs_id);
+        let node = ast.get_node(gs_id).expect("graphics state should exist");
+        assert_eq!(
+            node.metadata.get_property("line_width").map(String::as_str),
+            Some("2.5")
+        );
+        assert_eq!(
+            node.metadata.get_property("line_cap").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            node.metadata
+                .get_property("overprint_mode")
+                .map(String::as_str),
+            Some("0")
+        );
     }
 }

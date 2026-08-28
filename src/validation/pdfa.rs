@@ -1,10 +1,167 @@
-use crate::ast::{NodeType, PdfDocument};
-use crate::types::{PdfDictionary, PdfValue};
-use crate::validation::{ValidationIssue, ValidationReport, ValidationSeverity};
+use crate::ast::{NodeId, NodeType, PdfDocument};
+use crate::types::{PdfArray, PdfDictionary, PdfStream, PdfValue};
+use crate::validation::{
+    ConstraintCategory, SchemaConstraint, ValidationIssue, ValidationReport, ValidationSeverity,
+};
+use std::collections::HashSet;
+
+fn metadata_values_match(field: &str, info_value: Option<&str>, xmp_value: Option<&str>) -> bool {
+    if info_value.is_none() || xmp_value.is_none() || info_value == xmp_value {
+        return true;
+    }
+    if !matches!(field, "CreationDate" | "ModDate") {
+        return false;
+    }
+    match (info_value, xmp_value) {
+        (Some(info), Some(xmp)) => {
+            let normalized_info = normalize_metadata_date(info);
+            let normalized_xmp = normalize_metadata_date(xmp);
+            normalized_info == normalized_xmp
+        }
+        _ => false,
+    }
+}
+
+fn normalize_metadata_date(value: &str) -> Option<String> {
+    let value = value.trim().strip_prefix("D:").unwrap_or(value.trim());
+    let zone_start = value.rfind(['+', '-', 'Z']);
+    let (local, zone) = zone_start
+        .map(|index| value.split_at(index))
+        .unwrap_or((value, ""));
+    let digits: String = local
+        .chars()
+        .filter(|character| character.is_ascii_digit())
+        .collect();
+    if digits.len() != 14 {
+        return None;
+    }
+    let normalized_zone = if zone.is_empty() {
+        String::new()
+    } else if zone == "Z" {
+        "+0000".to_string()
+    } else {
+        let zone_digits: String = zone[1..]
+            .chars()
+            .filter(|character| character.is_ascii_digit())
+            .collect();
+        if zone_digits.len() != 4 {
+            return None;
+        }
+        format!("{}{}", &zone[..1], zone_digits)
+    };
+    Some(format!("{digits}{normalized_zone}"))
+}
 
 /// PDF/A-1b validator implementing ISO 19005-1:2005 Level B requirements
 pub struct PdfA1bValidator {
     strict_mode: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PdfA1bConstraintKind {
+    Version,
+    ColorSpaces,
+    Fonts,
+    Images,
+    Multimedia,
+    JavaScript,
+    Annotations,
+    Forms,
+    Encryption,
+    Metadata,
+    Transparency,
+    FileSpecification,
+    CrossReference,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PdfA1bConstraint {
+    strict_mode: bool,
+    kind: PdfA1bConstraintKind,
+}
+
+impl PdfA1bConstraint {
+    fn new(strict_mode: bool, kind: PdfA1bConstraintKind) -> Self {
+        Self { strict_mode, kind }
+    }
+}
+
+impl SchemaConstraint for PdfA1bConstraint {
+    fn name(&self) -> &str {
+        match self.kind {
+            PdfA1bConstraintKind::Version => "pdfa-1b-version",
+            PdfA1bConstraintKind::ColorSpaces => "pdfa-1b-color-spaces",
+            PdfA1bConstraintKind::Fonts => "pdfa-1b-fonts",
+            PdfA1bConstraintKind::Images => "pdfa-1b-images",
+            PdfA1bConstraintKind::Multimedia => "pdfa-1b-multimedia",
+            PdfA1bConstraintKind::JavaScript => "pdfa-1b-javascript",
+            PdfA1bConstraintKind::Annotations => "pdfa-1b-annotations",
+            PdfA1bConstraintKind::Forms => "pdfa-1b-forms",
+            PdfA1bConstraintKind::Encryption => "pdfa-1b-encryption",
+            PdfA1bConstraintKind::Metadata => "pdfa-1b-metadata",
+            PdfA1bConstraintKind::Transparency => "pdfa-1b-transparency",
+            PdfA1bConstraintKind::FileSpecification => "pdfa-1b-file-specification",
+            PdfA1bConstraintKind::CrossReference => "pdfa-1b-cross-reference",
+        }
+    }
+
+    fn description(&self) -> &str {
+        "Selected PDF/A-1b preflight constraint"
+    }
+
+    fn category(&self) -> ConstraintCategory {
+        match self.kind {
+            PdfA1bConstraintKind::Version
+            | PdfA1bConstraintKind::CrossReference
+            | PdfA1bConstraintKind::FileSpecification => ConstraintCategory::Structure,
+            PdfA1bConstraintKind::ColorSpaces
+            | PdfA1bConstraintKind::Images
+            | PdfA1bConstraintKind::Transparency => ConstraintCategory::Graphics,
+            PdfA1bConstraintKind::Fonts => ConstraintCategory::Fonts,
+            PdfA1bConstraintKind::Multimedia | PdfA1bConstraintKind::Annotations => {
+                ConstraintCategory::Annotations
+            }
+            PdfA1bConstraintKind::JavaScript => ConstraintCategory::JavaScript,
+            PdfA1bConstraintKind::Forms => ConstraintCategory::Forms,
+            PdfA1bConstraintKind::Encryption => ConstraintCategory::Security,
+            PdfA1bConstraintKind::Metadata => ConstraintCategory::Metadata,
+        }
+    }
+
+    fn check(&self, document: &PdfDocument, report: &mut ValidationReport) {
+        let validator = PdfA1bValidator {
+            strict_mode: self.strict_mode,
+        };
+        let failed_before = report.statistics.failed_checks;
+
+        match self.kind {
+            PdfA1bConstraintKind::Version => validator.validate_version(report, document),
+            PdfA1bConstraintKind::ColorSpaces => validator.validate_color_spaces(report, document),
+            PdfA1bConstraintKind::Fonts => validator.validate_fonts(report, document),
+            PdfA1bConstraintKind::Images => validator.validate_images(report, document),
+            PdfA1bConstraintKind::Multimedia => {
+                validator.validate_multimedia_content(report, document)
+            }
+            PdfA1bConstraintKind::JavaScript => validator.validate_javascript(report, document),
+            PdfA1bConstraintKind::Annotations => validator.validate_annotations(report, document),
+            PdfA1bConstraintKind::Forms => validator.validate_forms(report, document),
+            PdfA1bConstraintKind::Encryption => validator.validate_encryption(report, document),
+            PdfA1bConstraintKind::Metadata => validator.validate_metadata(report, document),
+            PdfA1bConstraintKind::Transparency => validator.validate_transparency(report, document),
+            PdfA1bConstraintKind::FileSpecification => {
+                validator.validate_file_specification(report, document)
+            }
+            PdfA1bConstraintKind::CrossReference => {
+                validator.validate_cross_reference(report, document)
+            }
+        }
+
+        if report.statistics.failed_checks == failed_before {
+            report.add_passed_check();
+        } else {
+            report.statistics.total_checks += 1;
+        }
+    }
 }
 
 impl PdfA1bValidator {
@@ -17,53 +174,33 @@ impl PdfA1bValidator {
         self
     }
 
+    pub(crate) fn constraints(&self) -> Vec<Box<dyn SchemaConstraint>> {
+        [
+            PdfA1bConstraintKind::Version,
+            PdfA1bConstraintKind::ColorSpaces,
+            PdfA1bConstraintKind::Fonts,
+            PdfA1bConstraintKind::Images,
+            PdfA1bConstraintKind::Multimedia,
+            PdfA1bConstraintKind::JavaScript,
+            PdfA1bConstraintKind::Annotations,
+            PdfA1bConstraintKind::Forms,
+            PdfA1bConstraintKind::Encryption,
+            PdfA1bConstraintKind::Metadata,
+            PdfA1bConstraintKind::Transparency,
+            PdfA1bConstraintKind::FileSpecification,
+            PdfA1bConstraintKind::CrossReference,
+        ]
+        .into_iter()
+        .map(|kind| Box::new(PdfA1bConstraint::new(self.strict_mode, kind)) as _)
+        .collect()
+    }
+
     pub fn validate(&self, document: &PdfDocument) -> ValidationReport {
         let mut report = ValidationReport::new("PDF/A-1b".to_string(), "1.0".to_string());
-
-        self.validate_version(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_color_spaces(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_fonts(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_images(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_multimedia_content(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_javascript(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_annotations(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_forms(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_encryption(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_metadata(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_transparency(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_file_specification(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        self.validate_cross_reference(&mut report, document);
-        report.statistics.total_checks += 1;
-
-        // Update passed checks based on total - failed
-        report.statistics.passed_checks = report
-            .statistics
-            .total_checks
-            .saturating_sub(report.statistics.failed_checks);
+        for constraint in self.constraints() {
+            constraint.check(document, &mut report);
+        }
+        report.finalize();
 
         report
     }
@@ -89,8 +226,22 @@ impl PdfA1bValidator {
         let mut missing_output_intent = true;
 
         if let Some(catalog_dict) = document.get_catalog() {
-            if catalog_dict.contains_key("OutputIntents") {
-                missing_output_intent = false;
+            if let Some(output_intents) = catalog_dict.get("OutputIntents") {
+                if let Some(intents) = Self::resolve_array(document, output_intents) {
+                    if !intents.is_empty() {
+                        missing_output_intent = false;
+                    }
+                    self.validate_output_intents(report, document, intents);
+                } else {
+                    report.add_issue(ValidationIssue {
+                        severity: ValidationSeverity::Error,
+                        code: "PDF_A_OUTPUT_INTENT".to_string(),
+                        message: "OutputIntents must be an array".to_string(),
+                        node_id: None,
+                        location: Some("Catalog OutputIntents".to_string()),
+                        suggestion: Some("Provide a non-empty OutputIntents array".to_string()),
+                    });
+                }
             }
         }
 
@@ -111,9 +262,7 @@ impl PdfA1bValidator {
                     }
                 }
                 NodeType::Page => {
-                    if let Some(dict) = node.as_dict() {
-                        self.check_resources_for_device_colors(dict, &mut has_device_colors);
-                    }
+                    self.check_inherited_page_resources(document, node.id, &mut has_device_colors);
                 }
                 _ => {}
             }
@@ -144,28 +293,128 @@ impl PdfA1bValidator {
         }
     }
 
+    fn validate_output_intents(
+        &self,
+        report: &mut ValidationReport,
+        document: &PdfDocument,
+        intents: &PdfArray,
+    ) {
+        if intents.is_empty() {
+            report.add_issue(ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "PDF_A_OUTPUT_INTENT".to_string(),
+                message: "PDF/A-1b requires a non-empty OutputIntents array".to_string(),
+                node_id: None,
+                location: Some("Catalog OutputIntents".to_string()),
+                suggestion: None,
+            });
+            return;
+        }
+
+        for intent in intents {
+            let valid = Self::resolve_dictionary(document, intent).is_some_and(|dict| {
+                matches!(
+                    dict.get("S").and_then(PdfValue::as_name),
+                    Some(name) if name.without_slash() == "GTS_PDFA1"
+                ) && matches!(
+                    dict.get("OutputConditionIdentifier")
+                        .and_then(PdfValue::as_string),
+                    Some(identifier) if !identifier.as_bytes().is_empty()
+                ) && dict
+                    .get("DestOutputProfile")
+                    .and_then(|value| Self::resolve_stream(document, value))
+                    .is_some()
+            });
+            if !valid {
+                report.add_issue(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    code: "PDF_A_OUTPUT_INTENT".to_string(),
+                    message: "OutputIntent must define GTS_PDFA1, an identifier, and an ICC profile"
+                        .to_string(),
+                    node_id: None,
+                    location: Some("Catalog OutputIntents".to_string()),
+                    suggestion: Some(
+                        "Add OutputConditionIdentifier and DestOutputProfile to the PDF/A output intent"
+                            .to_string(),
+                    ),
+                });
+            }
+        }
+    }
+
     fn check_resources_for_device_colors(
         &self,
+        document: &PdfDocument,
         page_dict: &PdfDictionary,
         has_device_colors: &mut bool,
     ) {
         if let Some(resources_value) = page_dict.get("Resources") {
-            if let Some(resources_dict) = resources_value.as_dict() {
+            let resources = match resources_value {
+                PdfValue::Dictionary(dict) => Some(dict),
+                PdfValue::Reference(reference) => document
+                    .ast
+                    .get_node_by_object(reference.id())
+                    .and_then(|node| node.as_dict()),
+                _ => None,
+            };
+            if let Some(resources_dict) = resources {
                 if let Some(colorspaces_value) = resources_dict.get("ColorSpace") {
-                    if let Some(colorspaces_dict) = colorspaces_value.as_dict() {
-                        for (_name, colorspace_value) in colorspaces_dict.iter() {
-                            if let Some(colorspace_name) = colorspace_value.as_name() {
-                                match colorspace_name.without_slash() {
-                                    "DeviceRGB" | "DeviceGray" | "DeviceCMYK" => {
-                                        *has_device_colors = true;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
+                    let mut visited = HashSet::new();
+                    *has_device_colors |=
+                        Self::contains_device_colors(document, colorspaces_value, &mut visited);
                 }
             }
+        }
+    }
+
+    fn check_inherited_page_resources(
+        &self,
+        document: &PdfDocument,
+        page_id: NodeId,
+        has_device_colors: &mut bool,
+    ) {
+        let mut current = Some(page_id);
+        let mut visited = HashSet::new();
+
+        while let Some(node_id) = current {
+            if !visited.insert(node_id) {
+                break;
+            }
+            if let Some(node) = document.ast.get_node(node_id) {
+                if let Some(dict) = node.as_dict() {
+                    self.check_resources_for_device_colors(document, dict, has_device_colors);
+                }
+            }
+            current = document.ast.get_parent(node_id);
+        }
+    }
+
+    fn contains_device_colors(
+        document: &PdfDocument,
+        value: &PdfValue,
+        visited: &mut HashSet<NodeId>,
+    ) -> bool {
+        match value {
+            PdfValue::Name(name) => matches!(
+                name.without_slash(),
+                "DeviceRGB" | "DeviceGray" | "DeviceCMYK"
+            ),
+            PdfValue::Array(values) => values
+                .iter()
+                .any(|value| Self::contains_device_colors(document, value, visited)),
+            PdfValue::Dictionary(dict) => dict
+                .values()
+                .any(|value| Self::contains_device_colors(document, value, visited)),
+            PdfValue::Reference(reference) => {
+                let Some(node) = document.ast.get_node_by_object(reference.id()) else {
+                    return false;
+                };
+                if !visited.insert(node.id) {
+                    return false;
+                }
+                Self::contains_device_colors(document, &node.value, visited)
+            }
+            _ => false,
         }
     }
 
@@ -230,16 +479,13 @@ impl PdfA1bValidator {
     }
 
     fn is_font_embedded(&self, font_dict: &PdfDictionary, document: &PdfDocument) -> bool {
-        if font_dict.contains_key("FontFile")
-            || font_dict.contains_key("FontFile2")
-            || font_dict.contains_key("FontFile3")
-        {
+        if Self::has_embedded_font_program(font_dict, document) {
             return true;
         }
 
         font_dict
             .get("DescendantFonts")
-            .and_then(|value| value.as_array())
+            .and_then(|value| Self::resolve_array(document, value))
             .into_iter()
             .flatten()
             .filter_map(|value| match value {
@@ -250,11 +496,75 @@ impl PdfA1bValidator {
                     .and_then(|node| node.as_dict().cloned()),
                 _ => None,
             })
-            .any(|dict| {
-                dict.contains_key("FontFile")
-                    || dict.contains_key("FontFile2")
-                    || dict.contains_key("FontFile3")
-            })
+            .any(|dict| Self::has_embedded_font_program(&dict, document))
+    }
+
+    fn has_embedded_font_program(dict: &PdfDictionary, document: &PdfDocument) -> bool {
+        Self::has_embedded_font_program_with_visited(dict, document, &mut HashSet::new())
+    }
+
+    fn has_embedded_font_program_with_visited(
+        dict: &PdfDictionary,
+        document: &PdfDocument,
+        visited: &mut HashSet<NodeId>,
+    ) -> bool {
+        for key in ["FontFile", "FontFile2", "FontFile3", "CIDFontFile"] {
+            if let Some(value) = dict.get(key) {
+                if Self::is_embedded_font_program(value, document, visited) {
+                    return true;
+                }
+            }
+        }
+
+        match dict.get("FontDescriptor") {
+            Some(PdfValue::Dictionary(descriptor)) => {
+                Self::has_embedded_font_program_with_visited(descriptor, document, visited)
+            }
+            Some(PdfValue::Reference(reference)) => {
+                let Some(node_id) = document
+                    .ast
+                    .get_node_by_object(reference.id())
+                    .map(|node| node.id)
+                else {
+                    return false;
+                };
+                if !visited.insert(node_id) {
+                    return false;
+                }
+                let result = document
+                    .ast
+                    .get_node(node_id)
+                    .and_then(|node| node.as_dict())
+                    .is_some_and(|descriptor| {
+                        Self::has_embedded_font_program_with_visited(descriptor, document, visited)
+                    });
+                visited.remove(&node_id);
+                result
+            }
+            _ => false,
+        }
+    }
+
+    fn is_embedded_font_program(
+        value: &PdfValue,
+        document: &PdfDocument,
+        visited: &mut HashSet<NodeId>,
+    ) -> bool {
+        match value {
+            PdfValue::Stream(_) => true,
+            PdfValue::Reference(reference) => {
+                let Some(node) = document.ast.get_node_by_object(reference.id()) else {
+                    return false;
+                };
+                if !visited.insert(node.id) {
+                    return false;
+                }
+                let result = matches!(node.value, PdfValue::Stream(_));
+                visited.remove(&node.id);
+                result
+            }
+            _ => false,
+        }
     }
 
     fn is_standard_font(&self, font_name: &str) -> bool {
@@ -295,30 +605,37 @@ impl PdfA1bValidator {
 
     fn validate_images(&self, report: &mut ValidationReport, document: &PdfDocument) {
         for node in document.ast.get_all_nodes() {
-            if matches!(node.node_type, NodeType::Image | NodeType::ImageXObject) {
-                if let Some(image_dict) = node.as_dict() {
-                    if let Some(filter_value) = image_dict.get("Filter") {
-                        let has_lzw = match filter_value {
-                            PdfValue::Name(name) => name.without_slash() == "LZWDecode",
-                            PdfValue::Array(filters) => filters.iter().any(|f| {
-                                f.as_name()
-                                    .map(|n| n.without_slash() == "LZWDecode")
-                                    .unwrap_or(false)
-                            }),
-                            _ => false,
-                        };
+            let image_dict = match &node.value {
+                PdfValue::Dictionary(dict) => Some(dict),
+                PdfValue::Stream(stream) => Some(&stream.dict),
+                _ => None,
+            };
+            let is_image = matches!(node.node_type, NodeType::Image | NodeType::ImageXObject)
+                || image_dict
+                    .and_then(|dict| dict.get("Subtype"))
+                    .and_then(PdfValue::as_name)
+                    .is_some_and(|name| name.without_slash() == "Image");
+            if let Some(image_dict) = image_dict.filter(|_| is_image) {
+                if let Some(filter_value) = image_dict.get("Filter") {
+                    let has_lzw = match filter_value {
+                        PdfValue::Name(name) => name.without_slash() == "LZWDecode",
+                        PdfValue::Array(filters) => filters.iter().any(|f| {
+                            f.as_name()
+                                .map(|n| n.without_slash() == "LZWDecode")
+                                .unwrap_or(false)
+                        }),
+                        _ => false,
+                    };
 
-                        if has_lzw && self.strict_mode {
-                            report.add_issue(ValidationIssue {
-                                severity: ValidationSeverity::Warning,
-                                code: "PDF_A_LZW_DECODE".to_string(),
-                                message: "LZWDecode filter should be avoided in PDF/A-1"
-                                    .to_string(),
-                                node_id: None,
-                                location: Some("Image compression".to_string()),
-                                suggestion: Some("Consider using FlateDecode instead".to_string()),
-                            });
-                        }
+                    if has_lzw && self.strict_mode {
+                        report.add_issue(ValidationIssue {
+                            severity: ValidationSeverity::Warning,
+                            code: "PDF_A_LZW_DECODE".to_string(),
+                            message: "LZWDecode filter should be avoided in PDF/A-1".to_string(),
+                            node_id: None,
+                            location: Some("Image compression".to_string()),
+                            suggestion: Some("Consider using FlateDecode instead".to_string()),
+                        });
                     }
                 }
             }
@@ -377,7 +694,7 @@ impl PdfA1bValidator {
 
         if let Some(catalog_dict) = document.get_catalog() {
             if let Some(names_value) = catalog_dict.get("Names") {
-                if let Some(names_dict) = names_value.as_dict() {
+                if let Some(names_dict) = Self::resolve_dictionary(document, names_value) {
                     if names_dict.contains_key("JavaScript") {
                         has_javascript = true;
                     }
@@ -385,7 +702,7 @@ impl PdfA1bValidator {
             }
 
             if let Some(open_action) = catalog_dict.get("OpenAction") {
-                if let Some(action_dict) = open_action.as_dict() {
+                if let Some(action_dict) = Self::resolve_dictionary(document, open_action) {
                     if let Some(s_value) = action_dict.get("S") {
                         if let Some(s_name) = s_value.as_name() {
                             if s_name.without_slash() == "JavaScript" {
@@ -483,7 +800,7 @@ impl PdfA1bValidator {
     fn validate_forms(&self, report: &mut ValidationReport, document: &PdfDocument) {
         if let Some(catalog_dict) = document.get_catalog() {
             if let Some(acroform_value) = catalog_dict.get("AcroForm") {
-                if let Some(acroform_dict) = acroform_value.as_dict() {
+                if let Some(acroform_dict) = Self::resolve_dictionary(document, acroform_value) {
                     if acroform_dict.contains_key("XFA") {
                         report.add_issue(ValidationIssue {
                             severity: ValidationSeverity::Error,
@@ -513,35 +830,165 @@ impl PdfA1bValidator {
     }
 
     fn validate_metadata(&self, report: &mut ValidationReport, document: &PdfDocument) {
-        let mut has_xmp_metadata = false;
+        let metadata_stream = document
+            .get_catalog()
+            .and_then(|catalog| catalog.get("Metadata"))
+            .and_then(|value| Self::resolve_stream(document, value));
 
-        if let Some(catalog_dict) = document.get_catalog() {
-            if catalog_dict.contains_key("Metadata") {
-                has_xmp_metadata = true;
-            }
-        }
+        let has_valid_xmp_metadata = metadata_stream.is_some_and(|stream| {
+            matches!(
+                stream.dict.get("Type").and_then(PdfValue::as_name),
+                Some(name) if name.without_slash() == "Metadata"
+            ) && matches!(
+                stream.dict.get("Subtype").and_then(PdfValue::as_name),
+                Some(name) if name.without_slash() == "XML"
+            )
+        });
 
-        if !has_xmp_metadata {
+        if !has_valid_xmp_metadata {
             report.add_issue(ValidationIssue {
                 severity: ValidationSeverity::Error,
                 code: "PDF_A_XMP_METADATA".to_string(),
-                message: "PDF/A-1b requires XMP metadata in catalog".to_string(),
+                message: "PDF/A-1b requires a Metadata XML stream in catalog".to_string(),
                 node_id: None,
                 location: Some("Metadata requirements".to_string()),
                 suggestion: Some("Add XMP metadata stream to document catalog".to_string()),
             });
         }
 
-        // Full XMP-Info synchronization requires parsing XMP content
         if self.strict_mode {
-            report.add_issue(ValidationIssue {
-                severity: ValidationSeverity::Warning,
-                code: "PDF_A_METADATA_SYNC".to_string(),
-                message: "Verify XMP metadata synchronization with Info dictionary".to_string(),
-                node_id: None,
-                location: Some("Metadata synchronization".to_string()),
-                suggestion: None,
-            });
+            let Some(info_dict) = document.get_info() else {
+                return;
+            };
+            let Some(metadata_stream) = metadata_stream else {
+                return;
+            };
+            let add_sync_issue = |report: &mut ValidationReport, message: String| {
+                report.add_issue(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    code: "PDF_A_METADATA_SYNC".to_string(),
+                    message,
+                    node_id: None,
+                    location: Some("Metadata synchronization".to_string()),
+                    suggestion: Some(
+                        "Synchronize the document Info dictionary and XMP metadata".to_string(),
+                    ),
+                });
+            };
+
+            let decoded = match metadata_stream.decode() {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    add_sync_issue(
+                        report,
+                        format!("XMP metadata could not be decoded: {error}"),
+                    );
+                    return;
+                }
+            };
+            let xmp = match crate::metadata::XmpMetadata::parse_from_stream(&decoded) {
+                Ok(xmp) => xmp,
+                Err(error) => {
+                    add_sync_issue(report, format!("XMP metadata could not be parsed: {error}"));
+                    return;
+                }
+            };
+            let info = crate::metadata::PdfInfo::from_dict(info_dict);
+            let fields = [
+                (
+                    "Title",
+                    info.title.as_deref(),
+                    xmp.title().map(String::as_str),
+                ),
+                (
+                    "Author",
+                    info.author.as_deref(),
+                    xmp.author().map(String::as_str),
+                ),
+                (
+                    "Subject",
+                    info.subject.as_deref(),
+                    xmp.subject().map(String::as_str),
+                ),
+                (
+                    "Keywords",
+                    info.keywords.as_deref(),
+                    xmp.keywords().map(String::as_str),
+                ),
+                (
+                    "Creator",
+                    info.creator.as_deref(),
+                    xmp.creator().map(String::as_str),
+                ),
+                (
+                    "Producer",
+                    info.producer.as_deref(),
+                    xmp.producer().map(String::as_str),
+                ),
+                (
+                    "CreationDate",
+                    info.creation_date.as_deref(),
+                    xmp.creation_date().map(String::as_str),
+                ),
+                (
+                    "ModDate",
+                    info.modification_date.as_deref(),
+                    xmp.modification_date().map(String::as_str),
+                ),
+            ];
+            let mismatches: Vec<&str> = fields
+                .iter()
+                .filter_map(|(name, info_value, xmp_value)| {
+                    ((!metadata_values_match(name, *info_value, *xmp_value))
+                        && (info_value.is_some() || xmp_value.is_some()))
+                    .then_some(*name)
+                })
+                .collect();
+            if !mismatches.is_empty() {
+                add_sync_issue(
+                    report,
+                    format!("XMP/Info values differ for: {}", mismatches.join(", ")),
+                );
+            }
+        }
+    }
+
+    fn resolve_dictionary<'a>(
+        document: &'a PdfDocument,
+        value: &'a PdfValue,
+    ) -> Option<&'a PdfDictionary> {
+        match value {
+            PdfValue::Dictionary(dict) => Some(dict),
+            PdfValue::Reference(reference) => document
+                .ast
+                .get_node_by_object(reference.id())
+                .and_then(|node| node.as_dict()),
+            _ => None,
+        }
+    }
+
+    fn resolve_array<'a>(document: &'a PdfDocument, value: &'a PdfValue) -> Option<&'a PdfArray> {
+        match value {
+            PdfValue::Array(array) => Some(array),
+            PdfValue::Reference(reference) => document
+                .ast
+                .get_node_by_object(reference.id())
+                .and_then(|node| match &node.value {
+                    PdfValue::Array(array) => Some(array),
+                    _ => None,
+                }),
+            _ => None,
+        }
+    }
+
+    fn resolve_stream<'a>(document: &'a PdfDocument, value: &'a PdfValue) -> Option<&'a PdfStream> {
+        match value {
+            PdfValue::Stream(stream) => Some(stream),
+            PdfValue::Reference(reference) => document
+                .ast
+                .get_node_by_object(reference.id())
+                .and_then(|node| node.as_stream()),
+            _ => None,
         }
     }
 
@@ -658,20 +1105,17 @@ impl PdfA1bValidator {
     }
 
     fn validate_cross_reference(&self, report: &mut ValidationReport, document: &PdfDocument) {
-        // PDF/A-1b allows tables or streams, but mixing both is discouraged
-        let has_xref_tables = !document.xref.entries.is_empty();
         let has_xref_streams = !document.xref.streams.is_empty();
 
-        if has_xref_tables && has_xref_streams {
+        // PDF/A-1 is based on PDF 1.4, before cross-reference streams existed.
+        if has_xref_streams {
             report.add_issue(ValidationIssue {
-                severity: ValidationSeverity::Warning,
+                severity: ValidationSeverity::Error,
                 code: "PDF_A_XREF_FORMAT".to_string(),
-                message: "Mixed cross-reference formats detected".to_string(),
+                message: "PDF/A-1b does not permit cross-reference streams".to_string(),
                 node_id: None,
                 location: Some("Cross-reference validation".to_string()),
-                suggestion: Some(
-                    "Consider using consistent cross-reference format throughout".to_string(),
-                ),
+                suggestion: Some("Use a classic cross-reference table for PDF/A-1b".to_string()),
             });
         }
     }

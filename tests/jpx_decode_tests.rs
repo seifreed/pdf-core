@@ -1,5 +1,7 @@
 use pdf_ast::filters::decode_stream_with_limits;
-use pdf_ast::filters::jpx::{decode_jpx_to_codestream, decode_jpx_to_codestream_with_limit};
+use pdf_ast::filters::jpx::{
+    decode_jpx_image, decode_jpx_to_codestream, decode_jpx_to_codestream_with_limit,
+};
 use pdf_ast::parser::PdfParser;
 use pdf_ast::types::StreamFilter;
 
@@ -69,4 +71,5 @@ fn decodes_serialized_jpx_corpus_image() {
     let decoded = decode_stream_with_limits(raw, &[StreamFilter::JPXDecode], 640 * 480 * 4, 100)
         .expect("JPX stream filter should decode");
     assert!(decoded.len() > raw.len());
+    assert!(decode_jpx_image(raw, decoded.len() - 1).is_err());
 }

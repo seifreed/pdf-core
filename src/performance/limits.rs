@@ -41,6 +41,7 @@ pub enum ResourceBudgetError {
     Objects,
     Nodes,
     Edges,
+    Depth,
     Deadline,
     Cancelled,
 }
@@ -99,6 +100,22 @@ impl ResourceBudget {
         }
     }
 
+    pub(crate) fn fresh(&self) -> Self {
+        let mut budget = Self::new(
+            self.max_input_bytes,
+            self.max_decoded_bytes_total,
+            self.max_decoded_bytes_per_stream,
+            self.max_decode_ratio,
+            self.max_objects,
+            self.max_nodes,
+            self.max_edges,
+            self.max_depth,
+        );
+        budget.deadline = self.deadline;
+        budget.cancellation = self.cancellation.clone();
+        budget
+    }
+
     pub fn check(&self) -> Result<(), ResourceBudgetError> {
         if self.cancellation.is_cancelled() {
             return Err(ResourceBudgetError::Cancelled);
@@ -121,11 +138,26 @@ impl ResourceBudget {
         )
     }
 
+    pub fn remaining_input_bytes(&self) -> u64 {
+        self.max_input_bytes
+            .saturating_sub(self.input_bytes.load(Ordering::Acquire))
+    }
+
     pub fn consume_decoded(&self, bytes: u64) -> Result<(), ResourceBudgetError> {
         self.check()?;
         if bytes > self.max_decoded_bytes_per_stream {
             return Err(ResourceBudgetError::DecodedBytes);
         }
+        self.consume_bytes(
+            &self.decoded_bytes_total,
+            self.max_decoded_bytes_total,
+            bytes,
+            ResourceBudgetError::DecodedBytes,
+        )
+    }
+
+    /// Charges bytes retained in memory without applying the per-stream limit.
+    pub fn consume_memory(&self, bytes: u64) -> Result<(), ResourceBudgetError> {
         self.consume_bytes(
             &self.decoded_bytes_total,
             self.max_decoded_bytes_total,
@@ -369,8 +401,8 @@ impl PerformanceGuard {
     }
 
     pub fn check_file_size(&self, size_bytes: usize) -> Result<(), PerformanceViolation> {
-        let size_mb = size_bytes / (1024 * 1024);
-        if size_mb > self.limits.max_file_size_mb {
+        let size_mb = size_bytes.div_ceil(1024 * 1024);
+        if size_bytes > self.limits.max_file_size_mb.saturating_mul(1024 * 1024) {
             return Err(PerformanceViolation::FileTooLarge(
                 size_mb,
                 self.limits.max_file_size_mb,
@@ -380,8 +412,8 @@ impl PerformanceGuard {
     }
 
     pub fn check_object_size(&self, size_bytes: usize) -> Result<(), PerformanceViolation> {
-        let size_mb = size_bytes / (1024 * 1024);
-        if size_mb > self.limits.max_object_size_mb {
+        let size_mb = size_bytes.div_ceil(1024 * 1024);
+        if size_bytes > self.limits.max_object_size_mb.saturating_mul(1024 * 1024) {
             return Err(PerformanceViolation::ObjectTooLarge(
                 size_mb,
                 self.limits.max_object_size_mb,
@@ -456,14 +488,14 @@ impl PerformanceGuard {
         }
 
         if let Ok(mut usage) = self.memory_usage.lock() {
-            *usage += bytes;
-            let usage_mb = *usage / (1024 * 1024);
-            if usage_mb > self.limits.max_memory_mb {
+            let next_usage = usage.saturating_add(bytes);
+            if next_usage > self.limits.max_memory_mb.saturating_mul(1024 * 1024) {
                 return Err(PerformanceViolation::ExcessiveMemory(
-                    usage_mb,
+                    next_usage.div_ceil(1024 * 1024),
                     self.limits.max_memory_mb,
                 ));
             }
+            *usage = next_usage;
         }
         Ok(())
     }
@@ -664,6 +696,36 @@ mod tests {
     }
 
     #[test]
+    fn byte_limits_reject_partial_megabytes() {
+        let limits = PerformanceLimits {
+            max_file_size_mb: 1,
+            max_object_size_mb: 1,
+            ..Default::default()
+        };
+        let guard = PerformanceGuard::new(limits, "test");
+        let one_mb = 1024 * 1024;
+
+        assert!(guard.check_file_size(one_mb).is_ok());
+        assert!(guard.check_file_size(one_mb + 1).is_err());
+        assert!(guard.check_object_size(one_mb).is_ok());
+        assert!(guard.check_object_size(one_mb + 1).is_err());
+    }
+
+    #[test]
+    fn rejected_memory_allocation_is_not_recorded() {
+        let limits = PerformanceLimits {
+            max_memory_mb: 1,
+            ..Default::default()
+        };
+        let guard = PerformanceGuard::new(limits, "test");
+        let one_mb = 1024 * 1024;
+
+        guard.track_memory_allocation(one_mb).unwrap();
+        assert!(guard.track_memory_allocation(1).is_err());
+        assert_eq!(guard.get_stats().memory_usage_mb, 1);
+    }
+
+    #[test]
     fn test_resource_budget_is_shared_and_cancelable() {
         let budget = ResourceBudget::new(4, 8, 8, 10, 1, 1, 1, 1);
         let clone = budget.clone();
@@ -686,5 +748,17 @@ mod tests {
             Err(ResourceBudgetError::DecodedBytes)
         );
         assert_eq!(budget.remaining_decoded_bytes(), 2);
+    }
+
+    #[test]
+    fn retained_memory_uses_total_limit_not_stream_limit() {
+        let budget = ResourceBudget::new(100, 8, 4, 10, 1, 1, 1, 1);
+
+        budget.consume_memory(8).unwrap();
+        assert_eq!(budget.remaining_decoded_bytes(), 0);
+        assert_eq!(
+            budget.consume_memory(1),
+            Err(ResourceBudgetError::DecodedBytes)
+        );
     }
 }

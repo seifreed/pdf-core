@@ -1,4 +1,6 @@
-use pdf_ast::crypto::encryption::{aes_decrypt_cbc, aes_encrypt_cbc, md5, sha256};
+#[cfg(feature = "crypto")]
+use pdf_ast::crypto::encryption::{aes_decrypt_cbc, aes_encrypt_cbc};
+use pdf_ast::crypto::encryption::{md5, sha256};
 
 #[test]
 fn test_sha256_known_vector() {
@@ -18,6 +20,7 @@ fn test_md5_known_vector() {
 }
 
 #[test]
+#[cfg(feature = "crypto")]
 fn test_aes_round_trip_128() {
     let key = [0x11u8; 16];
     let iv = [0x22u8; 16];
@@ -29,6 +32,7 @@ fn test_aes_round_trip_128() {
 }
 
 #[test]
+#[cfg(feature = "crypto")]
 fn test_aes_round_trip_256() {
     let key = [0x33u8; 32];
     let iv = [0x44u8; 16];

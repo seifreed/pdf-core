@@ -167,8 +167,8 @@ trait Utf16Le {
 impl Utf16Be for String {
     fn from_utf16_be(v: &[u8]) -> Result<String, std::string::FromUtf16Error> {
         let mut u16_vec = Vec::with_capacity(v.len() / 2);
-        for chunk in v.chunks_exact(2) {
-            u16_vec.push(u16::from_be_bytes([chunk[0], chunk[1]]));
+        for chunk in v.as_chunks::<2>().0 {
+            u16_vec.push(u16::from_be_bytes(*chunk));
         }
         String::from_utf16(&u16_vec)
     }
@@ -177,8 +177,8 @@ impl Utf16Be for String {
 impl Utf16Le for String {
     fn from_utf16_le(v: &[u8]) -> Result<String, std::string::FromUtf16Error> {
         let mut u16_vec = Vec::with_capacity(v.len() / 2);
-        for chunk in v.chunks_exact(2) {
-            u16_vec.push(u16::from_le_bytes([chunk[0], chunk[1]]));
+        for chunk in v.as_chunks::<2>().0 {
+            u16_vec.push(u16::from_le_bytes(*chunk));
         }
         String::from_utf16(&u16_vec)
     }

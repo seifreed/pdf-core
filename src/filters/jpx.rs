@@ -2,9 +2,30 @@ use crate::filters::FilterError;
 use crate::performance::ResourceBudget;
 
 pub fn decode_jpx_to_codestream(data: &[u8]) -> Result<Vec<u8>, FilterError> {
-    let max_output_bytes = usize::try_from(ResourceBudget::default().max_decoded_bytes_per_stream)
-        .unwrap_or(usize::MAX);
-    decode_jpx_to_codestream_with_limit(data, max_output_bytes)
+    decode_jpx_to_codestream_with_budget(data, &ResourceBudget::default())
+}
+
+pub fn decode_jpx_to_codestream_with_budget(
+    data: &[u8],
+    budget: &ResourceBudget,
+) -> Result<Vec<u8>, FilterError> {
+    budget
+        .check()
+        .map_err(|error| FilterError::DecompressionError(error.to_string()))?;
+    budget
+        .consume_input(data.len() as u64)
+        .map_err(|error| FilterError::DecompressionError(error.to_string()))?;
+    let max_output_bytes = usize::try_from(
+        budget
+            .max_decoded_bytes_per_stream
+            .min(budget.remaining_decoded_bytes()),
+    )
+    .unwrap_or(usize::MAX);
+    let output = decode_jpx_to_codestream_with_limit(data, max_output_bytes)?;
+    budget
+        .consume_decoded(output.len() as u64)
+        .map_err(|error| FilterError::DecompressionError(error.to_string()))?;
+    Ok(output)
 }
 
 pub fn decode_jpx_to_codestream_with_limit(
@@ -122,6 +143,12 @@ pub fn decode_jpx_to_codestream_with_limit(
         }
     }
 
+    if pos != data.len() {
+        return Err(FilterError::InvalidData(
+            "JP2 container has trailing bytes".to_string(),
+        ));
+    }
+
     if !saw_signature {
         return Err(FilterError::InvalidData(
             "JP2 signature not found".to_string(),
@@ -155,7 +182,55 @@ pub fn decode_jpx_image(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>,
             "JPX output exceeds limit".to_string(),
         ));
     }
-    image
+    let decoded = image
         .decode()
-        .map_err(|error| FilterError::ImageDecodeError(format!("JPX decode error: {}", error)))
+        .map_err(|error| FilterError::ImageDecodeError(format!("JPX decode error: {}", error)))?;
+    if decoded.len() > max_output_bytes {
+        return Err(FilterError::DecompressionError(
+            "JPX output exceeds limit".to_string(),
+        ));
+    }
+    Ok(decoded)
+}
+
+pub fn decode_jpx_image_with_budget(
+    data: &[u8],
+    budget: &ResourceBudget,
+) -> Result<Vec<u8>, FilterError> {
+    budget
+        .check()
+        .map_err(|error| FilterError::ImageDecodeError(error.to_string()))?;
+    budget
+        .consume_input(data.len() as u64)
+        .map_err(|error| FilterError::ImageDecodeError(error.to_string()))?;
+    let max_output_bytes = usize::try_from(
+        budget
+            .max_decoded_bytes_per_stream
+            .min(budget.remaining_decoded_bytes()),
+    )
+    .unwrap_or(usize::MAX);
+    let output = decode_jpx_image(data, max_output_bytes)?;
+    budget
+        .consume_decoded(output.len() as u64)
+        .map_err(|error| FilterError::ImageDecodeError(error.to_string()))?;
+    Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{decode_jpx_image_with_budget, decode_jpx_to_codestream_with_budget};
+    use crate::performance::ResourceBudget;
+
+    #[test]
+    fn jpx_budget_rejects_input_before_decoding() {
+        let budget = ResourceBudget::new(0, 1024, 1024, 100, 10, 10, 10, 10);
+        assert!(decode_jpx_to_codestream_with_budget(b"x", &budget)
+            .expect_err("JPX input must respect the budget")
+            .to_string()
+            .contains("InputBytes"));
+        assert!(decode_jpx_image_with_budget(b"x", &budget)
+            .expect_err("JPX image input must respect the budget")
+            .to_string()
+            .contains("InputBytes"));
+    }
 }

@@ -1,9 +1,41 @@
 use crate::metadata::XmpMetadata;
+use crate::performance::ResourceBudget;
 use quick_xml::{events::Event, Reader};
 use std::collections::HashMap;
 
 /// Comprehensive XMP namespace support with all major namespaces
 pub fn parse_xmp(xml: &str) -> Result<XmpMetadata, String> {
+    parse_xmp_with_budget(xml, &ResourceBudget::default())
+}
+
+/// Parses XMP while enforcing the caller's input budget.
+pub fn parse_xmp_with_budget(xml: &str, budget: &ResourceBudget) -> Result<XmpMetadata, String> {
+    budget
+        .consume_input(xml.len() as u64)
+        .map_err(|error| error.to_string())?;
+    budget
+        .consume_decoded(xml.len() as u64)
+        .map_err(|error| error.to_string())?;
+
+    parse_xmp_unbudgeted(xml)
+}
+
+pub(crate) fn parse_xmp_bytes_with_budget(
+    data: &[u8],
+    budget: &ResourceBudget,
+) -> Result<XmpMetadata, String> {
+    budget
+        .consume_input(data.len() as u64)
+        .map_err(|error| error.to_string())?;
+    budget
+        .consume_decoded(data.len() as u64)
+        .map_err(|error| error.to_string())?;
+    let xml =
+        std::str::from_utf8(data).map_err(|error| format!("XMP UTF-8 decode error: {error}"))?;
+    parse_xmp_unbudgeted(xml)
+}
+
+fn parse_xmp_unbudgeted(xml: &str) -> Result<XmpMetadata, String> {
     let mut metadata = XmpMetadata::new();
     metadata.raw_xml = xml.to_string();
 
@@ -144,20 +176,24 @@ impl<'a> EnhancedXmpParser<'a> {
         &mut self,
         element: &quick_xml::events::BytesStart,
     ) -> Result<(), String> {
-        for attr in element.attributes() {
-            let attr = attr.map_err(|e| format!("Attribute error: {}", e))?;
-            let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
-            let value = std::str::from_utf8(&attr.value).unwrap_or("");
+        let previous_lang = self.current_lang.take();
+        let result = (|| {
+            for attr in element.attributes() {
+                let attr = attr.map_err(|e| format!("Attribute error: {}", e))?;
+                let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+                let value = std::str::from_utf8(&attr.value).unwrap_or("");
 
-            // Skip namespace and special attributes
-            if key.starts_with("xmlns") || key == "rdf:about" || key == "xml:lang" {
-                continue;
+                // Skip namespace and special attributes
+                if key.starts_with("xmlns") || key == "rdf:about" || key == "xml:lang" {
+                    continue;
+                }
+
+                self.store_property(key, value);
             }
-
-            // Store as property
-            self.store_property(key, value);
-        }
-        Ok(())
+            Ok(())
+        })();
+        self.current_lang = previous_lang;
+        result
     }
 
     fn store_property(&mut self, key: &str, value: &str) {
@@ -2402,6 +2438,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn xmp_parsers_respect_input_budget() {
+        let budget = ResourceBudget::new(3, 1024, 1024, 100, 10, 10, 10, 10);
+        assert!(parse_xmp_with_budget("<x/>", &budget).is_err());
+
+        let budget = ResourceBudget::new(3, 1024, 1024, 100, 10, 10, 10, 10);
+        assert!(XmpMetadata::parse_from_stream_with_budget(b"<x/>", &budget).is_err());
+    }
+
+    #[test]
+    fn xmp_parsers_respect_decoded_budget_before_copying_xml() {
+        let budget = ResourceBudget::new(1024, 1, 1024, 100, 10, 10, 10, 10);
+        let error = parse_xmp_with_budget("<x/>", &budget)
+            .expect_err("raw XML copy must respect the decoded budget");
+        assert!(error.contains("DecodedBytes"));
+
+        let budget = ResourceBudget::new(1024, 1, 1024, 100, 10, 10, 10, 10);
+        let error = XmpMetadata::parse_from_stream_with_budget(b"<x/>", &budget)
+            .expect_err("byte XML copy must respect the decoded budget");
+        assert!(error.contains("DecodedBytes"));
+    }
+
+    #[test]
     fn test_comprehensive_namespace_registry() {
         let registry = NamespaceRegistry::new();
 
@@ -2492,6 +2550,17 @@ mod tests {
     }
 
     #[test]
+    fn description_attributes_do_not_inherit_previous_language() {
+        let xmp_xml = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title><rdf:Alt><rdf:li xml:lang="x-default">Title</rdf:li></rdf:Alt></dc:title></rdf:Description><rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:CreateDate="2024-01-01T12:00:00Z"/></rdf:RDF></x:xmpmeta>"#;
+
+        let metadata = parse_xmp(xmp_xml).expect("valid XMP");
+        assert_eq!(
+            metadata.get_xmp_property("CreateDate"),
+            Some(&"2024-01-01T12:00:00Z".to_string())
+        );
+    }
+
+    #[test]
     fn test_geographic_metadata_detection() {
         let xmp_xml = r#"<?xml version="1.0"?>
         <x:xmpmeta xmlns:x="adobe:ns:meta/">
@@ -2562,5 +2631,20 @@ mod tests {
 
         let namespace_info = metadata.get_namespace_info();
         assert!(namespace_info.len() >= 2);
+    }
+
+    #[test]
+    fn byte_parser_rejects_input_before_materializing_xml() {
+        let budget = ResourceBudget::new(1, 1024, 1024, 10, 10, 10, 10, 8);
+        let error = super::parse_xmp_bytes_with_budget(b"<x", &budget)
+            .expect_err("input budget must be checked before XML parsing");
+        assert!(error.contains("InputBytes"));
+    }
+
+    #[test]
+    fn byte_parser_rejects_invalid_utf8() {
+        let error = super::parse_xmp_bytes_with_budget(b"<x>\xff</x>", &ResourceBudget::default())
+            .expect_err("invalid XMP bytes must not be lossy-decoded");
+        assert!(error.contains("UTF-8"));
     }
 }

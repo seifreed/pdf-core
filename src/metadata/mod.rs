@@ -1,6 +1,7 @@
 pub mod icc;
 pub mod xmp;
 
+use crate::performance::ResourceBudget;
 use crate::types::PdfDictionary;
 use std::collections::HashMap;
 
@@ -56,8 +57,14 @@ impl XmpMetadata {
     }
 
     pub fn parse_from_stream(data: &[u8]) -> Result<Self, String> {
-        let xml_string = String::from_utf8_lossy(data).to_string();
-        xmp::parse_xmp(&xml_string)
+        Self::parse_from_stream_with_budget(data, &ResourceBudget::default())
+    }
+
+    pub fn parse_from_stream_with_budget(
+        data: &[u8],
+        budget: &ResourceBudget,
+    ) -> Result<Self, String> {
+        xmp::parse_xmp_bytes_with_budget(data, budget)
     }
 
     pub fn get_property(&self, namespace: &str, property: &str) -> Option<&String> {

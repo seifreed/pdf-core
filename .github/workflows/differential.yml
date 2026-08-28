@@ -9,6 +9,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   reference-parsers:
     name: Compare with qpdf and MuPDF
@@ -27,10 +31,21 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y qpdf mupdf-tools
       - name: Fetch pinned project corpus
         env:
-          PDF_CORPUS_COMMIT: 9979a2a8618dcdf23ad3f20c760c1f06e5b36fe6
-        run: tools/fetch-verapdf-corpus.sh "fixtures/verapdf-pdfa-1b" "$RUNNER_TEMP/verapdf-corpus"
+          PDF_CORPUS_COMMIT: 344a1c906b158568f47af5f5e9ee8371dddc30c7
+        run: tools/fetch-verapdf-corpus.sh "fixtures" "$RUNNER_TEMP/verapdf-corpus"
       - name: Run differential corpus test
         env:
           PDF_EXTERNAL_CORPUS: ${{ runner.temp }}/verapdf-corpus
+          PDF_EXTERNAL_MAX_FILES: "3000"
         run: |
-          /usr/bin/time -v cargo test --test differential_tests --locked -- --test-threads=1
+          set -o pipefail
+          /usr/bin/time -v cargo test --test differential_tests --locked -- --test-threads=1 --nocapture \
+            2>&1 | tee "$RUNNER_TEMP/differential.log"
+
+      - name: Upload differential evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: differential-corpus-evidence
+          path: ${{ runner.temp }}/differential.log
+          if-no-files-found: error

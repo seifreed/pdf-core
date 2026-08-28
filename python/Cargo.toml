@@ -7,7 +7,7 @@ description = "Python bindings for PDF-AST"
 license = "MIT"
 
 [lib]
-name = "pdf_ast"
+name = "pdf_ast_python"
 crate-type = ["cdylib"]
 
 [dependencies]

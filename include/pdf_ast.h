@@ -2,7 +2,6 @@
 #define PDF_AST_H
 
 #include <stdint.h>
-#include <stdbool.h>
 #include <stddef.h>
 
 #ifdef __cplusplus
@@ -15,18 +14,19 @@ typedef struct CAstNode CAstNode;
 
 // C ABI contract version. Numeric values are part of the ABI and only change
 // when the ABI contract changes.
-#define PDF_AST_ABI_VERSION_MAJOR 1u
+#define PDF_AST_ABI_VERSION_MAJOR 2u
 #define PDF_AST_ABI_VERSION_MINOR 0u
 
-// Error codes
-typedef enum {
+// Error codes use a fixed-width type so the result ABI is compiler-independent.
+typedef int32_t pdf_ast_error_t;
+enum {
     PDF_AST_SUCCESS = 0,
     PDF_AST_INVALID_INPUT = 1,
     PDF_AST_PARSE_ERROR = 2,
     PDF_AST_MEMORY_ERROR = 3,
     PDF_AST_NULL_POINTER = 4,
     PDF_AST_INVALID_HANDLE = 5
-} pdf_ast_error_t;
+};
 
 // Result structure
 typedef struct {
@@ -38,8 +38,8 @@ typedef struct {
 typedef struct {
     uint64_t id;
     uint32_t node_type;
-    bool has_children;
-    size_t children_count;
+    uint8_t has_children;
+    uint64_t children_count;
 } pdf_ast_node_info_t;
 
 // Node types
@@ -80,7 +80,7 @@ pdf_ast_result_t pdf_ast_init(void);
  * @param document Output parameter for document handle
  * @return Result indicating success or failure
  */
-pdf_ast_result_t pdf_ast_parse(const uint8_t* data, size_t len, CPdfDocument** document);
+pdf_ast_result_t pdf_ast_parse(const uint8_t* data, uint64_t len, CPdfDocument** document);
 
 /**
  * Parse PDF from file path
@@ -95,14 +95,14 @@ pdf_ast_result_t pdf_ast_parse_file(const char* path, CPdfDocument** document);
  * @param document Document handle, borrowed for the duration of the call
  * @return Number of nodes
  */
-size_t pdf_ast_get_node_count(const CPdfDocument* document);
+uint64_t pdf_ast_get_node_count(const CPdfDocument* document);
 
 /**
  * Get number of edges in document
  * @param document Document handle
  * @return Number of edges
  */
-size_t pdf_ast_get_edge_count(const CPdfDocument* document);
+uint64_t pdf_ast_get_edge_count(const CPdfDocument* document);
 
 /**
  * Get root node of document
@@ -132,14 +132,14 @@ pdf_ast_result_t pdf_ast_get_children(
     const CPdfDocument* document,
     const CAstNode* parent_node,
     CAstNode*** children,
-    size_t* count
+    uint64_t* count
 );
 
 /**
  * Free the array returned by pdf_ast_get_children.
  * The individual child nodes must be freed with pdf_ast_free_node.
  */
-void pdf_ast_free_children(CAstNode** children, size_t count);
+void pdf_ast_free_children(CAstNode** children, uint64_t count);
 
 /**
  * Serialize document to JSON

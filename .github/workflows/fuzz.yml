@@ -50,4 +50,47 @@ jobs:
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
       - name: Run bounded campaign
-        run: cargo fuzz run ${{ matrix.target }} -- -runs=1000
+        run: |
+          artifact_dir="$RUNNER_TEMP/fuzz-artifacts"
+          log_file="$RUNNER_TEMP/fuzz-${{ matrix.target }}.log"
+          resource_file="$RUNNER_TEMP/fuzz-${{ matrix.target }}.resources"
+          summary_file="$RUNNER_TEMP/fuzz-${{ matrix.target }}.summary"
+          mkdir -p "$artifact_dir"
+          set -o pipefail
+          set +e
+          /usr/bin/time -v -o "$resource_file" cargo fuzz run "${{ matrix.target }}" -- \
+            -runs=1000 \
+            -timeout=5 \
+            -print_final_stats=1 \
+            -artifact_prefix="$artifact_dir/" 2>&1 | tee "$log_file"
+          fuzz_status=${PIPESTATUS[0]}
+          set -e
+          peak_rss_kib=$(awk -F: '/Maximum resident set size/ {gsub(/^[[:space:]]+/, "", $2); print $2; exit}' "$resource_file")
+          peak_rss_kib="${peak_rss_kib:-unknown}"
+          findings=0
+          if [ "$fuzz_status" -ne 0 ] || find "$artifact_dir" -type f -print -quit | grep -q .; then
+            findings=1
+          fi
+          if [ "$findings" -eq 1 ]; then
+            {
+              echo "findings=$findings"
+              echo "peak_rss_kib=$peak_rss_kib"
+            } | tee "$summary_file"
+            exit 1
+          fi
+          {
+            echo "findings=0"
+            echo "peak_rss_kib=$peak_rss_kib"
+          } | tee "$summary_file"
+
+      - name: Upload fuzz evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-evidence-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/fuzz-${{ matrix.target }}.log
+            ${{ runner.temp }}/fuzz-${{ matrix.target }}.resources
+            ${{ runner.temp }}/fuzz-${{ matrix.target }}.summary
+            ${{ runner.temp }}/fuzz-artifacts
+          if-no-files-found: error

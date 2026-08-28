@@ -29,12 +29,12 @@
 
 | Feature | Description |
 |---------|-------------|
-| **PDF parser** | Objects, streams, xref tables, linearization, and incremental updates; 2,806 pinned PDF/A, PDF/UA, and Isartor fixtures |
+| **PDF parser** | Objects, streams, xref tables, linearization, and incremental updates; 2,813 pinned PDF/A, PDF/UA, Isartor, and regression fixtures |
 | **Rich AST** | Typed nodes for common PDF structures; schema/API are experimental |
 | **Security Analysis** | JavaScript, forms, embedded files, and suspicious actions |
 | **PDF/A Validation** | Experimental preflight checks for selected requirements |
 | **Stream Decoding** | Flate, LZW, CCITT, DCT, bounded JBIG2, and bounded JPX pixel decoding |
-| **C ABI** | Versioned ABI 1.0 with opaque handles and ownership-checked smoke test |
+| **C ABI** | Versioned ABI 2.0 with opaque handles and ownership-checked smoke test |
 | **XFA + AcroForm** | XML packets, scripts, and field trees |
 | **Signature Support** | CMS/PKCS#7 parsing and optional crypto verification; experimental |
 | **CLI + Library** | Use from the command line or embed in Rust apps |
@@ -51,7 +51,7 @@
 | Object streams | Partial, bounded and validated |
 | Flate, ASCII85, LZW, RunLength | Implemented |
 | CCITT | Experimental |
-| JBIG2 | Partial; bounded embedded/sequential-standalone decoding with direct and parser-resolved indirect globals |
+| JBIG2 | Partial; bounded embedded/standalone decoding with direct and parser-resolved indirect globals |
 | JPX | Partial; bounded JPEG 2000 pixel decoding with container inspection |
 | Text extraction | Experimental |
 | PDF/A and PDF/UA | Partial preflight checks, not certifiable |
@@ -66,9 +66,9 @@ isolation and an application-level resource policy.
 - **MSRV:** Rust 1.88.0.
 - **Project:** `pdf-core`.
 - **Crate:** `pdf-ast` for compatibility with existing consumers.
-- **AST schema:** experimental `1.1.0`; see [COMPATIBILITY.md](COMPATIBILITY.md).
+- **AST schema:** experimental `1.2.0`; see [COMPATIBILITY.md](COMPATIBILITY.md).
 - **Rust API:** `0.2.0-alpha.1`; semver audit is checked against published `0.1.0`.
-- **C ABI:** `1.0`; see [COMPATIBILITY.md](COMPATIBILITY.md) for ownership rules.
+- **C ABI:** `2.0`; see [COMPATIBILITY.md](COMPATIBILITY.md) for ownership rules.
 
 ---
 
@@ -97,9 +97,11 @@ Or with Cargo:
 cargo add --git https://github.com/seifreed/pdf-core pdf-ast
 ```
 
-Signed releases publish the Rust crate, Python wheels, and the Node package
-with platform-specific native packages. The release workflow requires the
-`PUBLISH_REGISTRIES=true` repository variable plus registry credentials.
+The signed release workflow builds the Rust, C, Python, and Node artifacts,
+checks their provenance inputs, and prepares checksums and attestations.
+Registry publication remains disabled until the required CI gates and
+registry credentials are configured; use the repository checkout while it is
+pending.
 
 ### Feature Flags
 
@@ -112,6 +114,7 @@ pdf-ast = {
 ```
 
 Available features:
+- The default build enables `parallel`; cryptographic verification is opt-in.
 - `crypto`: cryptographic support (signatures, encryption, timestamps, OCSP/CRL)
 - `parallel`: multi-threading with Rayon
 - `async`: async parsing with Tokio

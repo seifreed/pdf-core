@@ -53,6 +53,9 @@ pub fn decode_stream_with_budget(
     budget
         .check()
         .map_err(|err| FilterError::DecompressionError(err.to_string()))?;
+    budget
+        .consume_input(data.len() as u64)
+        .map_err(|err| FilterError::DecompressionError(err.to_string()))?;
 
     if filters.is_empty() {
         budget
@@ -139,14 +142,44 @@ fn decode_single_filter(
 
 fn decode_ascii_hex(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
     let mut result = Vec::new();
-    let mut chars = data.iter().filter(|&&c| !c.is_ascii_whitespace());
+    let mut saw_eod = false;
+    let mut index = 0;
 
-    while let Some(&c1) = chars.next() {
+    while index < data.len() {
+        while data
+            .get(index)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            index += 1;
+        }
+        let Some(&c1) = data.get(index) else {
+            break;
+        };
         if c1 == b'>' {
+            saw_eod = true;
+            index += 1;
             break;
         }
+        index += 1;
 
-        let c2 = chars.next().copied().unwrap_or(b'0');
+        while data
+            .get(index)
+            .is_some_and(|byte| byte.is_ascii_whitespace())
+        {
+            index += 1;
+        }
+        let c2 = match data.get(index).copied() {
+            Some(b'>') => {
+                saw_eod = true;
+                index += 1;
+                b'0'
+            }
+            Some(byte) => {
+                index += 1;
+                byte
+            }
+            None => break,
+        };
 
         let hex_str = format!("{}{}", c1 as char, c2 as char);
         let byte = u8::from_str_radix(&hex_str, 16)
@@ -157,6 +190,21 @@ fn decode_ascii_hex(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, Fil
             ));
         }
         result.push(byte);
+
+        if saw_eod {
+            break;
+        }
+    }
+
+    if !saw_eod {
+        return Err(FilterError::InvalidData(
+            "ASCIIHex data is missing the EOD marker".to_string(),
+        ));
+    }
+    if data[index..].iter().any(|byte| !byte.is_ascii_whitespace()) {
+        return Err(FilterError::InvalidData(
+            "ASCIIHex data has trailing bytes after the EOD marker".to_string(),
+        ));
     }
 
     Ok(result)
@@ -168,17 +216,37 @@ const ASCII85_POWERS: [u64; 5] = [52200625, 614125, 7225, 85, 1];
 fn decode_ascii85(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
     let mut result = Vec::new();
     let mut tuple: Vec<u8> = Vec::with_capacity(5);
+    let mut saw_eod = false;
 
-    for &byte in data {
+    for (index, &byte) in data.iter().enumerate() {
         if byte.is_ascii_whitespace() {
             continue;
         }
 
         if byte == b'~' {
+            if data.get(index + 1) != Some(&b'>') {
+                return Err(FilterError::InvalidData(
+                    "ASCII85 data has an invalid EOD marker".to_string(),
+                ));
+            }
+            saw_eod = true;
+            if data[index + 2..]
+                .iter()
+                .any(|tail| !tail.is_ascii_whitespace())
+            {
+                return Err(FilterError::InvalidData(
+                    "ASCII85 data has trailing bytes after the EOD marker".to_string(),
+                ));
+            }
             break;
         }
 
         if byte == b'z' {
+            if !tuple.is_empty() {
+                return Err(FilterError::InvalidData(
+                    "ASCII85 'z' shorthand must start a tuple".to_string(),
+                ));
+            }
             if 4 > max_output_bytes.saturating_sub(result.len()) {
                 return Err(FilterError::DecompressionError(
                     "ASCII85 output exceeds limit".to_string(),
@@ -207,6 +275,12 @@ fn decode_ascii85(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, Filte
             result.extend_from_slice(&value.to_be_bytes());
             tuple.clear();
         }
+    }
+
+    if !saw_eod {
+        return Err(FilterError::InvalidData(
+            "ASCII85 data is missing the EOD marker".to_string(),
+        ));
     }
 
     if !tuple.is_empty() {
@@ -567,7 +641,10 @@ fn decode_dct(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterErr
         Ok(_) => Err(FilterError::DecompressionError(
             "JPEG output exceeds limit".to_string(),
         )),
-        Err(jpeg_decoder::Error::Format(_)) => Ok(data.to_vec()),
+        Err(jpeg_decoder::Error::Format(error)) => Err(FilterError::ImageDecodeError(format!(
+            "JPEG format error: {:?}",
+            error
+        ))),
         Err(e) => Err(FilterError::ImageDecodeError(format!(
             "JPEG decode error: {:?}",
             e
@@ -586,6 +663,15 @@ mod tests {
     };
     use crate::performance::ResourceBudget;
     use crate::types::{CCITTFaxDecodeParams, StreamFilter};
+
+    #[test]
+    fn budgeted_stream_charges_input_before_decoding() {
+        let budget = ResourceBudget::new(0, 1024, 1024, 100, 10, 10, 10, 10);
+
+        let error = decode_stream_with_budget(b"data", &[], &budget)
+            .expect_err("stream input must respect the budget");
+        assert!(error.to_string().contains("InputBytes"));
+    }
 
     #[test]
     fn rejects_negative_predictor_parameters() {
@@ -642,9 +728,72 @@ mod tests {
     }
 
     #[test]
+    fn rejects_ascii_hex_without_terminator() {
+        let error = decode_stream_with_limits(b"303132", &[StreamFilter::ASCIIHexDecode], 16, 10)
+            .expect_err("ASCIIHex must have an EOD marker");
+        assert!(error.to_string().contains("missing the EOD marker"));
+    }
+
+    #[test]
+    fn accepts_odd_ascii_hex_nibble_and_rejects_trailing_bytes() {
+        assert_eq!(
+            decode_stream_with_limits(b"3>", &[StreamFilter::ASCIIHexDecode], 16, 10)
+                .expect("ASCIIHex may pad an odd final nibble"),
+            vec![0x30]
+        );
+
+        let hex_error =
+            decode_stream_with_limits(b"3031>garbage", &[StreamFilter::ASCIIHexDecode], 16, 10)
+                .expect_err("ASCIIHex must reject bytes after EOD");
+        assert!(hex_error.to_string().contains("trailing bytes"));
+
+        let ascii85_error =
+            decode_stream_with_limits(b"z~>garbage", &[StreamFilter::ASCII85Decode], 16, 10)
+                .expect_err("ASCII85 must reject bytes after EOD");
+        assert!(ascii85_error.to_string().contains("trailing bytes"));
+    }
+
+    #[test]
     fn rejects_overflowing_ascii85_tuples() {
         let error = decode_stream_with_limits(b"uuuuu", &[StreamFilter::ASCII85Decode], 16, 10)
             .expect_err("an ASCII85 tuple must fit in u32");
         assert!(error.to_string().contains("ASCII85 tuple overflow"));
+    }
+
+    #[test]
+    fn rejects_malformed_ascii85_termination_and_shorthand() {
+        let missing_eod =
+            decode_stream_with_limits(b"9jqo^", &[StreamFilter::ASCII85Decode], 16, 10)
+                .expect_err("ASCII85 must have an EOD marker");
+        assert!(missing_eod.to_string().contains("missing the EOD marker"));
+
+        let shorthand_in_tuple =
+            decode_stream_with_limits(b"!z~>", &[StreamFilter::ASCII85Decode], 16, 10)
+                .expect_err("ASCII85 shorthand must start a tuple");
+        assert!(shorthand_in_tuple
+            .to_string()
+            .contains("must start a tuple"));
+    }
+
+    #[test]
+    fn decodes_ascii85_partial_tuples_once() {
+        for (encoded, expected) in [
+            (b"!!~>".as_slice(), vec![0]),
+            (b"!!!~>".as_slice(), vec![0, 0]),
+            (b"!!!!~>".as_slice(), vec![0, 0, 0]),
+        ] {
+            assert_eq!(
+                super::decode_stream_with_limits(encoded, &[StreamFilter::ASCII85Decode], 16, 10,)
+                    .expect("partial ASCII85 tuple should decode"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_dct_data_instead_of_returning_raw_bytes() {
+        let error = decode_stream_with_limits(b"not a jpeg", &[StreamFilter::DCTDecode], 1024, 10)
+            .expect_err("invalid DCT data must be reported");
+        assert!(error.to_string().contains("JPEG"));
     }
 }

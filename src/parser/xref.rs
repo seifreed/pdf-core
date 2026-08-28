@@ -1,7 +1,7 @@
 use crate::ast::document::XRefEntry;
 use crate::ast::linearization::LinearizationInfo;
 use crate::filters::decode_stream_with_budget;
-use crate::performance::PerformanceLimits;
+use crate::performance::{PerformanceLimits, ResourceBudget};
 use crate::types::{ObjectId, PdfStream, PdfValue};
 use nom::{
     branch::alt,
@@ -36,9 +36,16 @@ fn parse_u64(input: &[u8]) -> Result<u64, &'static str> {
 }
 
 pub fn parse_xref_table(input: &[u8]) -> IResult<&[u8], Vec<(ObjectId, XRefEntry)>> {
+    parse_xref_table_with_budget(input, &ResourceBudget::default())
+}
+
+pub fn parse_xref_table_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], Vec<(ObjectId, XRefEntry)>> {
     let (input, _) = tag(b"xref")(input)?;
     let (input, _) = multispace0(input)?;
-    let (input, sections) = many1(parse_xref_section)(input)?;
+    let (input, sections) = many1(|input| parse_xref_section_with_budget(input, budget))(input)?;
 
     let mut entries = Vec::new();
     for section in sections {
@@ -48,17 +55,34 @@ pub fn parse_xref_table(input: &[u8]) -> IResult<&[u8], Vec<(ObjectId, XRefEntry
     Ok((input, entries))
 }
 
-fn parse_xref_section(input: &[u8]) -> IResult<&[u8], Vec<(ObjectId, XRefEntry)>> {
+fn parse_xref_section_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], Vec<(ObjectId, XRefEntry)>> {
     let (input, (start_obj, count)) = parse_xref_subsection_header(input)?;
-    let (input, raw_entries) = many1(parse_xref_entry)(input)?;
+    if count == 0 {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Verify,
+        )));
+    }
 
     let mut entries = Vec::new();
-    for (i, entry) in raw_entries.into_iter().take(count as usize).enumerate() {
-        let object_number = start_obj.checked_add(i as u32).ok_or_else(|| {
+    let mut input = input;
+    for i in 0..count {
+        budget.consume_object().map_err(|_| {
+            nom::Err::Failure(nom::error::Error::new(
+                input,
+                nom::error::ErrorKind::TooLarge,
+            ))
+        })?;
+        let (remaining, entry) = parse_xref_entry(input)?;
+        let object_number = start_obj.checked_add(i).ok_or_else(|| {
             nom::Err::Failure(nom::error::Error::new(input, nom::error::ErrorKind::Verify))
         })?;
         let obj_id = ObjectId::new(object_number, entry.generation());
         entries.push((obj_id, entry));
+        input = remaining;
     }
 
     Ok((input, entries))
@@ -169,7 +193,7 @@ pub fn parse_xref_stream_with_limits(
     }
 
     // Decode the stream data
-    let filters = stream.get_filters();
+    let filters = stream.get_filters_with_params_checked()?;
     let raw_data = match &stream.data {
         crate::types::StreamData::Raw(data) => data,
         crate::types::StreamData::Decoded(data) => data,
@@ -199,13 +223,17 @@ pub fn parse_xref_stream_with_limits(
                 .checked_add(entry_size)
                 .ok_or_else(|| "XRef data offset overflow".to_string())?;
             if end > decoded_data.len() {
-                break; // Not enough data for another entry
+                return Err("XRef stream data is truncated".to_string());
             }
 
             let entry_data = decoded_data
                 .get(data_offset..end)
                 .ok_or_else(|| "XRef entry is outside decoded data".to_string())?;
 
+            limits
+                .budget
+                .consume_object()
+                .map_err(|error| format!("XRef object budget exceeded: {error}"))?;
             let entry = parse_xref_stream_entry(entry_data, w1, w2, w3)?;
             let object_number = start
                 .checked_add(i)
@@ -402,24 +430,35 @@ pub fn parse_linearization_dict(stream: &PdfStream) -> Result<LinearizationInfo,
 /// Parse hybrid XRef table/stream
 /// Some PDFs use both traditional xref tables and xref streams
 pub fn parse_hybrid_xref(input: &[u8]) -> XRefParseResult<'_> {
+    parse_hybrid_xref_with_budget(input, &ResourceBudget::default())
+}
+
+pub fn parse_hybrid_xref_with_budget<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> XRefParseResult<'a> {
     // Try to parse traditional xref table first
-    if let Ok((remaining, table_entries)) = parse_xref_table(input) {
+    if let Ok((remaining, table_entries)) = parse_xref_table_with_budget(input, budget) {
         // Check if there's an xref stream following
-        let (remaining, xref_stream) = opt(parse_xref_stream_object)(remaining)?;
+        let (remaining, xref_stream) =
+            opt(|input| parse_xref_stream_object(input, budget))(remaining)?;
         return Ok((remaining, (table_entries, xref_stream)));
     }
 
     // If no traditional table, try xref stream
-    let (remaining, xref_stream) = parse_xref_stream_object(input)?;
+    let (remaining, xref_stream) = parse_xref_stream_object(input, budget)?;
     Ok((remaining, (Vec::new(), Some(xref_stream))))
 }
 
 /// Parse an XRef stream object
-fn parse_xref_stream_object(input: &[u8]) -> IResult<&[u8], PdfStream> {
+fn parse_xref_stream_object<'a>(
+    input: &'a [u8],
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], PdfStream> {
     // This is a simplified implementation - in practice, you'd use the full object parser
-    use crate::parser::object_parser::parse_indirect_object;
+    use crate::parser::object_parser::parse_indirect_object_with_budget;
 
-    let (input, (_obj_id, value)) = parse_indirect_object(input)?;
+    let (input, (_obj_id, value)) = parse_indirect_object_with_budget(input, budget)?;
 
     if let PdfValue::Stream(stream) = value {
         // Verify it's an XRef stream by checking for required entries
@@ -475,8 +514,8 @@ impl XRefEntry {
 #[cfg(test)]
 mod tests {
     use super::{parse_xref_stream, parse_xref_stream_entry, parse_xref_table};
-    use crate::performance::PerformanceLimits;
-    use crate::types::{PdfArray, PdfDictionary, PdfStream, PdfValue};
+    use crate::performance::{PerformanceLimits, ResourceBudget};
+    use crate::types::{PdfArray, PdfDictionary, PdfStream, PdfValue, StreamData};
 
     fn xref_stream(w: Vec<PdfValue>, index: Option<Vec<PdfValue>>) -> PdfStream {
         let mut dict = PdfDictionary::new();
@@ -543,6 +582,17 @@ mod tests {
     }
 
     #[test]
+    fn xref_table_respects_object_budget() {
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 0, 10, 10, 8);
+        let error =
+            super::parse_xref_table_with_budget(b"xref\n0 1\n0000000000 00000 n \n", &budget)
+                .expect_err("xref entries must consume the shared object budget");
+        assert!(
+            matches!(error, nom::Err::Failure(error) if error.code == nom::error::ErrorKind::TooLarge)
+        );
+    }
+
+    #[test]
     fn rejects_xref_stream_field_truncation() {
         let error = parse_xref_stream_entry(&[1, 0, 0, 0, 0, 0, 1, 0, 0, 0], 1, 5, 4)
             .expect_err("generation values wider than u16 must be rejected");
@@ -568,6 +618,44 @@ mod tests {
         let error = super::parse_xref_stream_with_limits(&stream, &limits)
             .expect_err("xref data over the shared budget must be rejected");
         assert!(error.contains("DecodedBytes"));
+    }
+
+    #[test]
+    fn xref_stream_respects_shared_object_budget() {
+        let stream = xref_stream(
+            vec![
+                PdfValue::Integer(1),
+                PdfValue::Integer(1),
+                PdfValue::Integer(1),
+            ],
+            None,
+        );
+        let mut limits = PerformanceLimits {
+            max_nodes: 0,
+            ..PerformanceLimits::default()
+        };
+        limits.refresh_budget();
+
+        let error = super::parse_xref_stream_with_limits(&stream, &limits)
+            .expect_err("xref entries must consume the shared object budget");
+        assert!(error.contains("Objects"));
+    }
+
+    #[test]
+    fn rejects_truncated_xref_stream_data() {
+        let mut stream = xref_stream(
+            vec![
+                PdfValue::Integer(1),
+                PdfValue::Integer(1),
+                PdfValue::Integer(1),
+            ],
+            None,
+        );
+        stream.dict.insert("Size", PdfValue::Integer(2));
+        stream.data = StreamData::Raw(vec![1, 0, 0]);
+
+        let error = parse_xref_stream(&stream).expect_err("truncated xref data must be rejected");
+        assert!(error.contains("truncated"));
     }
 
     #[test]

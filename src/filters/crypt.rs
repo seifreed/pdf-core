@@ -1,5 +1,6 @@
 use super::{FilterError, FilterResult};
 use crate::crypto::{get_default_crypto_provider, CryptoConfig, CryptoProvider};
+use crate::performance::ResourceBudget;
 use crate::types::CryptFilterParams;
 
 /// Crypt filter for decrypting encrypted PDF streams
@@ -44,6 +45,38 @@ impl CryptFilter {
         }
     }
 
+    /// Decrypt data while charging the shared resource budget.
+    pub fn decrypt_with_budget(
+        &self,
+        data: &[u8],
+        params: &CryptFilterParams,
+        key: &[u8],
+        budget: &ResourceBudget,
+    ) -> FilterResult<Vec<u8>> {
+        budget
+            .check()
+            .map_err(|error| FilterError::CryptError(error.to_string()))?;
+        budget
+            .consume_input(data.len() as u64)
+            .map_err(|error| FilterError::CryptError(error.to_string()))?;
+        let limit = usize::try_from(
+            budget
+                .max_decoded_bytes_per_stream
+                .min(budget.remaining_decoded_bytes()),
+        )
+        .unwrap_or(usize::MAX);
+        if data.len() > limit {
+            return Err(FilterError::CryptError(
+                "decrypted output exceeds resource budget".to_string(),
+            ));
+        }
+        let output = self.decrypt(data, params, key)?;
+        budget
+            .consume_decoded(output.len() as u64)
+            .map_err(|error| FilterError::CryptError(error.to_string()))?;
+        Ok(output)
+    }
+
     /// Encrypt data using the Crypt filter
     pub fn encrypt(
         &self,
@@ -60,6 +93,44 @@ impl CryptFilter {
             CryptFilterParams::AESV2 { name } => self.encrypt_aes_v2(data, name, key),
             CryptFilterParams::AESV3 { name } => self.encrypt_aes_v3(data, name, key),
         }
+    }
+
+    /// Encrypt data while charging the shared resource budget.
+    pub fn encrypt_with_budget(
+        &self,
+        data: &[u8],
+        params: &CryptFilterParams,
+        key: &[u8],
+        budget: &ResourceBudget,
+    ) -> FilterResult<Vec<u8>> {
+        budget
+            .check()
+            .map_err(|error| FilterError::CryptError(error.to_string()))?;
+        budget
+            .consume_input(data.len() as u64)
+            .map_err(|error| FilterError::CryptError(error.to_string()))?;
+        let limit = usize::try_from(
+            budget
+                .max_decoded_bytes_per_stream
+                .min(budget.remaining_decoded_bytes()),
+        )
+        .unwrap_or(usize::MAX);
+        let worst_case = match params {
+            CryptFilterParams::AESV2 { .. } | CryptFilterParams::AESV3 { .. } => {
+                data.len().saturating_add(32)
+            }
+            _ => data.len(),
+        };
+        if worst_case > limit {
+            return Err(FilterError::CryptError(
+                "encrypted output exceeds resource budget".to_string(),
+            ));
+        }
+        let output = self.encrypt(data, params, key)?;
+        budget
+            .consume_decoded(output.len() as u64)
+            .map_err(|error| FilterError::CryptError(error.to_string()))?;
+        Ok(output)
     }
 
     /// Decrypt using V2 standard security handler (RC4)
@@ -209,6 +280,22 @@ impl CryptFilterManager {
         filter.decrypt(data, params, key)
     }
 
+    /// Decrypt data through a named filter while charging a shared budget.
+    pub fn decrypt_with_budget(
+        &self,
+        data: &[u8],
+        filter_name: &str,
+        params: &CryptFilterParams,
+        key: &[u8],
+        budget: &ResourceBudget,
+    ) -> FilterResult<Vec<u8>> {
+        let filter = self.get_filter(filter_name).ok_or_else(|| {
+            FilterError::CryptError(format!("Unknown crypt filter: {}", filter_name))
+        })?;
+
+        filter.decrypt_with_budget(data, params, key, budget)
+    }
+
     /// Encrypt data using a named filter
     pub fn encrypt(
         &self,
@@ -222,6 +309,22 @@ impl CryptFilterManager {
         })?;
 
         filter.encrypt(data, params, key)
+    }
+
+    /// Encrypt data through a named filter while charging a shared budget.
+    pub fn encrypt_with_budget(
+        &self,
+        data: &[u8],
+        filter_name: &str,
+        params: &CryptFilterParams,
+        key: &[u8],
+        budget: &ResourceBudget,
+    ) -> FilterResult<Vec<u8>> {
+        let filter = self.get_filter(filter_name).ok_or_else(|| {
+            FilterError::CryptError(format!("Unknown crypt filter: {}", filter_name))
+        })?;
+
+        filter.encrypt_with_budget(data, params, key, budget)
     }
 
     /// List all available filter names
@@ -287,6 +390,7 @@ impl EncryptionKeyCache {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::performance::ResourceBudget;
 
     #[test]
     fn test_crypt_filter_creation() {
@@ -309,6 +413,35 @@ mod tests {
 
         let decrypted = filter.decrypt(&encrypted, &params, key).unwrap();
         assert_eq!(decrypted, data);
+    }
+
+    #[test]
+    fn budgeted_identity_filter_charges_input_before_copying() {
+        let filter = CryptFilter::new();
+        let budget = ResourceBudget::new(0, 1024, 1024, 100, 10, 10, 10, 10);
+        let error = filter
+            .decrypt_with_budget(b"data", &CryptFilterParams::Identity, b"key", &budget)
+            .expect_err("crypt input must respect the budget");
+
+        assert!(error.to_string().contains("InputBytes"));
+    }
+
+    #[test]
+    fn budgeted_aes_encryption_rejects_worst_case_output_before_provider_call() {
+        let filter = CryptFilter::new();
+        let budget = ResourceBudget::new(1024, 1024, 16, 100, 10, 10, 10, 10);
+        let error = filter
+            .encrypt_with_budget(
+                b"data",
+                &CryptFilterParams::AESV2 {
+                    name: "StdCF".to_string(),
+                },
+                b"key",
+                &budget,
+            )
+            .expect_err("AES output must respect the budget before encryption");
+
+        assert!(error.to_string().contains("exceeds resource budget"));
     }
 
     #[test]
@@ -361,6 +494,7 @@ mod tests {
         assert_eq!(key1, key4); // Should be same as before (same derivation)
     }
 
+    #[cfg(feature = "crypto")]
     #[test]
     fn test_random_iv_generation() {
         let filter = CryptFilter::new();
