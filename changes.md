@@ -102,6 +102,11 @@ PDF/A-1b positivo y el negativo Isartor que veraPDF identifica como
 `ISO 19005-1:2005:6.1.10:1`. `RULE-COVERAGE.json` queda en `23` pares y el
 descargador fija el nuevo SHA completo del corpus.
 
+La validación de fuentes PDF/A resuelve ahora también `/DescendantFonts` cuando
+apunta indirectamente a un array, manteniendo la detección de programas
+embebidos en fuentes Type0/CIDFont. La regresión y la suite de validación pasan
+`29/29`.
+
 Actualizacion posterior: `b410aa5` deduplica referencias repetidas durante la
 resolucion y reutiliza nodos semanticos ya asociados a `ObjectId`; `62adb2a`
 completa el cobro de memoria para objetos indirectos publicos. `da39970` y

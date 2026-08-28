@@ -164,6 +164,49 @@ mod validation_tests {
     }
 
     #[test]
+    fn pdfa_cid_font_resolves_indirect_descendant_fonts_array() {
+        let validator = PdfA1bValidator::new().with_strict_mode(false);
+        let mut document = create_test_document();
+        document.ast.create_node(
+            NodeType::Object(ObjectId::new(100, 0)),
+            PdfValue::Stream(PdfStream::new(PdfDictionary::new(), vec![0x01])),
+        );
+        document.ast.create_node(
+            NodeType::Object(ObjectId::new(101, 0)),
+            PdfValue::Array(
+                vec![PdfValue::Dictionary({
+                    let mut descendant = PdfDictionary::new();
+                    descendant.insert(
+                        "FontDescriptor",
+                        PdfValue::Dictionary({
+                            let mut descriptor = PdfDictionary::new();
+                            descriptor.insert(
+                                "FontFile2",
+                                PdfValue::Reference(PdfReference::new(100, 0)),
+                            );
+                            descriptor
+                        }),
+                    );
+                    descendant
+                })]
+                .into(),
+            ),
+        );
+        let mut cid_font = PdfDictionary::new();
+        cid_font.insert("Type", PdfValue::Name(PdfName::new("Font")));
+        cid_font.insert(
+            "DescendantFonts",
+            PdfValue::Reference(PdfReference::new(101, 0)),
+        );
+        document
+            .ast
+            .create_node(NodeType::CIDFont, PdfValue::Dictionary(cid_font));
+
+        let report = validator.validate(&document);
+        assert!(!has_issue(&report, "PDF_A_FONT_EMBEDDING"));
+    }
+
+    #[test]
     fn pdfa_font_file_key_must_reference_a_stream() {
         let validator = PdfA1bValidator::new().with_strict_mode(false);
         let mut document = create_test_document();

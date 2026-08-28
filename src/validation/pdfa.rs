@@ -438,7 +438,7 @@ impl PdfA1bValidator {
 
         font_dict
             .get("DescendantFonts")
-            .and_then(|value| value.as_array())
+            .and_then(|value| Self::resolve_array(document, value))
             .into_iter()
             .flatten()
             .filter_map(|value| match value {
