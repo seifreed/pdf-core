@@ -39,6 +39,13 @@ contra `libpdf_ast.dylib`, con salida `pdf-ast 0.2.0-alpha.1: nodes=5 root=0`.
 `cargo semver-checks check-release --package pdf-ast --baseline-version 0.1.0`
 también pasa localmente: no requiere cambio SemVer y deja `254` checks omitidos
 por tratarse de un salto mayor alpha; esto no estabiliza todavía la API pública.
+La verificación local completa del corpus actualizado pasa `2.810/2.810`
+sin panics ni errores de parseo, con `2.810` hashes, `161281039` bytes,
+`peak_rss_kib=474480` y percentiles `3/57/178 ms`. La comparación veraPDF
+pasa `569/569`, con `263` conformes, `565` rechazos strict y `0` divergencias
+tolerantes. El diferencial pasa `2.810/2.810` y registra `397` divergencias
+(`396` desacuerdos entre referencias y `1` de consenso), `peak_rss_kib=362032`
+y percentiles `34/91/227 ms`; su clasificación sigue pendiente.
 
 Actualizacion posterior: `b410aa5` deduplica referencias repetidas durante la
 resolucion y reutiliza nodos semanticos ya asociados a `ObjectId`; `62adb2a`
