@@ -233,6 +233,10 @@ con Clippy estricto.
 `7f44c11` añade variantes presupuestadas a la construccion inicial de
 `NameTreeParser` y deja de ocultar agotamientos de nodos/objetos; la suite de
 name trees pasa `6/6` y Clippy estricto.
+`e0ee4e4` añade `StructTreeParser::parse_struct_tree_root_with_budget` y
+propaga durante la construccion los limites de nodos, objetos, aristas y
+contenido MCID, conservando el wrapper legacy parcial; la suite de estructura
+pasa `10/10` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
