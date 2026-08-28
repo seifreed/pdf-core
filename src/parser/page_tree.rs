@@ -65,7 +65,8 @@ impl<'a> PageTreeParser<'a> {
         inherited_resources: &PdfDictionary,
     ) -> Vec<NodeId> {
         let mut page_nodes = Vec::new();
-        if depth >= self.budget.max_depth {
+        if depth > self.budget.max_depth {
+            self.budget_error = Some(ResourceBudgetError::Depth);
             return page_nodes;
         }
 
@@ -834,6 +835,37 @@ mod tests {
                 .parse_page_tree_with_budget(&pages_dict, root_id)
                 .expect_err("page resource budget must propagate"),
             ResourceBudgetError::Nodes
+        );
+    }
+
+    #[test]
+    fn page_tree_parser_reports_depth_budget_exhaustion() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.add_node(AstNode::new(NodeId(0), NodeType::Catalog, PdfValue::Null));
+        let page_id = ast.add_node(AstNode::new(
+            NodeId(1),
+            NodeType::Page,
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Type", PdfValue::Name(PdfName::new("Page")));
+                dict
+            }),
+        ));
+        let mut pages_dict = PdfDictionary::new();
+        pages_dict.insert(
+            "Kids",
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(1, 0))].into()),
+        );
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), page_id);
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 10, 10, 0);
+        let mut parser = PageTreeParser::new_with_budget(&mut ast, &resolver, &budget);
+
+        assert_eq!(
+            parser
+                .parse_page_tree_with_budget(&pages_dict, root_id)
+                .expect_err("page tree depth must propagate"),
+            ResourceBudgetError::Depth
         );
     }
 
