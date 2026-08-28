@@ -200,7 +200,7 @@ un diccionario vacio; la misma suite pasa `22/22` y Clippy estricto.
 agotamiento de `ResourceBudget`, y propaga este ultimo en resolver y
 extraccion; las suites pasan `13/13`, `14/14` y `5/5`, con Clippy estricto.
 `bc3c183` alinea el commit por defecto del descargador de corpus con
-`b3e6f341`, la revision reproducida por CI para los `2.809` fixtures.
+`532c2b6`, la revision reproducida por CI para los `2.809` fixtures.
 Verificacion local contra esa revision: el corpus externo pasa `2.809/2.809`
 sin panics, con `2.809` hashes comprobados, `1.990` errores controlados y
 `peak_rss_kib=286160` (`p50=0 ms`, `p95=7 ms`, `p99=52 ms`). La comparacion
