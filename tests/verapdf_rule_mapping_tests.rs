@@ -175,6 +175,31 @@ fn manifest_fixture_path(root: &Path, relative: &str) -> PathBuf {
         .unwrap_or(path)
 }
 
+fn local_rule_is_present(path: &Path, local_rule: &str) -> bool {
+    let bytes = fs::read(path)
+        .unwrap_or_else(|error| panic!("read local coverage fixture {}: {error}", path.display()));
+    let document = PdfParser::new()
+        .parse_bytes(&bytes)
+        .unwrap_or_else(|error| panic!("parse local coverage fixture {}: {error}", path.display()));
+    let report = if local_rule.starts_with("PDF_A_") {
+        PdfA1bValidator::new()
+            .with_strict_mode(false)
+            .validate(&document)
+    } else {
+        SchemaRegistry::new()
+            .validate(&document, "PDF/UA-1")
+            .unwrap_or_else(|| {
+                panic!(
+                    "PDF/UA-1 does not support parsed version {}.{} for {}",
+                    document.version.major,
+                    document.version.minor,
+                    path.display()
+                )
+            })
+    };
+    report.issues.iter().any(|issue| issue.code == local_rule)
+}
+
 #[test]
 fn isartor_rules_match_verapdf_ids() {
     let Some(verapdf) = verapdf_binary() else {
@@ -474,12 +499,19 @@ fn published_rule_coverage_has_positive_and_negative_verapdf_evidence() {
             "missing negative fixture: {}",
             negative.display()
         );
+        let local_rule = mapping["local_rule"].as_str().expect("local rule");
+        assert!(
+            !local_rule_is_present(&positive, local_rule),
+            "local rule {local_rule} unexpectedly reported for positive fixture {}",
+            positive.display()
+        );
+        assert!(
+            local_rule_is_present(&negative, local_rule),
+            "local rule {local_rule} missing for negative fixture {}",
+            negative.display()
+        );
 
-        let flavour = if mapping["local_rule"]
-            .as_str()
-            .expect("local rule")
-            .starts_with("PDF_A_")
-        {
+        let flavour = if local_rule.starts_with("PDF_A_") {
             "1b"
         } else {
             "ua1"
