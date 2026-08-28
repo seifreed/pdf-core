@@ -185,6 +185,18 @@ impl<'a> TextExtractor<'a> {
         }
     }
 
+    fn resolve_number(&self, value: Option<&PdfValue>) -> Option<f64> {
+        let value = value?;
+        match value {
+            PdfValue::Integer(_) | PdfValue::Real(_) => value.as_real(),
+            PdfValue::Reference(reference) => self
+                .ast
+                .get_node_by_object(reference.id())
+                .and_then(|node| node.value.as_real()),
+            _ => None,
+        }
+    }
+
     fn effective_value<'b>(
         primary: &'b PdfDictionary,
         fallback: &'b PdfDictionary,
@@ -248,9 +260,9 @@ impl<'a> TextExtractor<'a> {
         if !descendant_dict.is_empty() {
             self.parse_cid_widths(&descendant_dict, &mut width_map);
         }
-        let default_width =
-            Self::number_value(Self::effective_value(&top_dict, effective_dict, "DW"))
-                .unwrap_or(1000.0);
+        let default_width = self
+            .resolve_number(Self::effective_value(&top_dict, effective_dict, "DW"))
+            .unwrap_or(1000.0);
         let font_matrix = Self::parse_font_matrix(Self::effective_value(
             &top_dict,
             effective_dict,
@@ -917,7 +929,10 @@ mod tests {
 
         let mut descendant = PdfDictionary::new();
         descendant.insert("Subtype", PdfValue::Name(PdfName::new("CIDFontType0")));
-        descendant.insert("DW", PdfValue::Integer(500));
+        descendant.insert(
+            "DW",
+            PdfValue::Reference(crate::types::PdfReference::new(6, 0)),
+        );
         descendant.insert(
             "W",
             PdfValue::Reference(crate::types::PdfReference::new(5, 0)),
@@ -942,6 +957,11 @@ mod tests {
                 crate::types::PdfReference::new(3, 0),
             )])),
         ));
+        ast.add_node(AstNode::new(
+            NodeId::new(6),
+            NodeType::Object(ObjectId::new(6, 0)),
+            PdfValue::Integer(500),
+        ));
 
         let mut fonts = PdfDictionary::new();
         fonts.insert(
@@ -954,14 +974,14 @@ mod tests {
         let operators = [
             ContentOperator::BeginText,
             ContentOperator::SetFont("/F1".to_string(), 10.0),
-            ContentOperator::ShowText(vec![0x41]),
+            ContentOperator::ShowText(vec![0x41, 0x42]),
             ContentOperator::EndText,
         ];
         let spans = TextExtractor::new(&ast, &resources).extract_text(&operators);
 
         assert_eq!(spans.len(), 1);
-        assert_eq!(spans[0].text, "A");
-        assert!((spans[0].width - 6.0).abs() < f64::EPSILON);
+        assert_eq!(spans[0].text, "AB");
+        assert!((spans[0].width - 11.0).abs() < f64::EPSILON);
     }
 
     #[test]
