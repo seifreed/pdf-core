@@ -708,7 +708,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 }
                 Err(e) => {
                     if self.tolerant {
-                        if let Some(recovered) = self.parse_object_value_fallback(&buffer) {
+                        if let Some(recovered) = self.parse_object_value_fallback(&buffer)? {
                             let node_type = self.determine_node_type(&recovered, obj_id);
                             let node_id = self.create_node(ast, node_type, recovered)?;
                             ast.register_object_node(obj_id, node_id);
@@ -821,19 +821,25 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         }
     }
 
-    fn parse_object_value_fallback(&self, buffer: &[u8]) -> Option<PdfValue> {
-        let obj_pos = buffer.windows(3).position(|w| w == b"obj")?;
+    fn parse_object_value_fallback(&self, buffer: &[u8]) -> Result<Option<PdfValue>, String> {
+        let Some(obj_pos) = buffer.windows(3).position(|w| w == b"obj") else {
+            return Ok(None);
+        };
         let mut pos = obj_pos + 3;
         while pos < buffer.len() && buffer[pos].is_ascii_whitespace() {
             pos += 1;
         }
-        object_parser::parse_value_with_max_depth_and_budget(
+        match object_parser::parse_value_with_max_depth_and_budget(
             &buffer[pos..],
             self.limits.max_depth,
             &self.limits.budget,
-        )
-        .ok()
-        .map(|(_, value)| value)
+        ) {
+            Ok((_, value)) => Ok(Some(value)),
+            Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                Err("resource budget exceeded: object value fallback".to_string())
+            }
+            Err(_) => Ok(None),
+        }
     }
 
     fn resolve_compressed_object(
@@ -1779,6 +1785,22 @@ mod tests {
         let error = resolver
             .load_object_value(ObjectId::new(2, 0))
             .expect_err("object parser budget must propagate");
+        assert!(error.contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn fallback_object_parser_budget_exhaustion_is_not_recovered() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(0, 1024, 1024, 10, 10, 10, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let resolver =
+            ReferenceResolver::from_document(Cursor::new(Vec::new()), &document, true, limits);
+
+        let error = resolver
+            .parse_object_value_fallback(b"malformed obj\nnull")
+            .expect_err("fallback parser budget must propagate");
         assert!(error.contains("resource budget exceeded"));
     }
 
