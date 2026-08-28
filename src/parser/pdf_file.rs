@@ -345,19 +345,16 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
             let (entries, trailer) = match self.parse_single_xref_at(offset) {
                 Ok(result) => result,
-                Err(err) => {
-                    if self.tolerant {
-                        self.record_anomaly(
-                            "xref_parse_failed",
-                            "Failed to parse xref section; falling back to scan",
-                            Some(offset),
-                        )?;
-                        self.recover_xref_by_scan()?;
-                        break;
-                    } else {
-                        return Err(err);
-                    }
+                Err(err) if self.tolerant && !is_resource_budget_error(&err) => {
+                    self.record_anomaly(
+                        "xref_parse_failed",
+                        "Failed to parse xref section; falling back to scan",
+                        Some(offset),
+                    )?;
+                    self.recover_xref_by_scan()?;
+                    break;
                 }
+                Err(err) => return Err(err),
             };
             let (added, modified, deleted) = self.compute_revision_deltas(&aggregated, &entries);
 
@@ -1725,7 +1722,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     self.document.xfa = Some(xfa_doc);
                 }
             }
-            Err(err) if self.tolerant => {
+            Err(err) if self.tolerant && !err.contains("resource budget exceeded") => {
                 self.record_diagnostic(None, None, "xfa_parse", "skipped_xfa", 0.8, 0, &err)?;
                 log::warn!("Failed to parse XFA data (tolerant): {}", err);
             }
@@ -3143,7 +3140,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         let decoded = match self.decode_xmp_stream(&stream) {
             Ok(data) => data,
-            Err(err) if self.tolerant => {
+            Err(err) if self.tolerant && !err.contains("resource budget exceeded") => {
                 self.record_diagnostic(None, None, "xmp_decode", "skipped_xmp", 0.8, 0, &err)?;
                 return Ok(());
             }
@@ -3152,7 +3149,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         let xmp = match XmpMetadata::parse_from_stream_with_budget(&decoded, &self.limits.budget) {
             Ok(metadata) => metadata,
-            Err(err) if self.tolerant => {
+            Err(err) if self.tolerant && !err.contains("resource budget exceeded") => {
                 self.record_diagnostic(
                     None,
                     None,
