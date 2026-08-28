@@ -160,6 +160,9 @@ impl<R: Read + Seek + BufRead> StreamingParser<R> {
 
             // Read node data
             let mut buffer = vec![0u8; lazy_node.byte_length];
+            self.budget
+                .consume_memory(buffer.len() as u64)
+                .map_err(|error| AstError::ParseError(error.to_string()))?;
             self.reader.read_exact(&mut buffer)?;
 
             // Parse node
@@ -493,5 +496,33 @@ mod tests {
             .parse_incremental()
             .expect_err("input budget must stop streaming parse");
         assert!(error.to_string().contains("InputBytes"));
+    }
+
+    #[test]
+    fn lazy_node_buffer_uses_memory_budget() {
+        let data = b"null";
+        let budget = ResourceBudget::new(16, 3, 3, 10, 10, 10, 10, 8);
+        let mut parser = StreamingParser::new_with_budget(
+            BufReader::new(Cursor::new(data)),
+            StreamingConfig::default(),
+            budget,
+        );
+        parser.lazy_nodes.insert(
+            crate::ast::NodeId::new(0),
+            super::LazyNode {
+                id: crate::ast::NodeId::new(0),
+                node_type: crate::ast::NodeType::Unknown,
+                byte_offset: 0,
+                byte_length: data.len(),
+                is_loaded: false,
+                parent: None,
+                children: Vec::new(),
+            },
+        );
+
+        let error = parser
+            .load_lazy_node(crate::ast::NodeId::new(0))
+            .expect_err("lazy node buffer must respect memory budget");
+        assert!(error.to_string().contains("DecodedBytes"));
     }
 }
