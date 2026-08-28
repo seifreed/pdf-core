@@ -147,6 +147,8 @@ valores indirectos, y diagnostica tipos invalidos; las suites de fuentes y
 PDF/UA pasan `28/28` y Clippy estricto.
 `d0f0dbd` resuelve `/DW` indirecto para el ancho por defecto de fuentes CID;
 la regresion de extraccion pasa `5/5` y Clippy estricto.
+`5b02fed` resuelve arrays `Differences` indirectos en encodings de fuentes;
+la regresion de extraccion pasa `5/5` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
