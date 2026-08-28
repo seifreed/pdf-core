@@ -560,6 +560,8 @@ Pendientes actuales, en orden practico:
   destinos `bfrange`; la suite de CMap pasa `15/15`.
   `9756abe` exige el marcador `~>` de ASCII85 y rechaza el shorthand `z` en
   una tupla parcial; la suite de filtros pasa `9/9`.
+  `4934ed1` exige también el terminador `>` de ASCIIHex; la suite de filtros
+  pasa `10/10`.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
