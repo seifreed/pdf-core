@@ -1418,20 +1418,32 @@ impl SchemaConstraint for AccessibilityMetadataConstraint {
             return;
         }
 
-        if let Some(bytes) = stream.data.as_bytes() {
-            if !bytes.windows(9).any(|w| w == b"x:xmpmeta")
-                && !bytes.windows(10).any(|w| w == b"<x:xmpmeta")
-            {
+        let bytes = match stream.decode() {
+            Ok(bytes) => bytes,
+            Err(error) => {
                 report.add_issue(ValidationIssue {
-                    severity: ValidationSeverity::Warning,
-                    code: "XMP_PACKET_MISSING".to_string(),
-                    message: "Metadata stream does not appear to contain an XMP packet".to_string(),
+                    severity: ValidationSeverity::Error,
+                    code: "METADATA_DECODE_FAILED".to_string(),
+                    message: format!("Metadata stream could not be decoded: {error}"),
                     node_id: document.catalog,
                     location: Some("Metadata stream".to_string()),
-                    suggestion: Some("Embed a valid XMP packet".to_string()),
+                    suggestion: Some("Use a supported, valid stream filter".to_string()),
                 });
                 return;
             }
+        };
+        if !bytes.windows(9).any(|w| w == b"x:xmpmeta")
+            && !bytes.windows(10).any(|w| w == b"<x:xmpmeta")
+        {
+            report.add_issue(ValidationIssue {
+                severity: ValidationSeverity::Warning,
+                code: "XMP_PACKET_MISSING".to_string(),
+                message: "Metadata stream does not appear to contain an XMP packet".to_string(),
+                node_id: document.catalog,
+                location: Some("Metadata stream".to_string()),
+                suggestion: Some("Embed a valid XMP packet".to_string()),
+            });
+            return;
         }
 
         report.add_passed_check();

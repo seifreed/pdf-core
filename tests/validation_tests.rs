@@ -557,6 +557,41 @@ mod validation_tests {
     }
 
     #[test]
+    fn pdfua_metadata_rule_decodes_filtered_xmp_before_inspection() {
+        use flate2::{write::ZlibEncoder, Compression};
+        use std::io::Write;
+
+        let mut document = create_test_document();
+        let catalog_id = document.catalog.expect("Catalog should exist");
+        let catalog = document
+            .ast
+            .get_node_mut(catalog_id)
+            .expect("Catalog node should exist");
+        let mut encoded = ZlibEncoder::new(Vec::new(), Compression::default());
+        encoded
+            .write_all(b"<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"></x:xmpmeta>")
+            .expect("XMP should encode");
+        let compressed = encoded.finish().expect("compressed XMP should finish");
+
+        if let PdfValue::Dictionary(dict) = &mut catalog.value {
+            let mut metadata_dict = PdfDictionary::new();
+            metadata_dict.insert("Type", PdfValue::Name(PdfName::new("Metadata")));
+            metadata_dict.insert("Subtype", PdfValue::Name(PdfName::new("XML")));
+            metadata_dict.insert("Filter", PdfValue::Name(PdfName::new("FlateDecode")));
+            dict.insert(
+                "Metadata",
+                PdfValue::Stream(PdfStream::new(metadata_dict, compressed)),
+            );
+        }
+
+        let report = SchemaRegistry::new()
+            .validate(&document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(!has_issue(&report, "XMP_PACKET_MISSING"));
+        assert!(!has_issue(&report, "METADATA_DECODE_FAILED"));
+    }
+
+    #[test]
     fn pdfa_resolves_indirect_catalog_entries() {
         let mut document = create_test_document();
         let action_id = ObjectId::new(40, 0);
