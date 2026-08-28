@@ -35,6 +35,10 @@ const STARTXREF_KEYWORD: &[u8] = b"startxref";
 const OBJ_KEYWORD: &[u8] = b" obj";
 const XREF_TYPE_MARKER: &[u8] = b"/Type /XRef";
 
+fn is_resource_budget_error(error: &AstError) -> bool {
+    matches!(error, AstError::ParseError(message) if message.contains("budget"))
+}
+
 // Depth and size limits
 const MAX_FORM_FIELD_DEPTH: usize = 64;
 const XREF_RECOVERY_SEARCH_RADIUS: u64 = 2048;
@@ -535,11 +539,13 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         if !Self::skip_whitespace(remaining).starts_with(TRAILER_KEYWORD) {
             return Ok(None);
         }
-        let trailer = match Self::extract_trailer_dict_with_budget(
+        let trailer = match Self::extract_trailer_dict_with_budget_checked(
             remaining,
             self.limits.max_depth,
             &self.limits.budget,
-        ) {
+        )
+        .map_err(AstError::ParseError)?
+        {
             Some(dict) => dict,
             None => return Ok(None),
         };
@@ -581,14 +587,29 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         max_depth: usize,
         budget: &ResourceBudget,
     ) -> Option<PdfDictionary> {
-        let trailer_pos = Self::find_pattern(data, TRAILER_KEYWORD)?;
+        Self::extract_trailer_dict_with_budget_checked(data, max_depth, budget)
+            .ok()
+            .flatten()
+    }
+
+    fn extract_trailer_dict_with_budget_checked(
+        data: &[u8],
+        max_depth: usize,
+        budget: &ResourceBudget,
+    ) -> Result<Option<PdfDictionary>, String> {
+        let Some(trailer_pos) = Self::find_pattern(data, TRAILER_KEYWORD) else {
+            return Ok(None);
+        };
         let trailer_data = &data[trailer_pos + TRAILER_KEYWORD.len()..];
         let trailer_data = Self::skip_whitespace(trailer_data);
 
         match object_parser::parse_value_with_max_depth_and_budget(trailer_data, max_depth, budget)
         {
-            Ok((_, PdfValue::Dictionary(dict))) => Some(dict),
-            _ => None,
+            Ok((_, PdfValue::Dictionary(dict))) => Ok(Some(dict)),
+            Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                Err("resource budget exceeded: trailer parser".to_string())
+            }
+            _ => Ok(None),
         }
     }
 
@@ -652,6 +673,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             &self.limits.budget,
         ) {
             Ok((_, (id, PdfValue::Stream(s)))) => (id, s),
+            Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                return Err(AstError::ParseError(
+                    "resource budget exceeded: xref stream parser".to_string(),
+                ));
+            }
             _ => return Err(AstError::ParseError("Invalid xref stream".to_string())),
         };
 
@@ -707,19 +733,19 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             &self.limits.budget,
         ) {
             Ok(data) => data,
+            Err(err) if self.tolerant && !err.to_string().contains("resource budget exceeded") => {
+                self.record_diagnostic(
+                    None,
+                    None,
+                    "xref_stream_decode",
+                    "continued with empty xref entries",
+                    0.9,
+                    raw_data.len() as u64,
+                    &err.to_string(),
+                )?;
+                return Ok(entries);
+            }
             Err(err) => {
-                if self.tolerant {
-                    self.record_diagnostic(
-                        None,
-                        None,
-                        "xref_stream_decode",
-                        "continued with empty xref entries",
-                        0.9,
-                        raw_data.len() as u64,
-                        &err.to_string(),
-                    )?;
-                    return Ok(entries);
-                }
                 return Err(AstError::ParseError(format!(
                     "Failed to decode xref stream: {}",
                     err
@@ -953,6 +979,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         match self.parse_single_xref_at(absolute) {
             Ok((entries, trailer)) => Ok(Some((entries, trailer))),
+            Err(error) if is_resource_budget_error(&error) => Err(error),
             Err(_) => Ok(None),
         }
     }
@@ -974,8 +1001,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 if absolute == original_offset {
                     continue;
                 }
-                if let Ok((entries, trailer)) = self.parse_xref_stream_at(absolute) {
-                    return Ok(Some((entries, trailer)));
+                match self.parse_xref_stream_at(absolute) {
+                    Ok((entries, trailer)) => return Ok(Some((entries, trailer))),
+                    Err(error) if is_resource_budget_error(&error) => return Err(error),
+                    Err(_) => {}
                 }
             }
         }
@@ -1174,14 +1203,18 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             let trailer_data = &remaining[trailer_pos + 7..];
             let trailer_data = Self::skip_whitespace(trailer_data);
 
-            if let Ok((_, PdfValue::Dictionary(dict))) =
-                object_parser::parse_value_with_max_depth_and_budget(
-                    trailer_data,
-                    self.limits.max_depth,
-                    &self.limits.budget,
-                )
-            {
-                self.document.set_trailer(dict);
+            match object_parser::parse_value_with_max_depth_and_budget(
+                trailer_data,
+                self.limits.max_depth,
+                &self.limits.budget,
+            ) {
+                Ok((_, PdfValue::Dictionary(dict))) => self.document.set_trailer(dict),
+                Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                    return Err(AstError::ParseError(
+                        "resource budget exceeded: trailer parser".to_string(),
+                    ));
+                }
+                _ => {}
             }
         }
 
@@ -1228,7 +1261,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                             Ok(decoded) => {
                                 self.parse_xref_stream_data(&decoded, &stream.dict)?;
                             }
-                            Err(err) if self.tolerant => {
+                            Err(err)
+                                if self.tolerant
+                                    && !err.to_string().contains("resource budget exceeded") =>
+                            {
                                 self.record_diagnostic(
                                     Some(obj_id),
                                     self.xref_offset,
@@ -1258,6 +1294,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                         entries: Vec::new(),
                     });
                 }
+            }
+            Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                return Err(AstError::ParseError(
+                    "resource budget exceeded: xref stream parser".to_string(),
+                ));
             }
             Err(err) => {
                 return Err(AstError::ParseError(format!(
