@@ -192,9 +192,15 @@ impl<'a> ColorSpaceParser<'a> {
             Ok(filters) => filters,
             Err(_) => return,
         };
-        let decoded = decode_stream_with_budget(raw, &filters, &self.limits.budget)
-            .ok()
-            .unwrap_or_default();
+        let decoded = match decode_stream_with_budget(raw, &filters, &self.limits.budget) {
+            Ok(decoded) => decoded,
+            Err(message) => {
+                if let Some(error) = budget_error_from_message(&message.to_string()) {
+                    self.budget_error = Some(error);
+                }
+                return;
+            }
+        };
 
         let info = match parse_icc_profile(&decoded) {
             Some(info) => info,
@@ -680,6 +686,20 @@ impl<'a> ColorSpaceParser<'a> {
     }
 }
 
+fn budget_error_from_message(message: &str) -> Option<ResourceBudgetError> {
+    [
+        ("InputBytes", ResourceBudgetError::InputBytes),
+        ("DecodedBytes", ResourceBudgetError::DecodedBytes),
+        ("Objects", ResourceBudgetError::Objects),
+        ("Nodes", ResourceBudgetError::Nodes),
+        ("Edges", ResourceBudgetError::Edges),
+        ("Deadline", ResourceBudgetError::Deadline),
+        ("Cancelled", ResourceBudgetError::Cancelled),
+    ]
+    .into_iter()
+    .find_map(|(name, error)| message.contains(name).then_some(error))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -725,5 +745,21 @@ mod tests {
             .parse_colorspace_with_budget(&PdfValue::Name(PdfName::new("DeviceRGB")))
             .expect_err("color space node budget must propagate");
         assert_eq!(error, ResourceBudgetError::Nodes);
+    }
+
+    #[test]
+    fn reports_icc_decode_budget_exhaustion() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let limits = PerformanceLimits {
+            budget: ResourceBudget::new(1024, 1024, 0, 10, 10, 10, 10, 8),
+            ..PerformanceLimits::default()
+        };
+        let mut parser = ColorSpaceParser::new_with_limits(&mut ast, &resolver, &limits);
+        let stream = crate::types::PdfStream::new(PdfDictionary::new(), vec![0]);
+
+        parser.attach_icc_profile_node(NodeId(0), &stream);
+
+        assert_eq!(parser.budget_error, Some(ResourceBudgetError::DecodedBytes));
     }
 }
