@@ -143,6 +143,12 @@ pub fn decode_jpx_to_codestream_with_limit(
         }
     }
 
+    if pos != data.len() {
+        return Err(FilterError::InvalidData(
+            "JP2 container has trailing bytes".to_string(),
+        ));
+    }
+
     if !saw_signature {
         return Err(FilterError::InvalidData(
             "JP2 signature not found".to_string(),
