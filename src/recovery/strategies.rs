@@ -1269,6 +1269,7 @@ impl XRefRebuildStrategy {
     fn rebuild_xref_table(&self, data: &mut Vec<u8>) -> bool {
         // First, find all object positions
         let objects = self.scan_for_objects(data);
+        let root_clause = Self::existing_root_clause(data).unwrap_or_default();
 
         // Remove existing xref and trailer
         if let Some(xref_pos) = find_pattern(data, b"xref") {
@@ -1304,10 +1305,14 @@ impl XRefRebuildStrategy {
         }
 
         // Add trailer
+        let size = objects
+            .keys()
+            .max()
+            .and_then(|object_number| object_number.checked_add(1))
+            .unwrap_or(1);
         let trailer = format!(
-            "trailer\n<<\n/Size {}\n/Root 1 0 R\n>>\nstartxref\n{}\n%%EOF\n",
-            objects.len() + 1,
-            xref_start_pos
+            "trailer\n<<\n/Size {}\n{}>>\nstartxref\n{}\n%%EOF\n",
+            size, root_clause, xref_start_pos
         );
 
         xref_data.extend_from_slice(trailer.as_bytes());
@@ -1329,25 +1334,44 @@ impl XRefRebuildStrategy {
         while pos < data.len() {
             if let Some(obj_start) = find_pattern(&data[pos..], b" obj") {
                 let abs_pos = pos + obj_start;
+                let object_end = abs_pos.saturating_add(b" obj".len());
 
                 // Look backwards for the object number
                 let search_start = abs_pos.saturating_sub(20);
-                let prefix = String::from_utf8_lossy(&data[search_start..abs_pos]);
+                let prefix = String::from_utf8_lossy(&data[search_start..object_end]);
 
                 // Find object number pattern
                 if let Some(captures) = obj_regex.captures(&prefix) {
                     if let Ok(obj_num) = captures[1].parse::<u32>() {
-                        objects.insert(obj_num, search_start);
+                        let header_start = search_start + captures.get(0).unwrap().start();
+                        objects.insert(obj_num, header_start);
                     }
                 }
 
-                pos = abs_pos + 4;
+                pos = object_end;
             } else {
                 break;
             }
         }
 
         objects
+    }
+
+    fn existing_root_clause(data: &[u8]) -> Option<String> {
+        let trailer = find_pattern(data, b"trailer")?;
+        let (_, value) = crate::parser::object_parser::parse_value(&data[trailer + 7..]).ok()?;
+        let dictionary = match value {
+            crate::types::PdfValue::Dictionary(dictionary) => dictionary,
+            _ => return None,
+        };
+        let root = match dictionary.get("Root") {
+            Some(crate::types::PdfValue::Reference(reference)) => reference,
+            _ => return None,
+        };
+        Some(format!(
+            "/Root {} {} R\n",
+            root.object_number, root.generation_number
+        ))
     }
 }
 
@@ -2272,7 +2296,10 @@ fn find_pattern(data: &[u8], pattern: &[u8]) -> Option<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::{BasicStructureRecovery, RecoveryConfig, RecoveryContext, RecoveryStrategy};
+    use super::{
+        BasicStructureRecovery, RecoveryConfig, RecoveryContext, RecoveryStrategy,
+        XRefRebuildStrategy,
+    };
     use crate::ast::{PdfDocument, PdfVersion};
 
     #[test]
@@ -2297,5 +2324,28 @@ mod tests {
         assert!(!recovered.windows(4).any(|window| window == b"xref"));
         assert!(!recovered.windows(7).any(|window| window == b"trailer"));
         assert!(!recovered.windows(5).any(|window| window == b"/Root"));
+    }
+
+    #[test]
+    fn xref_rebuild_records_the_exact_object_header_offset() {
+        let data = b"prefix\n12 0 obj\nnull\nendobj\n";
+        let objects = XRefRebuildStrategy::new().scan_for_objects(data);
+        let expected = data
+            .windows(b"12 0 obj".len())
+            .position(|window| window == b"12 0 obj")
+            .expect("object header");
+
+        assert_eq!(objects.get(&12), Some(&expected));
+    }
+
+    #[test]
+    fn xref_rebuild_does_not_invent_root_and_uses_correct_size() {
+        let mut data = b"%PDF-1.4\n12 0 obj\nnull\nendobj\n".to_vec();
+        XRefRebuildStrategy::new().rebuild_xref_table(&mut data);
+        let rebuilt = String::from_utf8(data).expect("repaired PDF should be text");
+
+        assert!(rebuilt.contains("/Size 13"));
+        assert!(!rebuilt.contains("/Root 1 0 R"));
+        assert!(rebuilt.contains("0000000009 00000 n"));
     }
 }
