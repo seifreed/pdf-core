@@ -143,7 +143,13 @@ fn convert_issue(issue: ValidationIssue, document: &PdfDocument) -> Violation {
         "PDF_A_FONT_EMBEDDING" => Some("ISO 19005-1:2005, 6.3.4"),
         "PDF_A_MULTIMEDIA" => Some("ISO 19005-1:2005, 6.5.2"),
         "PDF_A_JAVASCRIPT" => Some("ISO 19005-1:2005, 6.6.1"),
-        "NO_TAGGED_STRUCTURE" | "STRUCT_ELEM_MISSING" => Some("ISO 14289-1:2014, 7.1"),
+        "NO_TAGGED_STRUCTURE"
+        | "STRUCT_ELEM_MISSING"
+        | "ACCESSIBILITY_METADATA_MISSING"
+        | "METADATA_NOT_STREAM"
+        | "METADATA_STREAM_INVALID"
+        | "METADATA_DECODE_FAILED"
+        | "XMP_PACKET_MISSING" => Some("ISO 14289-1:2014, 7.1"),
         "LANG_MISSING" | "LANG_EMPTY" => Some("ISO 14289-1:2014, 7.2"),
         "ALT_TEXT_MISSING" => Some("ISO 14289-1:2014, 7.3"),
         _ => None,
@@ -271,6 +277,26 @@ mod tests {
         assert_eq!(
             violation.standard_reference.as_deref(),
             Some("ISO 14289-1:2014, 7.3")
+        );
+    }
+
+    #[test]
+    fn preserves_pdfua_metadata_reference() {
+        let violation = convert_issue(
+            ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "METADATA_DECODE_FAILED".to_string(),
+                message: "metadata stream could not be decoded".to_string(),
+                node_id: None,
+                location: None,
+                suggestion: None,
+            },
+            &PdfDocument::new(PdfVersion::new(1, 7)),
+        );
+
+        assert_eq!(
+            violation.standard_reference.as_deref(),
+            Some("ISO 14289-1:2014, 7.1")
         );
     }
 }
