@@ -485,8 +485,9 @@ Pendientes actuales, en orden practico:
   sustituyen aun la frontera de parseo estructural para entradas no
   confiables. `4cfc786` evita además que los errores de presupuesto al resolver
   objetos indirectos se conviertan silenciosamente en referencias ausentes;
-  queda extender la misma garantía a las rutas de parseo y resolución que aún
-  usan recuperaciones parciales.
+  `636c571` aplica la misma garantía a la detección de linealización;
+  queda extenderla a las rutas de parseo y resolución que aún usan
+  recuperaciones parciales.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
