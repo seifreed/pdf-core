@@ -547,8 +547,23 @@ impl<'a> PageTreeParser<'a> {
                 if let Some(cs_id) = self.resolver.get_node_id(&obj_id.id()) {
                     self.add_edge(page_id, cs_id, crate::ast::EdgeType::Resource);
 
+                    let node_type = self
+                        .ast
+                        .get_node(cs_id)
+                        .and_then(|node| node.value.as_array())
+                        .and_then(|array| array.get(0))
+                        .and_then(PdfValue::as_name)
+                        .map(|name| match name.without_slash() {
+                            "ICCBased" => NodeType::ICCBased,
+                            "Separation" => NodeType::Separation,
+                            "DeviceN" => NodeType::DeviceN,
+                            "Indexed" => NodeType::Indexed,
+                            "Pattern" => NodeType::Pattern,
+                            _ => NodeType::ColorSpace,
+                        })
+                        .unwrap_or(NodeType::ColorSpace);
                     if let Some(cs_node) = self.ast.get_node_mut(cs_id) {
-                        cs_node.node_type = NodeType::ColorSpace;
+                        cs_node.node_type = node_type;
                         cs_node
                             .metadata
                             .set_property("resource_name".to_string(), name.to_string());
@@ -765,10 +780,15 @@ mod tests {
             "ColorSpace",
             PdfValue::Dictionary({
                 let mut colorspaces = PdfDictionary::new();
-                colorspaces.insert("CS1", PdfValue::Name(PdfName::new("DeviceRGB")));
+                colorspaces.insert("CS1", PdfValue::Reference(PdfReference::new(9, 0)));
                 colorspaces
             }),
         );
+        let colorspace_id = ast.add_node(AstNode::new(
+            NodeId(9),
+            NodeType::Unknown,
+            PdfValue::Array(vec![PdfValue::Name(PdfName::new("Indexed"))].into()),
+        ));
         let resources_id = ast.add_node(AstNode::new(
             NodeId(3),
             NodeType::Unknown,
@@ -789,6 +809,7 @@ mod tests {
         resolver.insert(ObjectId::new(2, 0), page_id);
         resolver.insert(ObjectId::new(3, 0), resources_id);
         resolver.insert(ObjectId::new(4, 0), root_kids_id);
+        resolver.insert(ObjectId::new(9, 0), colorspace_id);
         let mut parser = PageTreeParser::new(&mut ast, &resolver);
 
         assert_eq!(parser.parse_page_tree(&root_pages, root_id), vec![page_id]);
@@ -798,7 +819,7 @@ mod tests {
                 .map(String::as_str),
             Some("true")
         );
-        assert_eq!(ast.find_nodes_by_type(NodeType::ColorSpace).len(), 1);
+        assert_eq!(ast.find_nodes_by_type(NodeType::Indexed).len(), 1);
         assert_eq!(ast.edge_count(), 3);
     }
 
