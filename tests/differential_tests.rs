@@ -52,6 +52,19 @@ fn percentile_ms(samples: &mut [u128], percentile: usize) -> u128 {
     samples[index]
 }
 
+fn acceptance_class(core: bool, qpdf: bool, mutool: bool) -> &'static str {
+    match (core, qpdf, mutool) {
+        (false, false, false) => "all_reject",
+        (true, false, false) => "core_only",
+        (false, true, false) => "qpdf_only",
+        (true, true, false) => "core_qpdf_only",
+        (false, false, true) => "mutool_only",
+        (true, false, true) => "core_mutool_only",
+        (false, true, true) => "references_only",
+        (true, true, true) => "all_accept",
+    }
+}
+
 fn peak_rss_kib() -> Option<u64> {
     #[cfg(target_os = "linux")]
     {
@@ -129,6 +142,7 @@ fn corpus_differential_metrics_are_recorded() {
     let mut divergences = 0;
     let mut reference_disagreements = 0;
     let mut consensus_divergences = 0;
+    let mut acceptance_matrix = [0usize; 8];
     for (path, expected_sha256) in files {
         let file_started = Instant::now();
         let bytes = fs::read(&path).expect("corpus PDF is readable");
@@ -162,6 +176,10 @@ fn corpus_differential_metrics_are_recorded() {
         core_accepted += core_accepts as usize;
         qpdf_accepted += qpdf_accepts as usize;
         mutool_accepted += mutool_accepts as usize;
+        let matrix_index = (core_accepts as usize)
+            | ((qpdf_accepts as usize) << 1)
+            | ((mutool_accepts as usize) << 2);
+        acceptance_matrix[matrix_index] += 1;
         if core_accepts != qpdf_accepts || core_accepts != mutool_accepts {
             divergences += 1;
             if qpdf_accepts != mutool_accepts {
@@ -170,7 +188,8 @@ fn corpus_differential_metrics_are_recorded() {
                 consensus_divergences += 1;
             }
             eprintln!(
-                "differential divergence: file={}, pdf_core={}, qpdf={}, mutool={}",
+                "differential divergence: class={}, file={}, pdf_core={}, qpdf={}, mutool={}",
+                acceptance_class(core_accepts, qpdf_accepts, mutool_accepts),
                 path.display(),
                 core_accepts,
                 qpdf_accepts,
@@ -201,5 +220,16 @@ fn corpus_differential_metrics_are_recorded() {
         p50_ms,
         p95_ms,
         p99_ms
+    );
+    eprintln!(
+        "differential acceptance matrix: all_reject={}, core_only={}, qpdf_only={}, core_qpdf_only={}, mutool_only={}, core_mutool_only={}, references_only={}, all_accept={}",
+        acceptance_matrix[0],
+        acceptance_matrix[1],
+        acceptance_matrix[2],
+        acceptance_matrix[3],
+        acceptance_matrix[4],
+        acceptance_matrix[5],
+        acceptance_matrix[6],
+        acceptance_matrix[7]
     );
 }
