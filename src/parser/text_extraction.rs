@@ -250,7 +250,7 @@ impl<'a> TextExtractor<'a> {
                     .and_then(PdfValue::as_name)
                     .map(|value| value.without_slash().to_string())
                     .unwrap_or_else(|| "StandardEncoding".to_string());
-                (encoding, Self::parse_differences(dict.get("Differences")))
+                (encoding, self.parse_differences(dict.get("Differences")))
             }
             None => ("StandardEncoding".to_string(), HashMap::new()),
         };
@@ -381,15 +381,15 @@ impl<'a> TextExtractor<'a> {
             .flatten()
     }
 
-    fn parse_differences(value: Option<&PdfValue>) -> HashMap<u8, String> {
-        let Some(PdfValue::Array(values)) = value else {
+    fn parse_differences(&self, value: Option<&PdfValue>) -> HashMap<u8, String> {
+        let Some(values) = value.and_then(|value| self.resolve_array(value)) else {
             return HashMap::new();
         };
         let mut code = None;
         let mut differences = HashMap::new();
         for value in values {
             match value {
-                PdfValue::Integer(value) => code = u8::try_from(*value).ok(),
+                PdfValue::Integer(value) => code = u8::try_from(value).ok(),
                 PdfValue::Name(name) => {
                     if let Some(current_code) = code {
                         if let Some(unicode) = Self::glyph_name_to_unicode(name.without_slash()) {
@@ -1012,7 +1012,7 @@ mod tests {
 
     #[test]
     fn applies_simple_font_encoding_differences() {
-        let ast = PdfAstGraph::new();
+        let mut ast = PdfAstGraph::new();
         let mut encoding = PdfDictionary::new();
         encoding.insert(
             "BaseEncoding",
@@ -1020,12 +1020,17 @@ mod tests {
         );
         encoding.insert(
             "Differences",
+            PdfValue::Reference(crate::types::PdfReference::new(1, 0)),
+        );
+        ast.add_node(AstNode::new(
+            NodeId::new(1),
+            NodeType::Object(ObjectId::new(1, 0)),
             PdfValue::Array(PdfArray::from(vec![
                 PdfValue::Integer(65),
                 PdfValue::Name(PdfName::new("Euro")),
                 PdfValue::Name(PdfName::new("Aacute")),
             ])),
-        );
+        ));
         let mut font = PdfDictionary::new();
         font.insert("Subtype", PdfValue::Name(PdfName::new("Type1")));
         font.insert("Encoding", PdfValue::Dictionary(encoding));
