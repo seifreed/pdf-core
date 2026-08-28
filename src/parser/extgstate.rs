@@ -29,20 +29,20 @@ impl<'a> ExtGStateParser<'a> {
 
     pub fn parse_extgstate(&mut self, gs_dict: &PdfDictionary, gs_id: NodeId) {
         // Extract values first to avoid borrow checker issues
-        let line_width = gs_dict.get("LW").and_then(|v| match v {
-            PdfValue::Real(lw) => Some(lw.to_string()),
-            _ => None,
-        });
+        let line_width = gs_dict
+            .get("LW")
+            .and_then(|value| self.get_number(value))
+            .map(|value| value.to_string());
 
-        let line_cap = gs_dict.get("LC").and_then(|v| match v {
-            PdfValue::Integer(lc) => Some(lc.to_string()),
-            _ => None,
-        });
+        let line_cap = gs_dict
+            .get("LC")
+            .and_then(|value| self.get_number(value))
+            .map(|value| value.to_string());
 
-        let line_join = gs_dict.get("LJ").and_then(|v| match v {
-            PdfValue::Integer(lj) => Some(lj.to_string()),
-            _ => None,
-        });
+        let line_join = gs_dict
+            .get("LJ")
+            .and_then(|value| self.get_number(value))
+            .map(|value| value.to_string());
 
         let miter_limit = gs_dict
             .get("ML")
@@ -64,10 +64,10 @@ impl<'a> ExtGStateParser<'a> {
             _ => None,
         });
 
-        let overprint_mode = gs_dict.get("OPM").and_then(|v| match v {
-            PdfValue::Integer(opm) => Some(opm.to_string()),
-            _ => None,
-        });
+        let overprint_mode = gs_dict
+            .get("OPM")
+            .and_then(|value| self.get_number(value))
+            .map(|value| value.to_string());
 
         let flatness = gs_dict
             .get("FL")
@@ -502,6 +502,15 @@ impl<'a> ExtGStateParser<'a> {
         match value {
             PdfValue::Integer(i) => Some(*i as f64),
             PdfValue::Real(r) => Some(*r),
+            PdfValue::Reference(reference) => self
+                .resolver
+                .get_node_id(&reference.id())
+                .and_then(|node_id| self.ast.get_node(node_id))
+                .and_then(|node| match &node.value {
+                    PdfValue::Integer(integer) => Some(*integer as f64),
+                    PdfValue::Real(real) => Some(*real),
+                    _ => None,
+                }),
             _ => None,
         }
     }
@@ -536,5 +545,65 @@ mod tests {
         parser.parse_extgstate(&gs_dict, gs_id);
         assert_eq!(ast.node_count(), 2);
         assert_eq!(ast.edge_count(), 1);
+    }
+
+    #[test]
+    fn extgstate_parser_resolves_indirect_numeric_parameters() {
+        let mut ast = PdfAstGraph::new();
+        let gs_id = ast.add_node(AstNode::new(
+            NodeId(0),
+            NodeType::ExtGState,
+            PdfValue::Dictionary(PdfDictionary::new()),
+        ));
+        let width_id = ast.add_node(AstNode::new(
+            NodeId(1),
+            NodeType::Unknown,
+            PdfValue::Real(2.5),
+        ));
+        let cap_id = ast.add_node(AstNode::new(
+            NodeId(2),
+            NodeType::Unknown,
+            PdfValue::Integer(1),
+        ));
+        let mode_id = ast.add_node(AstNode::new(
+            NodeId(3),
+            NodeType::Unknown,
+            PdfValue::Integer(0),
+        ));
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(crate::types::ObjectId::new(1, 0), width_id);
+        resolver.insert(crate::types::ObjectId::new(2, 0), cap_id);
+        resolver.insert(crate::types::ObjectId::new(3, 0), mode_id);
+        let mut gs_dict = PdfDictionary::new();
+        gs_dict.insert(
+            "LW",
+            PdfValue::Reference(crate::types::PdfReference::new(1, 0)),
+        );
+        gs_dict.insert(
+            "LC",
+            PdfValue::Reference(crate::types::PdfReference::new(2, 0)),
+        );
+        gs_dict.insert(
+            "OPM",
+            PdfValue::Reference(crate::types::PdfReference::new(3, 0)),
+        );
+
+        let mut parser = ExtGStateParser::new(&mut ast, &resolver);
+        parser.parse_extgstate(&gs_dict, gs_id);
+        let node = ast.get_node(gs_id).expect("graphics state should exist");
+        assert_eq!(
+            node.metadata.get_property("line_width").map(String::as_str),
+            Some("2.5")
+        );
+        assert_eq!(
+            node.metadata.get_property("line_cap").map(String::as_str),
+            Some("1")
+        );
+        assert_eq!(
+            node.metadata
+                .get_property("overprint_mode")
+                .map(String::as_str),
+            Some("0")
+        );
     }
 }
