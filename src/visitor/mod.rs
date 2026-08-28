@@ -129,7 +129,7 @@ impl<'a> AstWalker<'a> {
         budget: &ResourceBudget,
     ) -> Result<(), ResourceBudgetError> {
         if let Some(root_id) = self.graph.get_root() {
-            self.walk_node_with_budget(root_id, visitor, budget)?;
+            self.walk_node_with_budget(root_id, visitor, 0, budget)?;
         }
         Ok(())
     }
@@ -173,8 +173,12 @@ impl<'a> AstWalker<'a> {
         &mut self,
         node_id: NodeId,
         visitor: &mut V,
+        depth: usize,
         budget: &ResourceBudget,
     ) -> Result<VisitorAction, ResourceBudgetError> {
+        if depth > budget.max_depth {
+            return Err(ResourceBudgetError::Depth);
+        }
         if self.visited.contains(&node_id) {
             return Ok(VisitorAction::SkipChildren);
         }
@@ -193,7 +197,10 @@ impl<'a> AstWalker<'a> {
         }
 
         for child_id in node.children.clone() {
-            if self.walk_node_with_budget(child_id, visitor, budget)? == VisitorAction::Stop {
+            budget.consume_edge()?;
+            if self.walk_node_with_budget(child_id, visitor, depth + 1, budget)?
+                == VisitorAction::Stop
+            {
                 return Ok(VisitorAction::Stop);
             }
         }
@@ -382,6 +389,9 @@ impl<'a> DepthAwareWalker<'a> {
                 return Ok(VisitorAction::SkipChildren);
             }
         }
+        if depth > budget.max_depth {
+            return Err(ResourceBudgetError::Depth);
+        }
         if self.visited.contains(&node_id) {
             return Ok(VisitorAction::SkipChildren);
         }
@@ -398,6 +408,7 @@ impl<'a> DepthAwareWalker<'a> {
             VisitorAction::Continue => {}
         }
         for child_id in &node.children {
+            budget.consume_edge()?;
             if self.walk_node_with_depth_and_budget(*child_id, visitor, depth + 1, budget)?
                 == VisitorAction::Stop
             {
@@ -443,5 +454,31 @@ mod tests {
             .execute_with_budget(&graph, &budget)
             .expect("query should fit budget");
         assert_eq!(result, vec![root]);
+    }
+
+    #[test]
+    fn budgeted_visitor_walk_rejects_edges_and_depth() {
+        let mut graph = PdfAstGraph::new();
+        let root = graph.create_node(NodeType::Root, crate::types::PdfValue::Null);
+        let child = graph.create_node(NodeType::Page, crate::types::PdfValue::Null);
+        graph.add_edge(root, child, crate::ast::EdgeType::Child);
+        graph.set_root(root);
+
+        let mut visitor = CountingVisitor;
+        let edge_budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 10, 0, 10);
+        assert_eq!(
+            AstWalker::new(&graph)
+                .walk_with_budget(&mut visitor, &edge_budget)
+                .expect_err("visitor traversal must consume edge budget"),
+            ResourceBudgetError::Edges
+        );
+
+        let depth_budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 10, 10, 0);
+        assert_eq!(
+            AstWalker::new(&graph)
+                .walk_with_budget(&mut visitor, &depth_budget)
+                .expect_err("visitor traversal must enforce depth budget"),
+            ResourceBudgetError::Depth
+        );
     }
 }

@@ -41,6 +41,7 @@ pub enum ResourceBudgetError {
     Objects,
     Nodes,
     Edges,
+    Depth,
     Deadline,
     Cancelled,
 }

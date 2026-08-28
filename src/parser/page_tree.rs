@@ -706,6 +706,7 @@ fn budget_error_from_message(message: &str) -> Option<ResourceBudgetError> {
         ("Objects", ResourceBudgetError::Objects),
         ("Nodes", ResourceBudgetError::Nodes),
         ("Edges", ResourceBudgetError::Edges),
+        ("Depth", ResourceBudgetError::Depth),
         ("Deadline", ResourceBudgetError::Deadline),
         ("Cancelled", ResourceBudgetError::Cancelled),
     ]
