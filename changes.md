@@ -497,6 +497,8 @@ Pendientes actuales, en orden practico:
   `13f8e6a` aplica el mismo contrato al cargador principal de objetos, sus
   `Length` indirectos y object streams. `44f6904` extiende la garantía al
   cálculo de offsets dentro de object streams.
+  `6a0f346` evita además ocultar esos límites durante la recuperación de
+  revisiones xref, XFA y XMP.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
