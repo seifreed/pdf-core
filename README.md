@@ -66,7 +66,7 @@ isolation and an application-level resource policy.
 - **MSRV:** Rust 1.88.0.
 - **Project:** `pdf-core`.
 - **Crate:** `pdf-ast` for compatibility with existing consumers.
-- **AST schema:** experimental `1.1.0`; see [COMPATIBILITY.md](COMPATIBILITY.md).
+- **AST schema:** experimental `1.2.0`; see [COMPATIBILITY.md](COMPATIBILITY.md).
 - **Rust API:** `0.2.0-alpha.1`; semver audit is checked against published `0.1.0`.
 - **C ABI:** `2.0`; see [COMPATIBILITY.md](COMPATIBILITY.md) for ownership rules.
 
