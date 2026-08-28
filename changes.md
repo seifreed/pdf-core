@@ -224,6 +224,9 @@ recursos de pagina; la regresion de colores pasa `2/2`, el smoke ICC `1/1`,
 la suite de libreria del workspace y Clippy estricto pasan.
 `68690b4` hace que el nodo de metadatos de perfiles ICC informe tambien el
 agotamiento de nodos al mismo presupuesto compartido.
+`c5e7092` propaga tambien los errores de decodificacion presupuestada de
+perfiles ICC, distinguiendolos de un perfil invalido; la suite de colores pasa
+`3/3` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
