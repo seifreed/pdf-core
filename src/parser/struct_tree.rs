@@ -1,5 +1,6 @@
 use crate::ast::document::{ParentTree, ParentTreeEntry, StructureTree};
 use crate::ast::{AstNode, EdgeType, NodeId, NodeType, PdfAstGraph};
+use crate::parser::names_tree::NameTreeParser;
 use crate::parser::reference_resolver::ObjectNodeMap;
 use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::types::{ObjectId, PdfArray, PdfDictionary, PdfValue};
@@ -307,10 +308,11 @@ impl<'a> StructTreeParser<'a> {
 
     fn parse_id_tree(
         &mut self,
-        _dict: &PdfDictionary,
+        dict: &PdfDictionary,
     ) -> Option<crate::ast::document::NameTreeNode> {
-        // Similar to NameTree parsing
-        None // Simplified for now
+        let id_tree = dict.get("IDTree")?;
+        NameTreeParser::new_with_budget(self.ast, self.resolver, &self.budget)
+            .parse_tree_value(id_tree)
     }
 
     fn parse_struct_elements_at_depth(
@@ -856,6 +858,20 @@ mod tests {
         root_dict.insert("K", PdfValue::Reference(PdfReference::new(1, 0)));
         root_dict.insert("RoleMap", PdfValue::Reference(PdfReference::new(5, 0)));
         root_dict.insert("ClassMap", PdfValue::Reference(PdfReference::new(6, 0)));
+        root_dict.insert(
+            "IDTree",
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert(
+                    "Names",
+                    PdfValue::Array(PdfArray::from(vec![
+                        PdfValue::String(crate::types::PdfString::new_literal(b"figure-id")),
+                        PdfValue::Reference(PdfReference::new(1, 0)),
+                    ])),
+                );
+                dict
+            }),
+        );
         let mut parser = StructTreeParser::new(&mut ast, &resolver);
         let tree = parser
             .parse_struct_tree_root(&root_dict)
@@ -888,6 +904,7 @@ mod tests {
             Some("Figure")
         );
         assert_eq!(tree.class_map.get("/Layout"), Some(&class_id));
+        assert_eq!(tree.id_tree.as_ref().map(|tree| tree.names.len()), Some(1));
         assert!(tree.class_map.contains_key("/Multi"));
     }
 

@@ -41,9 +41,13 @@ impl<'a> NameTreeParser<'a> {
     }
 
     fn parse_tree_entry(&mut self, dict: &PdfDictionary, key: &str) -> Option<NameTreeNode> {
-        match dict.get(key) {
-            Some(PdfValue::Dictionary(tree_dict)) => Some(self.parse_name_tree_node(tree_dict)),
-            Some(PdfValue::Reference(obj_id)) => {
+        dict.get(key).and_then(|value| self.parse_tree_value(value))
+    }
+
+    pub fn parse_tree_value(&mut self, value: &PdfValue) -> Option<NameTreeNode> {
+        match value {
+            PdfValue::Dictionary(tree_dict) => Some(self.parse_name_tree_node(tree_dict)),
+            PdfValue::Reference(obj_id) => {
                 if let Some(node_id) = self.resolver.get_node_id(&obj_id.id()) {
                     if let Some(node) = self.ast.get_node(node_id) {
                         if let Some(tree_dict) = node.as_dict() {
