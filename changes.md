@@ -29,6 +29,9 @@ inspecciona streams cuyo diccionario declara `/Subtype /Image`, aunque el
 resolver los materialice como `ContentStream`. Las suites locales pasan `29`
 validaciones, `10` pruebas XMP y `6/6` mappings veraPDF. El workflow externo
 `33194555890` confirma la misma correccion en GitHub.
+`a3c4da8` añade una regresion unitaria para el alcance de `xml:lang` en XMP;
+los workflows `33195220190` (corpus externo) y `33195220226` (diferencial)
+tambien pasan sobre la revision actual.
 
 Actualizacion 2026-08-28: `2dc820d` anade un fixture PDF/UA derivado que
 rompe deliberadamente el nombre del diccionario de metadata, con evidencia
