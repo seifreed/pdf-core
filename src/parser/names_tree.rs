@@ -9,6 +9,7 @@ pub struct NameTreeParser<'a> {
     ast: &'a mut PdfAstGraph,
     resolver: &'a ObjectNodeMap,
     budget: ResourceBudget,
+    budget_error: Option<ResourceBudgetError>,
 }
 
 impl<'a> NameTreeParser<'a> {
@@ -25,10 +26,27 @@ impl<'a> NameTreeParser<'a> {
             ast,
             resolver,
             budget: budget.clone(),
+            budget_error: None,
         }
     }
 
     pub fn parse_names_dictionary(&mut self, names_dict: &PdfDictionary) -> NameTree {
+        self.parse_names_dictionary_inner(names_dict)
+    }
+
+    pub fn parse_names_dictionary_with_budget(
+        &mut self,
+        names_dict: &PdfDictionary,
+    ) -> Result<NameTree, ResourceBudgetError> {
+        self.budget_error = None;
+        let tree = self.parse_names_dictionary_inner(names_dict);
+        match self.budget_error.take() {
+            Some(error) => Err(error),
+            None => Ok(tree),
+        }
+    }
+
+    fn parse_names_dictionary_inner(&mut self, names_dict: &PdfDictionary) -> NameTree {
         NameTree {
             dests: self.parse_tree_entry(names_dict, "Dests"),
             embedded_files: self.parse_tree_entry(names_dict, "EmbeddedFiles"),
@@ -41,10 +59,27 @@ impl<'a> NameTreeParser<'a> {
     }
 
     fn parse_tree_entry(&mut self, dict: &PdfDictionary, key: &str) -> Option<NameTreeNode> {
-        dict.get(key).and_then(|value| self.parse_tree_value(value))
+        dict.get(key)
+            .and_then(|value| self.parse_tree_value_inner(value))
     }
 
     pub fn parse_tree_value(&mut self, value: &PdfValue) -> Option<NameTreeNode> {
+        self.parse_tree_value_with_budget(value).ok().flatten()
+    }
+
+    pub fn parse_tree_value_with_budget(
+        &mut self,
+        value: &PdfValue,
+    ) -> Result<Option<NameTreeNode>, ResourceBudgetError> {
+        self.budget_error = None;
+        let tree = self.parse_tree_value_inner(value);
+        match self.budget_error.take() {
+            Some(error) => Err(error),
+            None => Ok(tree),
+        }
+    }
+
+    fn parse_tree_value_inner(&mut self, value: &PdfValue) -> Option<NameTreeNode> {
         match value {
             PdfValue::Dictionary(tree_dict) => Some(self.parse_name_tree_node(tree_dict)),
             PdfValue::Reference(obj_id) => {
@@ -110,7 +145,8 @@ impl<'a> NameTreeParser<'a> {
             .and_then(|value| self.resolve_array(value))
         {
             for kid_ref in &kids {
-                if self.budget.consume_object().is_err() {
+                if let Err(error) = self.budget.consume_object() {
+                    self.budget_error = Some(error);
                     break;
                 }
                 if let PdfValue::Reference(obj_id) = kid_ref {
@@ -172,7 +208,10 @@ impl<'a> NameTreeParser<'a> {
             }
             PdfValue::Dictionary(dict) => {
                 // Create inline dictionary node
-                self.budget.consume_node().ok()?;
+                if let Err(error) = self.budget.consume_node() {
+                    self.budget_error = Some(error);
+                    return None;
+                }
                 let node_type = self.determine_node_type_from_dict(dict, name);
                 let node_id = self.ast.next_node_id();
                 let node = AstNode::new(node_id, node_type, PdfValue::Dictionary(dict.clone()));
@@ -180,7 +219,10 @@ impl<'a> NameTreeParser<'a> {
             }
             PdfValue::Array(arr) => {
                 // Create destination array node
-                self.budget.consume_node().ok()?;
+                if let Err(error) = self.budget.consume_node() {
+                    self.budget_error = Some(error);
+                    return None;
+                }
                 let node_id = self.ast.next_node_id();
                 let node = AstNode::new(node_id, NodeType::Unknown, PdfValue::Array(arr.clone()));
                 Some(self.ast.add_node(node))
@@ -239,7 +281,10 @@ impl<'a> NameTreeParser<'a> {
     }
 
     fn create_placeholder_node(&mut self, value: PdfValue, name: &str) -> Option<NodeId> {
-        self.budget.consume_node().ok()?;
+        if let Err(error) = self.budget.consume_node() {
+            self.budget_error = Some(error);
+            return None;
+        }
         let node_id = self.ast.next_node_id();
         let mut node = AstNode::new(node_id, NodeType::Unknown, value);
         node.metadata
@@ -620,6 +665,34 @@ mod tests {
         let tree = parser.parse_names_dictionary(&names_dict);
         assert_eq!(tree.dests.expect("destination tree").names.len(), 1);
         assert_eq!(ast.node_count(), 1);
+    }
+
+    #[test]
+    fn name_tree_construction_reports_budget_exhaustion() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 8);
+        let mut parser = NameTreeParser::new_with_budget(&mut ast, &resolver, &budget);
+        let mut tree_dict = PdfDictionary::new();
+        tree_dict.insert(
+            "Names",
+            PdfValue::Array(
+                vec![
+                    PdfValue::String("name".into()),
+                    PdfValue::String("value".into()),
+                ]
+                .into(),
+            ),
+        );
+        let mut names_dict = PdfDictionary::new();
+        names_dict.insert("Dests", PdfValue::Dictionary(tree_dict));
+
+        assert_eq!(
+            parser
+                .parse_names_dictionary_with_budget(&names_dict)
+                .expect_err("name tree construction must respect node budget"),
+            ResourceBudgetError::Nodes
+        );
     }
 
     #[test]
