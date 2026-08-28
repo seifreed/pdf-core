@@ -46,6 +46,11 @@ pasa `569/569`, con `263` conformes, `565` rechazos strict y `0` divergencias
 tolerantes. El diferencial pasa `2.810/2.810` y registra `397` divergencias
 (`396` desacuerdos entre referencias y `1` de consenso), `peak_rss_kib=362032`
 y percentiles `34/91/227 ms`; su clasificación sigue pendiente.
+`b56e861` corrige la clasificación de streams: el AST de contenido solo
+intenta parsear streams referenciados desde `/Contents` de páginas, evitando
+interpretar perfiles ICC, fuentes u otros datos binarios como operadores en
+modo strict; la regresión del resolver pasa `22/22` y el smoke strict real
+queda verde.
 
 Actualizacion posterior: `b410aa5` deduplica referencias repetidas durante la
 resolucion y reutiliza nodos semanticos ya asociados a `ObjectId`; `62adb2a`
