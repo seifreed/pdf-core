@@ -538,10 +538,9 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             let buffer = self.read_object_buffer(offset)?;
 
             // Resolve an indirect stream length before parsing stream bytes.
-            let parsed = match object_parser::parse_indirect_stream_prefix_with_max_depth_budgeted(
+            let parsed = match object_parser::parse_indirect_stream_prefix_with_max_depth(
                 &buffer,
                 self.limits.max_depth,
-                &self.limits.budget,
             ) {
                 Ok((_, (_, dict))) => {
                     if let Some(PdfValue::Reference(length_ref)) = dict.get("Length") {
@@ -598,9 +597,6 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                             &self.limits.budget,
                         )
                     }
-                }
-                Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
-                    return Err("resource budget exceeded: stream prefix".to_string());
                 }
                 Err(_) => object_parser::parse_indirect_object_with_max_depth_and_budget(
                     &buffer,
