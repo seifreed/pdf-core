@@ -202,7 +202,8 @@ impl<'a> ColorSpaceParser<'a> {
         };
 
         let node_id = self.ast.next_node_id();
-        if self.limits.budget.consume_node().is_err() {
+        if let Err(error) = self.limits.budget.consume_node() {
+            self.budget_error = Some(error);
             return;
         }
         let profile_id =
