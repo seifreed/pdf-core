@@ -540,6 +540,9 @@ Pendientes actuales, en orden practico:
   `2043bce` decodifica los streams XMP antes de inspeccionarlos en PDF/UA y
   convierte los fallos de decode en errores explícitos; el fixture positivo
   Flate y la suite de validación pasan `26/26`, con Clippy estricto.
+  `5938897` mapea también los errores y estados de metadata PDF/UA a
+  `ISO 14289-1:2014, 7.1`; el crate `pdf-compliance` pasa `8/8` tests y
+  Clippy estricto.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
