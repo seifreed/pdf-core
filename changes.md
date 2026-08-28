@@ -825,17 +825,17 @@ Ahora mismo ambas responsabilidades están demasiado mezcladas.
 
 ## 8. El repositorio necesita consolidación y gobernanza
 
-Hay varias inconsistencias:
+Quedan estos puntos de gobernanza:
 
 * `LICENSE` indica MIT.
-* El `Cargo.toml` principal indica MIT.
-* Algunos encabezados del código y documentación indican GPL-3.0.
-* Subcrates y bindings utilizan `MIT OR Apache-2.0`.
-* Parte de la metadata todavía apunta al antiguo repositorio o a `pdf-ast/pdf-ast`.
-* El crate se llama `pdf-ast`, el repositorio `pdf-core` y quedan referencias a `PDF-AST`.
+* El crate compatible se llama `pdf-ast` y el repositorio `pdf-core`; la
+  compatibilidad de nombres y las referencias internas a `PDF-AST` están
+  documentadas en `COMPATIBILITY.md`.
 * No hay GitHub Releases publicadas.
-* La rama principal aparece sin protección.
-* Los crates auxiliares no están declarados como miembros de un workspace raíz, por lo que el `cargo test --workspace` del root no los incorpora automáticamente.
+* `main` ya está protegida con los checks de CI, corpus, diferencial, fuzzing,
+  API y bindings; falta obtener ejecuciones verdes sostenidas.
+* El workspace raíz ya incluye los crates auxiliares y bindings; `fuzz` sigue
+  excluido porque usa su propio workspace.
 * Hay actualizaciones de Dependabot relacionadas con advisories que siguen abiertas, incluyendo actualizaciones de `rustls-webpki` y `quinn-proto`.
 
 Esto no es cosmético. Afecta a:
