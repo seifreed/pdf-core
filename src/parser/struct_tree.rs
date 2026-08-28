@@ -13,6 +13,7 @@ pub struct StructTreeParser<'a> {
     mcid_map: HashMap<(NodeId, i32), NodeId>, // (page_id, MCID) -> StructElem
     budget: ResourceBudget,
     active_elements: HashSet<NodeId>,
+    budget_error: Option<ResourceBudgetError>,
 }
 
 impl<'a> StructTreeParser<'a> {
@@ -31,11 +32,32 @@ impl<'a> StructTreeParser<'a> {
             mcid_map: HashMap::new(),
             budget: budget.clone(),
             active_elements: HashSet::new(),
+            budget_error: None,
         }
     }
 
     pub fn parse_struct_tree_root(&mut self, root_dict: &PdfDictionary) -> Option<StructureTree> {
-        self.budget.consume_node().ok()?;
+        self.budget_error = None;
+        self.parse_struct_tree_root_inner(root_dict)
+    }
+
+    pub fn parse_struct_tree_root_with_budget(
+        &mut self,
+        root_dict: &PdfDictionary,
+    ) -> Result<Option<StructureTree>, ResourceBudgetError> {
+        self.budget_error = None;
+        let tree = self.parse_struct_tree_root_inner(root_dict);
+        match self.budget_error.take() {
+            Some(error) => Err(error),
+            None => Ok(tree),
+        }
+    }
+
+    fn parse_struct_tree_root_inner(&mut self, root_dict: &PdfDictionary) -> Option<StructureTree> {
+        if let Err(error) = self.budget.consume_node() {
+            self.budget_error = Some(error);
+            return None;
+        }
         // Create root node
         let root_node = AstNode::new(
             self.ast.next_node_id(),
@@ -172,7 +194,8 @@ impl<'a> StructTreeParser<'a> {
                         }
                     }
                     PdfValue::Dictionary(d) => {
-                        if self.budget.consume_node().is_err() {
+                        if let Err(error) = self.budget.consume_node() {
+                            self.budget_error = Some(error);
                             continue;
                         }
                         // Create inline class node
@@ -185,7 +208,8 @@ impl<'a> StructTreeParser<'a> {
                         class_map.insert(key.to_string(), class_id);
                     }
                     PdfValue::Array(classes) => {
-                        if self.budget.consume_node().is_err() {
+                        if let Err(error) = self.budget.consume_node() {
+                            self.budget_error = Some(error);
                             continue;
                         }
                         let class_node = AstNode::new(
@@ -306,7 +330,11 @@ impl<'a> StructTreeParser<'a> {
         parent_tree: &mut ParentTree,
         depth: usize,
     ) {
-        if depth >= self.budget.max_depth || self.budget.consume_object().is_err() {
+        if depth >= self.budget.max_depth {
+            return;
+        }
+        if let Err(error) = self.budget.consume_object() {
+            self.budget_error = Some(error);
             return;
         }
         if let Some(node_id) = self.resolver.get_node_id(obj_id) {
@@ -384,7 +412,8 @@ impl<'a> StructTreeParser<'a> {
             }
             Some(PdfValue::Array(kids)) => self.parse_struct_kids(kids, parent_id, depth),
             Some(PdfValue::Dictionary(elem_dict)) => {
-                if self.budget.consume_node().is_err() {
+                if let Err(error) = self.budget.consume_node() {
+                    self.budget_error = Some(error);
                     return;
                 }
                 // Inline structure element
@@ -546,7 +575,8 @@ impl<'a> StructTreeParser<'a> {
     }
 
     fn create_mcr_node(&mut self, mcid: i32, parent_id: NodeId) {
-        if self.budget.consume_node().is_err() {
+        if let Err(error) = self.budget.consume_node() {
+            self.budget_error = Some(error);
             return;
         }
         // Create MCR node
@@ -623,9 +653,11 @@ impl<'a> StructTreeParser<'a> {
                     if current_mcid.is_some() =>
                 {
                     let text = String::from_utf8_lossy(text);
-                    if self.budget.consume_object().is_ok()
-                        && self.budget.consume_decoded(text.len() as u64).is_ok()
-                    {
+                    if let Err(error) = self.budget.consume_object() {
+                        self.budget_error = Some(error);
+                    } else if let Err(error) = self.budget.consume_decoded(text.len() as u64) {
+                        self.budget_error = Some(error);
+                    } else {
                         mcid_content.push(text.into_owned());
                     }
                 }
@@ -688,7 +720,8 @@ impl<'a> StructTreeParser<'a> {
     }
 
     fn create_mcid_content_node(&mut self, page_id: NodeId, mcid: i32, struct_elem_id: NodeId) {
-        if self.budget.consume_node().is_err() {
+        if let Err(error) = self.budget.consume_node() {
+            self.budget_error = Some(error);
             return;
         }
         // Create a node representing the content with this MCID
@@ -715,7 +748,9 @@ impl<'a> StructTreeParser<'a> {
     }
 
     fn add_edge(&mut self, from: NodeId, to: NodeId, edge_type: EdgeType) {
-        if self.budget.consume_edge().is_ok() {
+        if let Err(error) = self.budget.consume_edge() {
+            self.budget_error = Some(error);
+        } else {
             self.ast.add_edge(from, to, edge_type);
         }
     }
@@ -726,7 +761,8 @@ impl<'a> StructTreeParser<'a> {
             if let Some(node) = self.ast.get_node_mut(*struct_elem_id) {
                 let output_bytes = content.iter().map(String::len).sum::<usize>()
                     + content.len().saturating_sub(1);
-                if self.budget.consume_decoded(output_bytes as u64).is_err() {
+                if let Err(error) = self.budget.consume_decoded(output_bytes as u64) {
+                    self.budget_error = Some(error);
                     return;
                 }
                 let text = content.join(" ");
@@ -835,6 +871,23 @@ mod tests {
             .parse_struct_tree_root(&root_dict)
             .expect("structure tree should parse");
         assert_eq!(ast.edge_count(), 1);
+    }
+
+    #[test]
+    fn struct_tree_parser_reports_node_budget_exhaustion() {
+        let mut ast = PdfAstGraph::new();
+        let mut root_dict = PdfDictionary::new();
+        root_dict.insert("ParentTree", PdfValue::Dictionary(PdfDictionary::new()));
+        let resolver = ObjectNodeMap::new();
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 8);
+        let mut parser = StructTreeParser::new_with_budget(&mut ast, &resolver, &budget);
+
+        assert_eq!(
+            parser
+                .parse_struct_tree_root_with_budget(&root_dict)
+                .expect_err("structure tree must respect node budget"),
+            ResourceBudgetError::Nodes
+        );
     }
 
     #[test]
