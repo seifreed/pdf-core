@@ -62,6 +62,19 @@ impl<'a> NameTreeParser<'a> {
         }
     }
 
+    fn resolve_array(&self, value: &PdfValue) -> Option<PdfArray> {
+        match value {
+            PdfValue::Array(array) => Some(array.clone()),
+            PdfValue::Reference(reference) => self
+                .resolver
+                .get_node_id(&reference.id())
+                .and_then(|node_id| self.ast.get_node(node_id))
+                .and_then(|node| node.value.as_array())
+                .cloned(),
+            _ => None,
+        }
+    }
+
     fn parse_name_tree_node(&mut self, node_dict: &PdfDictionary) -> NameTreeNode {
         let mut tree_node = NameTreeNode {
             names: Vec::new(),
@@ -70,7 +83,10 @@ impl<'a> NameTreeParser<'a> {
         };
 
         // Parse limits (range of names in this subtree)
-        if let Some(PdfValue::Array(limits)) = node_dict.get("Limits") {
+        if let Some(limits) = node_dict
+            .get("Limits")
+            .and_then(|value| self.resolve_array(value))
+        {
             if limits.len() >= 2 {
                 let min = self.extract_string(&limits[0]);
                 let max = self.extract_string(&limits[1]);
@@ -81,13 +97,19 @@ impl<'a> NameTreeParser<'a> {
         }
 
         // Parse names array (leaf node)
-        if let Some(PdfValue::Array(names)) = node_dict.get("Names") {
-            tree_node.names = self.parse_names_array(names);
+        if let Some(names) = node_dict
+            .get("Names")
+            .and_then(|value| self.resolve_array(value))
+        {
+            tree_node.names = self.parse_names_array(&names);
         }
 
         // Parse kids array (intermediate node)
-        if let Some(PdfValue::Array(kids)) = node_dict.get("Kids") {
-            for kid_ref in kids.iter() {
+        if let Some(kids) = node_dict
+            .get("Kids")
+            .and_then(|value| self.resolve_array(value))
+        {
+            for kid_ref in &kids {
                 if self.budget.consume_object().is_err() {
                     break;
                 }
@@ -589,6 +611,41 @@ mod tests {
         let tree = parser.parse_names_dictionary(&names_dict);
         assert_eq!(tree.dests.expect("destination tree").names.len(), 1);
         assert_eq!(ast.node_count(), 1);
+    }
+
+    #[test]
+    fn name_tree_parser_resolves_indirect_names_array() {
+        let mut ast = PdfAstGraph::new();
+        let value_id = ast.create_node(
+            NodeType::Object(crate::types::ObjectId::new(2, 0)),
+            PdfValue::String(crate::types::PdfString::new_literal(b"value")),
+        );
+        let names_id = ast.create_node(
+            NodeType::Object(crate::types::ObjectId::new(1, 0)),
+            PdfValue::Array(PdfArray::from(vec![
+                PdfValue::String(crate::types::PdfString::new_literal(b"name")),
+                PdfValue::Reference(PdfReference::new(2, 0)),
+            ])),
+        );
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(crate::types::ObjectId::new(1, 0), names_id);
+        resolver.insert(crate::types::ObjectId::new(2, 0), value_id);
+        let mut names_dict = PdfDictionary::new();
+        names_dict.insert(
+            "Dests",
+            PdfValue::Dictionary({
+                let mut tree_dict = PdfDictionary::new();
+                tree_dict.insert("Names", PdfValue::Reference(PdfReference::new(1, 0)));
+                tree_dict
+            }),
+        );
+
+        let mut parser = NameTreeParser::new(&mut ast, &resolver);
+        let tree = parser
+            .parse_names_dictionary(&names_dict)
+            .dests
+            .expect("destination tree should parse");
+        assert_eq!(tree.names, vec![("name".to_string(), value_id)]);
     }
 
     #[test]
