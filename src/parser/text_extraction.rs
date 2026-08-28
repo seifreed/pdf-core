@@ -185,6 +185,18 @@ impl<'a> TextExtractor<'a> {
         }
     }
 
+    fn resolve_name(&self, value: &PdfValue) -> Option<String> {
+        match value {
+            PdfValue::Name(name) => Some(name.without_slash().to_string()),
+            PdfValue::Reference(reference) => self
+                .ast
+                .get_node_by_object(reference.id())
+                .and_then(|node| node.value.as_name())
+                .map(|name| name.without_slash().to_string()),
+            _ => None,
+        }
+    }
+
     fn resolve_number(&self, value: Option<&PdfValue>) -> Option<f64> {
         let value = value?;
         match value {
@@ -226,31 +238,30 @@ impl<'a> TextExtractor<'a> {
 
         let font_type = top_dict
             .get("Subtype")
-            .and_then(PdfValue::as_name)
-            .map(|value| value.without_slash().to_string())
+            .and_then(|value| self.resolve_name(value))
             .or_else(|| {
                 effective_dict
                     .get("Subtype")
-                    .and_then(PdfValue::as_name)
-                    .map(|value| value.without_slash().to_string())
+                    .and_then(|value| self.resolve_name(value))
             })
             .unwrap_or_else(|| "Unknown".to_string());
         let base_font = top_dict
             .get("BaseFont")
             .or_else(|| effective_dict.get("BaseFont"))
-            .and_then(PdfValue::as_name)
-            .map(|value| value.without_slash().to_string())
+            .and_then(|value| self.resolve_name(value))
             .unwrap_or_else(|| name.to_string());
         let (encoding, differences) = match top_dict.get("Encoding") {
-            Some(PdfValue::Name(value)) => (value.without_slash().to_string(), HashMap::new()),
             Some(value) => {
-                let dict = self.resolve_dict(value).unwrap_or_default();
-                let encoding = dict
-                    .get("BaseEncoding")
-                    .and_then(PdfValue::as_name)
-                    .map(|value| value.without_slash().to_string())
-                    .unwrap_or_else(|| "StandardEncoding".to_string());
-                (encoding, self.parse_differences(dict.get("Differences")))
+                if let Some(encoding) = self.resolve_name(value) {
+                    (encoding, HashMap::new())
+                } else {
+                    let dict = self.resolve_dict(value).unwrap_or_default();
+                    let encoding = dict
+                        .get("BaseEncoding")
+                        .and_then(|value| self.resolve_name(value))
+                        .unwrap_or_else(|| "StandardEncoding".to_string());
+                    (encoding, self.parse_differences(dict.get("Differences")))
+                }
             }
             None => ("StandardEncoding".to_string(), HashMap::new()),
         };
@@ -263,12 +274,13 @@ impl<'a> TextExtractor<'a> {
         let default_width = self
             .resolve_number(Self::effective_value(&top_dict, effective_dict, "DW"))
             .unwrap_or(1000.0);
-        let font_matrix = Self::parse_font_matrix(Self::effective_value(
-            &top_dict,
-            effective_dict,
-            "FontMatrix",
-        ))
-        .unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
+        let font_matrix = self
+            .parse_font_matrix(Self::effective_value(
+                &top_dict,
+                effective_dict,
+                "FontMatrix",
+            ))
+            .unwrap_or([0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
 
         let to_unicode = top_dict.get("ToUnicode").and_then(|value| match value {
             PdfValue::Reference(reference) => self
@@ -302,10 +314,6 @@ impl<'a> TextExtractor<'a> {
         }
     }
 
-    fn number_value(value: Option<&PdfValue>) -> Option<f64> {
-        value.and_then(PdfValue::as_real)
-    }
-
     fn parse_simple_widths(&self, dict: &PdfDictionary, width_map: &mut HashMap<u32, f64>) {
         let Some(first_char) = dict
             .get("FirstChar")
@@ -323,7 +331,7 @@ impl<'a> TextExtractor<'a> {
             let Ok(code) = u32::try_from(first_char.saturating_add(index as i64)) else {
                 continue;
             };
-            if let Some(width) = Self::number_value(Some(width)) {
+            if let Some(width) = self.resolve_number(Some(width)) {
                 width_map.insert(code, width);
             }
         }
@@ -345,9 +353,9 @@ impl<'a> TextExtractor<'a> {
             let Some(next) = widths.get(index + 1) else {
                 break;
             };
-            if let Some(values) = next.as_array() {
+            if let Some(values) = self.resolve_array(next) {
                 for (offset, width) in values.iter().enumerate() {
-                    if let Some(width) = Self::number_value(Some(width)) {
+                    if let Some(width) = self.resolve_number(Some(width)) {
                         if let Some(code) = start.checked_add(offset as u32) {
                             width_map.insert(code, width);
                         }
@@ -355,11 +363,11 @@ impl<'a> TextExtractor<'a> {
                 }
                 index += 2;
             } else if let (Some(end), Some(width)) = (
-                next.as_integer()
+                self.resolve_integer(next)
                     .and_then(|value| u32::try_from(value).ok()),
                 widths
                     .get(index + 2)
-                    .and_then(|value| Self::number_value(Some(value))),
+                    .and_then(|value| self.resolve_number(Some(value))),
             ) {
                 for code in start..=end {
                     width_map.insert(code, width);
@@ -371,11 +379,12 @@ impl<'a> TextExtractor<'a> {
         }
     }
 
-    fn parse_font_matrix(value: Option<&PdfValue>) -> Option<[f64; 6]> {
-        let PdfValue::Array(values) = value? else {
-            return None;
-        };
-        let numbers: Vec<f64> = values.iter().filter_map(PdfValue::as_real).collect();
+    fn parse_font_matrix(&self, value: Option<&PdfValue>) -> Option<[f64; 6]> {
+        let values = self.resolve_array(value?)?;
+        let numbers: Vec<f64> = values
+            .iter()
+            .filter_map(|value| self.resolve_number(Some(value)))
+            .collect();
         (numbers.len() == 6)
             .then(|| numbers.try_into().ok())
             .flatten()
@@ -388,17 +397,15 @@ impl<'a> TextExtractor<'a> {
         let mut code = None;
         let mut differences = HashMap::new();
         for value in values {
-            match value {
-                PdfValue::Integer(value) => code = u8::try_from(value).ok(),
-                PdfValue::Name(name) => {
-                    if let Some(current_code) = code {
-                        if let Some(unicode) = Self::glyph_name_to_unicode(name.without_slash()) {
-                            differences.insert(current_code, unicode);
-                            code = current_code.checked_add(1);
-                        }
+            if let Some(value) = self.resolve_integer(&value) {
+                code = u8::try_from(value).ok();
+            } else if let Some(name) = self.resolve_name(&value) {
+                if let Some(current_code) = code {
+                    if let Some(unicode) = Self::glyph_name_to_unicode(&name) {
+                        differences.insert(current_code, unicode);
+                        code = current_code.checked_add(1);
                     }
                 }
-                _ => {}
             }
         }
         differences
@@ -901,10 +908,50 @@ mod tests {
         let cmap = b"begincmap\n/CMapName /Test def\n1 begincodespacerange\n<00> <FF>\nendcodespacerange\n1 beginbfchar\n<41> <0041>\nendbfchar\nendcmap";
 
         let mut ast = PdfAstGraph::new();
+        ast.add_node(AstNode::new(
+            NodeId::new(7),
+            NodeType::Object(ObjectId::new(7, 0)),
+            PdfValue::Name(PdfName::new("Type0")),
+        ));
+        ast.add_node(AstNode::new(
+            NodeId::new(8),
+            NodeType::Object(ObjectId::new(8, 0)),
+            PdfValue::Name(PdfName::new("Test")),
+        ));
+        ast.add_node(AstNode::new(
+            NodeId::new(9),
+            NodeType::Object(ObjectId::new(9, 0)),
+            PdfValue::Name(PdfName::new("Identity-H")),
+        ));
+        ast.add_node(AstNode::new(
+            NodeId::new(10),
+            NodeType::Object(ObjectId::new(10, 0)),
+            PdfValue::Array(PdfArray::from(vec![
+                PdfValue::Real(0.001),
+                PdfValue::Integer(0),
+                PdfValue::Integer(0),
+                PdfValue::Real(0.001),
+                PdfValue::Integer(0),
+                PdfValue::Integer(0),
+            ])),
+        ));
         let mut font = PdfDictionary::new();
-        font.insert("Subtype", PdfValue::Name(PdfName::new("Type0")));
-        font.insert("BaseFont", PdfValue::Name(PdfName::new("Test")));
-        font.insert("Encoding", PdfValue::Name(PdfName::new("Identity-H")));
+        font.insert(
+            "Subtype",
+            PdfValue::Reference(crate::types::PdfReference::new(7, 0)),
+        );
+        font.insert(
+            "BaseFont",
+            PdfValue::Reference(crate::types::PdfReference::new(8, 0)),
+        );
+        font.insert(
+            "Encoding",
+            PdfValue::Reference(crate::types::PdfReference::new(9, 0)),
+        );
+        font.insert(
+            "FontMatrix",
+            PdfValue::Reference(crate::types::PdfReference::new(10, 0)),
+        );
         font.insert(
             "ToUnicode",
             PdfValue::Reference(crate::types::PdfReference::new(2, 0)),
@@ -977,11 +1024,16 @@ mod tests {
             ContentOperator::ShowText(vec![0x41, 0x42]),
             ContentOperator::EndText,
         ];
-        let spans = TextExtractor::new(&ast, &resources).extract_text(&operators);
+        let mut extractor = TextExtractor::new(&ast, &resources);
+        let spans = extractor.extract_text(&operators);
 
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].text, "AB");
         assert!((spans[0].width - 11.0).abs() < f64::EPSILON);
+        let font = extractor.fonts.get("F1").expect("font should load");
+        assert_eq!(font.font_type, "Type0");
+        assert_eq!(font.base_font, "Test");
+        assert_eq!(font.font_matrix, [0.001, 0.0, 0.0, 0.001, 0.0, 0.0]);
     }
 
     #[test]
