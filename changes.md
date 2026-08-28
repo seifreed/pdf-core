@@ -222,6 +222,8 @@ con `cargo test --workspace --locked --lib -- --test-threads=1`.
 los excesos de nodos/aristas de espacios de color desde la resolucion de
 recursos de pagina; la regresion de colores pasa `2/2`, el smoke ICC `1/1`,
 la suite de libreria del workspace y Clippy estricto pasan.
+`68690b4` hace que el nodo de metadatos de perfiles ICC informe tambien el
+agotamiento de nodos al mismo presupuesto compartido.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
