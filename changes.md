@@ -22,6 +22,10 @@ La extraccion de texto resuelve ahora fuentes indirectas, descendientes CID,
 `ToUnicode`, encodings y metricas basicas de glifo dentro de su alcance
 experimental.
 
+Actualizacion posterior: `PDF_A_XREF_FORMAT` rechaza ahora como error los
+cross-reference streams en PDF/A-1b, que se basa en PDF 1.4. La regresion
+`pdfa_1b_rejects_cross_reference_streams` y la suite de validacion pasan `30/30`.
+
 Actualizacion posterior: `cee290c` corrige dos falsos negativos de la cobertura
 PDF/A. La sincronizacion de metadata acepta las fechas PDF/XMP equivalentes,
 no exige que un campo opcional exista en ambos diccionarios y mantiene el

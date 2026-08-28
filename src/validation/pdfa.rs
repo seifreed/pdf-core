@@ -1105,20 +1105,17 @@ impl PdfA1bValidator {
     }
 
     fn validate_cross_reference(&self, report: &mut ValidationReport, document: &PdfDocument) {
-        // PDF/A-1b allows tables or streams, but mixing both is discouraged
-        let has_xref_tables = !document.xref.entries.is_empty();
         let has_xref_streams = !document.xref.streams.is_empty();
 
-        if has_xref_tables && has_xref_streams {
+        // PDF/A-1 is based on PDF 1.4, before cross-reference streams existed.
+        if has_xref_streams {
             report.add_issue(ValidationIssue {
-                severity: ValidationSeverity::Warning,
+                severity: ValidationSeverity::Error,
                 code: "PDF_A_XREF_FORMAT".to_string(),
-                message: "Mixed cross-reference formats detected".to_string(),
+                message: "PDF/A-1b does not permit cross-reference streams".to_string(),
                 node_id: None,
                 location: Some("Cross-reference validation".to_string()),
-                suggestion: Some(
-                    "Consider using consistent cross-reference format throughout".to_string(),
-                ),
+                suggestion: Some("Use a classic cross-reference table for PDF/A-1b".to_string()),
             });
         }
     }

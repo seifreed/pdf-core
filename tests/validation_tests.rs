@@ -46,6 +46,25 @@ mod validation_tests {
     }
 
     #[test]
+    fn pdfa_1b_rejects_cross_reference_streams() {
+        let validator = PdfA1bValidator::new().with_strict_mode(false);
+        let mut document = create_test_document();
+        document.xref.streams.push(pdf_ast::ast::XRefStream {
+            object_id: ObjectId::new(8, 0),
+            dict: PdfDictionary::new(),
+            entries: Vec::new(),
+        });
+
+        let report = validator.validate(&document);
+        let issue = report
+            .issues
+            .iter()
+            .find(|issue| issue.code == "PDF_A_XREF_FORMAT")
+            .expect("PDF/A-1b should reject cross-reference streams");
+        assert_eq!(issue.severity, ValidationSeverity::Error);
+    }
+
+    #[test]
     fn test_pdfa_color_space_validation() {
         let validator = PdfA1bValidator::new().with_strict_mode(false);
         let mut document = create_test_document();
