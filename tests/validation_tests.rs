@@ -528,6 +528,13 @@ mod validation_tests {
             .expect("PDF/UA-1 report should be produced");
         assert!(has_issue(&whitespace, "LANG_EMPTY"));
 
+        let mut invalid_document = create_test_document();
+        set_catalog_lang(&mut invalid_document, b"en_US");
+        let invalid = registry
+            .validate(&invalid_document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(has_issue(&invalid, "LANG_INVALID"));
+
         let mut valid_document = create_test_document();
         set_catalog_lang(&mut valid_document, b"en-US");
         let valid = registry
@@ -535,6 +542,14 @@ mod validation_tests {
             .expect("PDF/UA-1 report should be produced");
         assert!(!has_issue(&valid, "LANG_MISSING"));
         assert!(!has_issue(&valid, "LANG_EMPTY"));
+        assert!(!has_issue(&valid, "LANG_INVALID"));
+
+        let mut utf16_document = create_test_document();
+        set_catalog_lang(&mut utf16_document, b"\xFE\xFF\x00e\x00n\x00-\x00U\x00S");
+        let utf16 = registry
+            .validate(&utf16_document, "PDF/UA-1")
+            .expect("PDF/UA-1 report should be produced");
+        assert!(!has_issue(&utf16, "LANG_INVALID"));
     }
 
     #[test]

@@ -150,7 +150,7 @@ fn convert_issue(issue: ValidationIssue, document: &PdfDocument) -> Violation {
         | "METADATA_STREAM_INVALID"
         | "METADATA_DECODE_FAILED"
         | "XMP_PACKET_MISSING" => Some("ISO 14289-1:2014, 7.1"),
-        "LANG_MISSING" | "LANG_EMPTY" => Some("ISO 14289-1:2014, 7.2"),
+        "LANG_MISSING" | "LANG_EMPTY" | "LANG_INVALID" => Some("ISO 14289-1:2014, 7.2"),
         "ALT_TEXT_MISSING" => Some("ISO 14289-1:2014, 7.3"),
         _ => None,
     };
@@ -297,6 +297,26 @@ mod tests {
         assert_eq!(
             violation.standard_reference.as_deref(),
             Some("ISO 14289-1:2014, 7.1")
+        );
+    }
+
+    #[test]
+    fn preserves_pdfua_invalid_language_reference() {
+        let violation = convert_issue(
+            ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: "LANG_INVALID".to_string(),
+                message: "invalid language tag".to_string(),
+                node_id: None,
+                location: None,
+                suggestion: None,
+            },
+            &PdfDocument::new(PdfVersion::new(1, 7)),
+        );
+
+        assert_eq!(
+            violation.standard_reference.as_deref(),
+            Some("ISO 14289-1:2014, 7.2")
         );
     }
 }

@@ -45,6 +45,20 @@ fn resolve_string_from_value<'a>(
     }
 }
 
+fn is_valid_pdf_language_tag(lang: &str) -> bool {
+    let mut parts = lang.split('-');
+    let Some(language) = parts.next() else {
+        return false;
+    };
+
+    // ponytail: syntax-only BCP 47 check; add registry validation for full language conformance.
+    (2..=8).contains(&language.len())
+        && language.bytes().all(|byte| byte.is_ascii_alphabetic())
+        && parts.all(|part| {
+            (2..=8).contains(&part.len()) && part.bytes().all(|byte| byte.is_ascii_alphanumeric())
+        })
+}
+
 fn is_encoding_value(document: &PdfDocument, value: &PdfValue) -> bool {
     match value {
         PdfValue::Name(_) | PdfValue::Dictionary(_) => true,
@@ -1562,11 +1576,8 @@ impl SchemaConstraint for LanguageSpecificationConstraint {
             .get("Lang")
             .and_then(|value| resolve_string_from_value(document, value));
         if let Some(lang) = lang_value {
-            if lang
-                .as_bytes()
-                .iter()
-                .all(|byte| byte.is_ascii_whitespace())
-            {
+            let language = lang.decode_pdf_encoding();
+            if language.trim().is_empty() {
                 report.add_issue(ValidationIssue {
                     severity: ValidationSeverity::Error,
                     code: "LANG_EMPTY".to_string(),
@@ -1577,6 +1588,19 @@ impl SchemaConstraint for LanguageSpecificationConstraint {
                 });
                 return;
             }
+
+            if !is_valid_pdf_language_tag(&language) {
+                report.add_issue(ValidationIssue {
+                    severity: ValidationSeverity::Error,
+                    code: "LANG_INVALID".to_string(),
+                    message: "Catalog Lang entry is not a valid language tag".to_string(),
+                    node_id: document.catalog,
+                    location: Some("Catalog".to_string()),
+                    suggestion: Some("Set Lang to a BCP 47 language tag (e.g. en-US)".to_string()),
+                });
+                return;
+            }
+
             report.add_passed_check();
         } else {
             report.add_issue(ValidationIssue {
