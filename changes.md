@@ -171,6 +171,8 @@ estricto.
 `bf7290e` clasifica tambien definiciones `ColorSpace` indirectas (`Indexed`,
 `ICCBased`, `Separation`, `DeviceN` y `Pattern`); la suite de page tree pasa
 `4/4` y Clippy estricto.
+`3f81070` resuelve tambien claves y límites de `NameTree` cuando son cadenas
+indirectas; la suite de name trees pasa `5/5` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
