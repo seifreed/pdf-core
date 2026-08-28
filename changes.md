@@ -203,7 +203,7 @@ extraccion; las suites pasan `13/13`, `14/14` y `5/5`, con Clippy estricto.
 `b3e6f341`, la revision reproducida por CI para los `2.809` fixtures.
 Verificacion local contra esa revision: el corpus externo pasa `2.809/2.809`
 sin panics, con `2.809` hashes comprobados, `1.990` errores controlados y
-`peak_rss_kib=284816` (`p50=0 ms`, `p95=8 ms`, `p99=60 ms`). La comparacion
+`peak_rss_kib=286160` (`p50=0 ms`, `p95=7 ms`, `p99=52 ms`). La comparacion
 veraPDF 1.30.2 pasa `569/569`, con `263` conformes, `565` rechazos strict y
 `0` divergencias tolerantes. El diferencial completo contra qpdf y MuPDF
 registra `397` divergencias (`396` desacuerdos entre referencias y `1`
@@ -216,6 +216,12 @@ positivos/negativos de reglas locales.
 `c3ff7c1` propaga tambien los excesos de nodos de `ResourceBudget` desde
 `OutputIntentsParser` hasta la ruta principal; su regresion pasa `1/1`, la
 suite de `pdf_file` `22/22` y Clippy estricto.
+Las regresiones siguientes completan la misma garantia en ICC/output intents,
+recuperacion de revisiones, object streams, carga de objetos, content streams,
+JBIG2Globals, xref, objetos malformados, linealizacion y resolucion transitiva:
+`a75bcd2`, `551c6a7`, `0302f79`, `6a0f346`, `44f6904`, `13f8e6a`, `9203503`,
+`8517d21`, `636c571` y `a1f3b39`. Las suites focalizadas pasan `26/26` en `pdf_file`,
+`20/20` en `reference_resolver` y `284/284` tests de libreria en `pdf-ast`.
 La suite completa local posterior pasa `282` tests en `7` suites de libreria
 con `cargo test --workspace --locked --lib -- --test-threads=1`.
 `750d48c` expone `ColorSpaceParser::parse_colorspace_with_budget` y propaga
