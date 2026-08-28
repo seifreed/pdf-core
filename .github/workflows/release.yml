@@ -63,12 +63,12 @@ jobs:
           toolchain: stable
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "20"
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: "3.11"
 
@@ -114,7 +114,7 @@ jobs:
             --pack-destination "$GITHUB_WORKSPACE/dist"
 
       - name: Upload binding artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: binding-${{ matrix.target }}
           path: |
@@ -217,7 +217,7 @@ jobs:
             --all-features
 
       - name: Download binding artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: binding-*
           path: dist/bindings
@@ -287,7 +287,7 @@ jobs:
         run: sha256sum -- *.tar.gz *.tgz *.whl *.json > SHA256SUMS
 
       - name: Attest release artifacts
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: |
             dist/*.tar.gz
@@ -297,7 +297,7 @@ jobs:
             dist/SHA256SUMS
 
       - name: Attest release SBOM
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: dist/pdf-core-${{ steps.metadata.outputs.version }}-linux-x86_64.tar.gz
           sbom-path: dist/pdf-core-${{ steps.metadata.outputs.version }}-sbom.json
