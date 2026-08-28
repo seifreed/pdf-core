@@ -543,6 +543,10 @@ Pendientes actuales, en orden practico:
   `5938897` mapea también los errores y estados de metadata PDF/UA a
   `ISO 14289-1:2014, 7.1`; el crate `pdf-compliance` pasa `8/8` tests y
   Clippy estricto.
+  `LANG` ahora distingue valores vacíos de etiquetas mal formadas y acepta
+  etiquetas BCP 47 sintácticamente válidas, incluyendo `PdfString` codificado
+  en UTF-16; `LANG_INVALID` queda mapeado a `ISO 14289-1:2014, 7.2`, con
+  regresiones positivas y negativas.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
