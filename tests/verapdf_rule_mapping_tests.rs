@@ -35,6 +35,10 @@ const LOCAL_CASES: &[(&str, &str)] = &[
         "PDFA-1b/6.6 Actions/6.6.1 General/isartor-6-6-1-t01-fail-f.pdf",
         "PDF_A_JAVASCRIPT",
     ),
+    (
+        "fixtures/regression/pdfa-xref-stream-negative.pdf",
+        "PDF_A_XREF_FORMAT",
+    ),
 ];
 
 const PDFUA_CASES: &[(&str, &str, bool)] = &[
@@ -173,6 +177,14 @@ fn manifest_fixture_path(root: &Path, relative: &str) -> PathBuf {
         .strip_prefix("fixtures/")
         .map(|relative| root.join(relative))
         .unwrap_or(path)
+}
+
+fn local_fixture_path(root: &Path, relative: &str) -> PathBuf {
+    if relative.starts_with("fixtures/") {
+        manifest_fixture_path(root, relative)
+    } else {
+        root.join("isartor").join(relative)
+    }
 }
 
 fn local_rule_is_present(path: &Path, local_rule: &str) -> bool {
@@ -346,7 +358,7 @@ fn local_pdfa_rules_match_serialized_isartor_cases() {
     let validator = PdfA1bValidator::new().with_strict_mode(false);
 
     for (relative, expected_code) in LOCAL_CASES {
-        let path = root.join("isartor").join(relative);
+        let path = local_fixture_path(&root, relative);
         let bytes = fs::read(&path).unwrap_or_else(|error| {
             panic!("read local compliance fixture {}: {error}", path.display())
         });
@@ -477,7 +489,7 @@ fn published_rule_coverage_has_positive_and_negative_verapdf_evidence() {
         serde_json::from_slice(&fs::read(&manifest_path).expect("read coverage manifest"))
             .expect("valid coverage manifest");
     let mappings = manifest["mappings"].as_array().expect("coverage mappings");
-    assert_eq!(mappings.len(), 24);
+    assert_eq!(mappings.len(), 25);
 
     for mapping in mappings {
         let positive = manifest_fixture_path(

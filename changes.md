@@ -7,9 +7,9 @@ varios puntos: el workspace incluye todos los crates, `main` esta protegida,
 las alertas de Dependabot estan resueltas, el parser tiene lecturas acotadas y
 validacion de limites en las rutas de xref/object streams, y la serializacion
 restaura el estado documental lossless disponible. Tambien existe un corpus
-reproducible de 2.812 PDFs, metricas diferenciales con memoria, una campana
+reproducible de 2.813 PDFs, metricas diferenciales con memoria, una campana
 fuzz local de 16.000 ejecuciones sin crashes y un chequeo completo de 205
-mapeos negativos contra veraPDF 1.30.2. `RULE-COVERAGE.json` documenta 24
+mapeos negativos contra veraPDF 1.30.2. `RULE-COVERAGE.json` documenta 25
 mappings de reglas locales con fixtures positivos/negativos y evidencia
 veraPDF; la cobertura positiva exacta por regla sigue sin estar disponible para
 los 95 IDs porque veraPDF no emite resumenes de reglas aprobadas.
@@ -25,6 +25,8 @@ experimental.
 Actualizacion posterior: `PDF_A_XREF_FORMAT` rechaza ahora como error los
 cross-reference streams en PDF/A-1b, que se basa en PDF 1.4. La regresion
 `pdfa_1b_rejects_cross_reference_streams` y la suite de validacion pasan `30/30`.
+El corpus publico anade `pdfa-xref-stream-negative.pdf` con evidencia veraPDF
+`ISO 19005-1:2005:6.1.4:3`; queda fijado en `344a1c906b158568f47af5f5e9ee8371dddc30c7`.
 
 Actualizacion posterior: `cee290c` corrige dos falsos negativos de la cobertura
 PDF/A. La sincronizacion de metadata acepta las fechas PDF/XMP equivalentes,

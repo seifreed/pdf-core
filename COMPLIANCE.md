@@ -12,20 +12,20 @@ node ID, and source offset when the AST provides them. Registry reports also
 include `iso.<constraint>` metadata for constraints that declare a normative
 reference. The reproducible fixture corpus is maintained at
 https://github.com/seifreed/pdf-core-corpus and pinned by the corpus workflow;
-the corpus contains 2,812 fixtures across PDF/A, PDF/UA, Isartor, and local
+the corpus contains 2,813 fixtures across PDF/A, PDF/UA, Isartor, and local
 regressions. The PDF/A-1b comparison gate uses its 569
 profile fixtures; the other profiles are available for parser and preflight
 campaigns.
 
 The complete serialized Isartor-to-veraPDF mapping is maintained in
-[`RULE-MAPPINGS.json`](https://github.com/seifreed/pdf-core-corpus/blob/f5ce55d8a2c8386fdf79b92e607d351623cfa59c/RULE-MAPPINGS.json)
+[`RULE-MAPPINGS.json`](https://github.com/seifreed/pdf-core-corpus/blob/344a1c906b158568f47af5f5e9ee8371dddc30c7/RULE-MAPPINGS.json)
 and covers 205 negative fixtures with 95 distinct veraPDF rule IDs. The
-`RULE-COVERAGE.json` records 24 positive/negative pairs for the published
+`RULE-COVERAGE.json` records 25 positive/negative pairs for the published
 local rules, with exact veraPDF rule IDs where the reference validator exposes
 one. The positive evidence is
 document-level (`compliant=true`); veraPDF emits no passing rule summaries, so
 positive rule-level results remain unrecorded for the 95 mapped IDs.
-[`RULE-COVERAGE.json`](https://github.com/seifreed/pdf-core-corpus/blob/f5ce55d8a2c8386fdf79b92e607d351623cfa59c/RULE-COVERAGE.json)
+[`RULE-COVERAGE.json`](https://github.com/seifreed/pdf-core-corpus/blob/344a1c906b158568f47af5f5e9ee8371dddc30c7/RULE-COVERAGE.json)
 contains the pair definitions and this limitation explicitly.
 clause-level ISO 32000 inventory is maintained in
 [ISO-32000-MATRIX.md](ISO-32000-MATRIX.md). It records implementation scope
