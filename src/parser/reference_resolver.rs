@@ -1142,16 +1142,38 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
     /// Build AST nodes from content streams
     fn build_content_stream_ast(&mut self, ast: &mut PdfAstGraph) -> Result<(), String> {
         let nodes = ast.get_all_nodes();
-        let mut content_streams = Vec::new();
-
-        // Find all content streams
-        for node in nodes {
-            if matches!(node.node_type, NodeType::ContentStream)
-                || (matches!(node.node_type, NodeType::Page) && node.as_dict().is_some())
-            {
-                content_streams.push(node.id);
+        let has_pages = nodes
+            .iter()
+            .any(|node| matches!(node.node_type, NodeType::Page));
+        let mut referenced_content_streams = HashSet::new();
+        if has_pages {
+            let mut visited = HashSet::new();
+            for node in &nodes {
+                if !matches!(node.node_type, NodeType::Page) {
+                    continue;
+                }
+                if let Some(dict) = node.as_dict() {
+                    if let Some(contents) = dict.get("Contents") {
+                        Self::collect_content_stream_ids(
+                            contents,
+                            ast,
+                            &self.object_to_node,
+                            &mut referenced_content_streams,
+                            &mut visited,
+                        );
+                    }
+                }
             }
         }
+
+        let content_streams: Vec<NodeId> = nodes
+            .iter()
+            .filter(|node| {
+                matches!(node.node_type, NodeType::ContentStream)
+                    && (!has_pages || referenced_content_streams.contains(&node.id))
+            })
+            .map(|node| node.id)
+            .collect();
 
         // Process each content stream
         for stream_node_id in content_streams {
@@ -1260,6 +1282,47 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         }
 
         Ok(())
+    }
+
+    fn collect_content_stream_ids(
+        value: &PdfValue,
+        ast: &PdfAstGraph,
+        object_to_node: &HashMap<ObjectId, NodeId>,
+        streams: &mut HashSet<NodeId>,
+        visited: &mut HashSet<NodeId>,
+    ) {
+        match value {
+            PdfValue::Array(values) => {
+                for value in values {
+                    Self::collect_content_stream_ids(value, ast, object_to_node, streams, visited);
+                }
+            }
+            PdfValue::Reference(reference) => {
+                let Some(&node_id) = object_to_node.get(&reference.id()) else {
+                    return;
+                };
+                if !visited.insert(node_id) {
+                    return;
+                }
+                let Some(node) = ast.get_node(node_id) else {
+                    return;
+                };
+                if matches!(node.value, PdfValue::Stream(_)) {
+                    streams.insert(node_id);
+                } else if let PdfValue::Array(values) = &node.value {
+                    for value in values {
+                        Self::collect_content_stream_ids(
+                            value,
+                            ast,
+                            object_to_node,
+                            streams,
+                            visited,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     fn record_stream_issue(
@@ -1747,6 +1810,57 @@ mod tests {
         );
         let mut strict_ast = make_ast();
         assert!(strict.build_content_stream_ast(&mut strict_ast).is_err());
+    }
+
+    #[test]
+    fn strict_content_ast_only_parses_page_contents() {
+        let mut ast = PdfAstGraph::new();
+        let mut page = PdfDictionary::new();
+        page.insert(
+            "Contents",
+            PdfValue::Reference(crate::types::PdfReference::new(1, 0)),
+        );
+        ast.create_node(NodeType::Page, PdfValue::Dictionary(page));
+
+        let content_id = ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream(crate::types::PdfStream::new(
+                PdfDictionary::new(),
+                b"1 0 m".to_vec(),
+            )),
+        );
+        let binary_id = ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream(crate::types::PdfStream::new(
+                PdfDictionary::new(),
+                vec![0, 0, 12, 72, 76, 105, 110, 111],
+            )),
+        );
+
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(Vec::new()),
+            &document,
+            false,
+            crate::performance::PerformanceLimits::default(),
+        );
+        resolver
+            .object_to_node
+            .insert(ObjectId::new(1, 0), content_id);
+
+        resolver
+            .build_content_stream_ast(&mut ast)
+            .expect("referenced page content should parse");
+        assert!(ast
+            .get_all_nodes()
+            .iter()
+            .any(|node| matches!(node.node_type, NodeType::ContentOperator)));
+        assert!(ast
+            .get_node(binary_id)
+            .expect("binary stream should exist")
+            .metadata
+            .errors
+            .is_empty());
     }
 
     #[test]
