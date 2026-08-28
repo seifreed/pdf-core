@@ -2936,7 +2936,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     Ok(decoded) => {
                         return match self.parse_object_from_stream(&decoded, index, &stream.dict) {
                             Ok(value) => Ok(value),
-                            Err(err) if self.tolerant => {
+                            Err(err) if self.tolerant && !is_resource_budget_error(&err) => {
                                 self.record_diagnostic(
                                     Some(ObjectId::new(stream_obj, 0)),
                                     None,
@@ -3981,6 +3981,31 @@ mod tests {
         let error = parser
             .load_object(&ObjectId::new(2, 0))
             .expect_err("object budget must propagate from the main loader");
+        assert!(error.to_string().contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn object_stream_offset_budget_exhaustion_is_not_recovered_as_null() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let data = b"%PDF-1.7\n".to_vec();
+        let limits = PerformanceLimits {
+            budget: ResourceBudget::new(1024, 1024, 1024, 10, 0, 10, 10, 8),
+            ..PerformanceLimits::default()
+        };
+        let parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Tolerant,
+            10,
+            limits,
+        )
+        .expect("parser should initialize");
+        let mut dict = PdfDictionary::new();
+        dict.insert("N", PdfValue::Integer(1));
+        dict.insert("First", PdfValue::Integer(3));
+
+        let error = parser
+            .parse_object_from_stream(b"0 0", 0, &dict)
+            .expect_err("object stream offset budget must propagate");
         assert!(error.to_string().contains("resource budget exceeded"));
     }
 
