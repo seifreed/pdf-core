@@ -171,17 +171,29 @@ const ASCII85_POWERS: [u64; 5] = [52200625, 614125, 7225, 85, 1];
 fn decode_ascii85(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
     let mut result = Vec::new();
     let mut tuple: Vec<u8> = Vec::with_capacity(5);
+    let mut saw_eod = false;
 
-    for &byte in data {
+    for (index, &byte) in data.iter().enumerate() {
         if byte.is_ascii_whitespace() {
             continue;
         }
 
         if byte == b'~' {
+            if data.get(index + 1) != Some(&b'>') {
+                return Err(FilterError::InvalidData(
+                    "ASCII85 data has an invalid EOD marker".to_string(),
+                ));
+            }
+            saw_eod = true;
             break;
         }
 
         if byte == b'z' {
+            if !tuple.is_empty() {
+                return Err(FilterError::InvalidData(
+                    "ASCII85 'z' shorthand must start a tuple".to_string(),
+                ));
+            }
             if 4 > max_output_bytes.saturating_sub(result.len()) {
                 return Err(FilterError::DecompressionError(
                     "ASCII85 output exceeds limit".to_string(),
@@ -210,6 +222,12 @@ fn decode_ascii85(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, Filte
             result.extend_from_slice(&value.to_be_bytes());
             tuple.clear();
         }
+    }
+
+    if !saw_eod {
+        return Err(FilterError::InvalidData(
+            "ASCII85 data is missing the EOD marker".to_string(),
+        ));
     }
 
     if !tuple.is_empty() {
@@ -661,6 +679,21 @@ mod tests {
         let error = decode_stream_with_limits(b"uuuuu", &[StreamFilter::ASCII85Decode], 16, 10)
             .expect_err("an ASCII85 tuple must fit in u32");
         assert!(error.to_string().contains("ASCII85 tuple overflow"));
+    }
+
+    #[test]
+    fn rejects_malformed_ascii85_termination_and_shorthand() {
+        let missing_eod =
+            decode_stream_with_limits(b"9jqo^", &[StreamFilter::ASCII85Decode], 16, 10)
+                .expect_err("ASCII85 must have an EOD marker");
+        assert!(missing_eod.to_string().contains("missing the EOD marker"));
+
+        let shorthand_in_tuple =
+            decode_stream_with_limits(b"!z~>", &[StreamFilter::ASCII85Decode], 16, 10)
+                .expect_err("ASCII85 shorthand must start a tuple");
+        assert!(shorthand_in_tuple
+            .to_string()
+            .contains("must start a tuple"));
     }
 
     #[test]
