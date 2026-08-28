@@ -231,6 +231,8 @@ durante la resolucion final de referencias; su regresion de `pdf_file` pasa
 `1/1`, la suite focalizada `27/27` y Clippy estricto.
 La suite completa local posterior pasa `282` tests en `7` suites de libreria
 con `cargo test --workspace --locked --lib -- --test-threads=1`.
+La verificacion posterior a `d24cf35` pasa `303` tests en `7` suites del
+workspace con el mismo comando.
 `750d48c` expone `ColorSpaceParser::parse_colorspace_with_budget` y propaga
 los excesos de nodos/aristas de espacios de color desde la resolucion de
 recursos de pagina; la regresion de colores pasa `2/2`, el smoke ICC `1/1`,
