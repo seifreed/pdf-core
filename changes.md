@@ -26,9 +26,9 @@ rompe deliberadamente el nombre del diccionario de metadata, con evidencia
 veraPDF exacta para `ISO 14289-1:2014:7.1:8`; el corpus reproducible queda en
 `2.810` PDFs y la suite de mapeo pasa `6/6` con doce pares locales, once de
 ellos con ID veraPDF exacto. El mapeo de `PDF_A_OUTPUT_INTENT` queda enlazado
-al par normativo `6.2.2`. `b147600` publica ese mapeo en el manifiesto del
-corpus. El descargador y los workflows quedan fijados a
-`b14760045fb16d5475e1cd11aadd68eba7b238c0`.
+al caso normativo `6.2.3.3:1`. `a42b4fd` publica ese mapeo corregido en el
+manifiesto del corpus. El descargador y los workflows quedan fijados a
+`a42b4fddba72e35c65410cfe64a5c95bbbbb828f`.
 La evidencia local de bindings queda ampliada: wheel Python instalado en un
 entorno virtual y `python/test_bindings.py` pasan con CPython 3.14 en macOS
 arm64; el binding Node pasa `npm test` y `test/package-smoke.js` tras instalar
