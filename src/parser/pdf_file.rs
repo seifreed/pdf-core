@@ -3586,7 +3586,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         // Resolve all references in the AST
         if let Err(err) = resolver.resolve_references(&mut self.document.ast) {
-            if self.tolerant {
+            if self.tolerant && !err.starts_with("resource budget exceeded:") {
                 log::warn!("Reference resolution error (tolerant): {}", err);
             } else {
                 return Err(AstError::ParseError(err));
@@ -3949,6 +3949,34 @@ mod tests {
         let error = parser
             .recover_xref_by_scan()
             .expect_err("xref recovery object budget must propagate");
+        assert!(error.to_string().contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn tolerant_reference_resolution_budget_exhaustion_is_not_swallowed() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let limits = PerformanceLimits {
+            budget: ResourceBudget::new(1024, 1024, 1024, 10, 10, 1, 10, 8),
+            ..PerformanceLimits::default()
+        };
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Tolerant,
+            10,
+            limits,
+        )
+        .expect("parser should initialize");
+        let catalog_id = parser
+            .add_to_ast(
+                PdfValue::Dictionary(PdfDictionary::new()),
+                NodeType::Catalog,
+            )
+            .expect("catalog node should consume the only node budget unit");
+        parser.document.set_catalog(catalog_id);
+
+        let error = parser
+            .resolve_all_references()
+            .expect_err("tolerant mode must propagate reference budget errors");
         assert!(error.to_string().contains("resource budget exceeded"));
     }
 
