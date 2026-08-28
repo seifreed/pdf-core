@@ -487,8 +487,9 @@ Pendientes actuales, en orden practico:
   objetos indirectos se conviertan silenciosamente en referencias ausentes;
   `636c571` aplica la misma garantía a la detección de linealización;
   `8517d21` la conserva también durante la recuperación de objetos malformados;
-  queda extenderla a las rutas de parseo y resolución que aún usan
-  recuperaciones parciales.
+  `9203503` la propaga además al escaneo de recuperación de xref; queda
+  extenderla a las rutas de parseo y resolución que aún usan recuperaciones
+  parciales.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
