@@ -166,7 +166,8 @@ Clippy estricto.
 `5/5` y Clippy estricto.
 `5125ff0` resuelve valores indirectos de `Kids`, `Resources`, `Contents` y
 `Annots` en el arbol de paginas, incluidos tipos de fuentes y XObjects; la
-suite de page tree pasa `3/3` y Clippy estricto.
+regresion adicional `ec971d6` deja la suite de page tree en `4/4`, con Clippy
+estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
