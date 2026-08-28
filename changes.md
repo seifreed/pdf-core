@@ -246,6 +246,10 @@ de funciones pasa `3/3` y Clippy estricto.
 `19622f1` expone variantes presupuestadas para construir `OCProperties` y
 `OCMD`, preservando los wrappers legacy; la suite OCG pasa `2/2` y Clippy
 estricto.
+`819a14e` expone `PageTreeParser::parse_page_tree_with_budget` y propaga los
+limites de nodos, aristas, cancelacion/deadline y decodificacion ICC durante
+la herencia y procesamiento de recursos; la suite de page tree pasa `5/5` y
+Clippy estricto.
 La verificacion completa posterior pasa `274` tests del crate principal y
 `14` de crates auxiliares con `cargo test --workspace --locked --lib
 -- --test-threads=1`.
