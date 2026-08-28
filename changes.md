@@ -494,6 +494,8 @@ Pendientes actuales, en orden practico:
   propaga también los errores de decode ICC, nodos y aristas en
   `OutputIntentsParser`. `551c6a7` evita además que las rutas tolerantes de
   content streams y `JBIG2Globals` silencien agotamientos de presupuesto.
+  `13f8e6a` aplica el mismo contrato al cargador principal de objetos, sus
+  `Length` indirectos y object streams.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
