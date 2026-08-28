@@ -80,28 +80,7 @@ impl RecoveryStrategy for BasicStructureRecovery {
             }
         }
 
-        // 2. Fix missing or malformed xref table
-        if !data.windows(4).any(|w| w == b"xref") {
-            // Generate a basic xref table
-            let xref_data = self.generate_basic_xref(&data);
-
-            // Find insertion point (before trailer or at end)
-            if let Some(trailer_pos) = find_pattern(&data, b"trailer") {
-                data.splice(trailer_pos..trailer_pos, xref_data);
-            } else {
-                data.extend_from_slice(&xref_data);
-            }
-            modified = true;
-        }
-
-        // 3. Fix missing trailer
-        if !data.windows(7).any(|w| w == b"trailer") {
-            let trailer_data = self.generate_basic_trailer();
-            data.extend_from_slice(&trailer_data);
-            modified = true;
-        }
-
-        // 4. Fix missing EOF marker
+        // 2. Fix missing EOF marker
         if !data.ends_with(b"%%EOF") && !data.ends_with(b"%%EOF\n") {
             data.extend_from_slice(b"\n%%EOF");
             modified = true;
@@ -131,35 +110,6 @@ impl RecoveryStrategy for BasicStructureRecovery {
 
     fn priority(&self) -> u8 {
         90 // High priority for basic structure
-    }
-}
-
-impl BasicStructureRecovery {
-    fn generate_basic_xref(&self, data: &[u8]) -> Vec<u8> {
-        let mut xref = b"xref\n0 1\n0000000000 65535 f \n".to_vec();
-
-        // Find objects and add to xref
-        let mut object_count = 1;
-        let mut pos = 0;
-
-        while let Some(obj_pos) = find_pattern(&data[pos..], b" obj") {
-            let abs_pos = pos + obj_pos;
-            let xref_entry = format!("{:010} 00000 n \n", abs_pos);
-            xref.extend_from_slice(xref_entry.as_bytes());
-            object_count += 1;
-            pos = abs_pos + 4;
-
-            if object_count > 1000 {
-                // Limit to prevent infinite loops
-                break;
-            }
-        }
-
-        xref
-    }
-
-    fn generate_basic_trailer(&self) -> Vec<u8> {
-        b"trailer\n<<\n/Size 2\n/Root 1 0 R\n>>\nstartxref\n0\n".to_vec()
     }
 }
 
@@ -2318,4 +2268,34 @@ impl Default for ExperimentalRecovery {
 fn find_pattern(data: &[u8], pattern: &[u8]) -> Option<usize> {
     data.windows(pattern.len())
         .position(|window| window == pattern)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BasicStructureRecovery, RecoveryConfig, RecoveryContext, RecoveryStrategy};
+    use crate::ast::{PdfDocument, PdfVersion};
+
+    #[test]
+    fn basic_recovery_does_not_invent_xref_or_root() {
+        let data = b"%PDF-1.4\n1 0 obj\nnull\nendobj\n";
+        let document = PdfDocument::new(PdfVersion::new(1, 4));
+        let config = RecoveryConfig::default();
+        let result = BasicStructureRecovery::new()
+            .apply_recovery(RecoveryContext {
+                original_data: data,
+                current_data: data,
+                document: &document,
+                config: &config,
+                error_log: &[],
+            })
+            .expect("basic recovery should complete");
+        let recovered = result
+            .modified_data
+            .expect("missing EOF should be repaired");
+
+        assert!(recovered.ends_with(b"\n%%EOF"));
+        assert!(!recovered.windows(4).any(|window| window == b"xref"));
+        assert!(!recovered.windows(7).any(|window| window == b"trailer"));
+        assert!(!recovered.windows(5).any(|window| window == b"/Root"));
+    }
 }
