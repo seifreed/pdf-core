@@ -183,7 +183,7 @@ fn local_rule_is_present(path: &Path, local_rule: &str) -> bool {
         .unwrap_or_else(|error| panic!("parse local coverage fixture {}: {error}", path.display()));
     let report = if local_rule.starts_with("PDF_A_") {
         PdfA1bValidator::new()
-            .with_strict_mode(false)
+            .with_strict_mode(local_rule == "PDF_A_METADATA_SYNC")
             .validate(&document)
     } else {
         SchemaRegistry::new()
@@ -474,7 +474,7 @@ fn published_rule_coverage_has_positive_and_negative_verapdf_evidence() {
         serde_json::from_slice(&fs::read(&manifest_path).expect("read coverage manifest"))
             .expect("valid coverage manifest");
     let mappings = manifest["mappings"].as_array().expect("coverage mappings");
-    assert_eq!(mappings.len(), 21);
+    assert_eq!(mappings.len(), 22);
 
     for mapping in mappings {
         let positive = manifest_fixture_path(

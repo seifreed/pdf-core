@@ -90,6 +90,13 @@ comprueba la sincronización de `Title`, `Author`, `Subject`, `Keywords`,
 `Creator`, `Producer` y fechas entre Info y XMP; `PDF_A_METADATA_SYNC` deja de
 ser un warning genérico y reporta divergencias o errores de decode/parseo.
 
+`1603469` añade al repositorio `pdf-core-corpus` el negativo derivado
+`pdfa-metadata-sync-negative.pdf`, que cambia únicamente `xmp:CreateDate` del
+fixture PDF/A-1b `6.7.3-t01-pass-a`; veraPDF 1.30.2 confirma
+`ISO 19005-1:2005:6.7.3:1`. El corpus fijado pasa a `2.811` PDFs y
+`RULE-COVERAGE.json` a `22` pares; la prueba de cobertura ejecuta la nueva regla
+en modo strict para no confundirla con los warnings de preflight tolerante.
+
 Actualizacion posterior: `b410aa5` deduplica referencias repetidas durante la
 resolucion y reutiliza nodos semanticos ya asociados a `ObjectId`; `62adb2a`
 completa el cobro de memoria para objetos indirectos publicos. `da39970` y

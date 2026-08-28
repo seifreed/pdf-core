@@ -12,20 +12,20 @@ node ID, and source offset when the AST provides them. Registry reports also
 include `iso.<constraint>` metadata for constraints that declare a normative
 reference. The reproducible fixture corpus is maintained at
 https://github.com/seifreed/pdf-core-corpus and pinned by the corpus workflow;
-the corpus contains 2,806 upstream fixtures across PDF/A, PDF/UA, and Isartor
-profiles,
-plus three local parser regressions. The PDF/A-1b comparison gate uses its 569
+the corpus contains 2,811 fixtures across PDF/A, PDF/UA, Isartor, and local
+regressions. The PDF/A-1b comparison gate uses its 569
 profile fixtures; the other profiles are available for parser and preflight
 campaigns.
 
 The complete serialized Isartor-to-veraPDF mapping is maintained in
 [`RULE-MAPPINGS.json`](https://github.com/seifreed/pdf-core-corpus/blob/e9f4b49f9ad8825883b9b5fe92e38821865940eb)
 and covers 205 negative fixtures with 95 distinct veraPDF rule IDs. The
-`RULE-COVERAGE.json` records nine positive/negative pairs for the published
-local rules, with eight exact veraPDF rule IDs. The positive evidence is
+`RULE-COVERAGE.json` records 22 positive/negative pairs for the published
+local rules, with exact veraPDF rule IDs where the reference validator exposes
+one. The positive evidence is
 document-level (`compliant=true`); veraPDF emits no passing rule summaries, so
 positive rule-level results remain unrecorded for the 95 mapped IDs.
-[`RULE-COVERAGE.json`](https://github.com/seifreed/pdf-core-corpus/blob/b3e6f3413cd6ee344b77f7fececfb8c2a7f2fe35/RULE-COVERAGE.json)
+[`RULE-COVERAGE.json`](https://github.com/seifreed/pdf-core-corpus/blob/1603469/RULE-COVERAGE.json)
 contains the pair definitions and this limitation explicitly.
 clause-level ISO 32000 inventory is maintained in
 [ISO-32000-MATRIX.md](ISO-32000-MATRIX.md). It records implementation scope
@@ -71,6 +71,7 @@ corpus coverage for the PDF/A and PDF/UA cases listed below.
 | `PDF_A_FONT_EMBEDDING` | PDF/A-1b, ISO 19005-1:2005 6.3.4 | `test_pdfa_font_validation` with embedded font | Same test with missing `FontFile` | `ISO_19005_1:6.3.4:1` |
 | `PDF_A_MULTIMEDIA` | PDF/A-1b, ISO 19005-1:2005 6.5.2 | `fixture_pdfa_multimedia_rule_has_positive_and_negative_cases` clean document | Same test with `Movie` annotation | `ISO_19005_1:6.5.2:1` |
 | `PDF_A_JAVASCRIPT` | PDF/A-1b, ISO 19005-1:2005 6.6.1 | `test_pdfa_javascript_validation` clean document | Same test with JavaScript action | `ISO_19005_1:6.6.1:1` |
+| `PDF_A_METADATA_SYNC` | PDF/A-1b, ISO 19005-1:2005 6.7.3 | `6-7-3-t01-pass-a.pdf` | `pdfa-metadata-sync-negative.pdf` | `ISO_19005-1:2005:6.7.3:1` |
 | `NO_TAGGED_STRUCTURE` | PDF/UA-1, ISO 14289-1:2014 7.1 | `fixture_pdfua_structure_rule_has_positive_and_negative_cases` marked catalog with `StructTreeRoot` | Same test with untagged catalog | `ISO_14289_1:7.1:11` |
 | `STRUCT_ELEM_MISSING` | PDF/UA-1, ISO 14289-1:2014 7.1 | Same test with a `StructElem` | Same test with `StructTreeRoot` but no `StructElem` | Aggregate of `ISO_14289_1:7.1:*`; no 1:1 veraPDF rule |
 | `ACCESSIBILITY_METADATA_MISSING` | PDF/UA-1, ISO 14289-1:2014 7.1 | `7.1-t08-pass-a.pdf` | `7.1-t08-fail-a.pdf` | `ISO 14289-1:2014:7.1:8` |
