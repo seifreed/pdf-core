@@ -143,9 +143,11 @@ fn decode_single_filter(
 fn decode_ascii_hex(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, FilterError> {
     let mut result = Vec::new();
     let mut chars = data.iter().filter(|&&c| !c.is_ascii_whitespace());
+    let mut saw_eod = false;
 
     while let Some(&c1) = chars.next() {
         if c1 == b'>' {
+            saw_eod = true;
             break;
         }
 
@@ -160,6 +162,12 @@ fn decode_ascii_hex(data: &[u8], max_output_bytes: usize) -> Result<Vec<u8>, Fil
             ));
         }
         result.push(byte);
+    }
+
+    if !saw_eod {
+        return Err(FilterError::InvalidData(
+            "ASCIIHex data is missing the EOD marker".to_string(),
+        ));
     }
 
     Ok(result)
@@ -672,6 +680,13 @@ mod tests {
         assert!(run_length_error
             .to_string()
             .contains("RunLength output exceeds limit"));
+    }
+
+    #[test]
+    fn rejects_ascii_hex_without_terminator() {
+        let error = decode_stream_with_limits(b"303132", &[StreamFilter::ASCIIHexDecode], 16, 10)
+            .expect_err("ASCIIHex must have an EOD marker");
+        assert!(error.to_string().contains("missing the EOD marker"));
     }
 
     #[test]
