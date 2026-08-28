@@ -568,6 +568,23 @@ Pendientes actuales, en orden practico:
   `4a606ad` valida orden, tamaño y correspondencia de destinos en arrays
   `bfrange`, evitando mapeos parciales; la suite de CMap se mantiene en
   `15/15`.
+  `97cd5b7` reutiliza el parser presupuestado de offsets al extraer streams de
+  objetos lazy y selecciona el siguiente offset mayor, incluso con entradas
+  fuera de orden; la suite focalizada pasa `7/7` y Clippy estricto.
+  `75e4a1e` elimina de la recuperación básica la fabricación de xref y
+  `/Root 1 0 R`, dejando un diagnóstico sin metadata inventada; la suite de
+  recovery pasa `9/9` y Clippy estricto.
+  `7fe9afd` rechaza `/Length` indirecto en el parser standalone cuando no se
+  ha resuelto, en lugar de buscar un `endstream` ambiguo; `object_parser` pasa
+  `7/7`, `parser_tests` `32/32` y Clippy estricto.
+  `9fe85c2` corrige el rebuild de xref para registrar el offset exacto del
+  encabezado, calcular `/Size` con el mayor objeto y conservar `/Root` solo si
+  ya estaba declarado; recovery pasa `9/9` y Clippy estricto.
+  `5babb79` hace byte-based la reparación de streams Flate, evitando que
+  `from_utf8_lossy` desplace índices sobre datos binarios; la suite de recovery
+  pasa `10/10` y Clippy estricto.
+  `a0fed6c` acota el fallback del header truncado en reconstrucción para evitar
+  slices fuera de rango; la regresión pasa `1/1` y Clippy estricto.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
