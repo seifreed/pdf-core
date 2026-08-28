@@ -2,7 +2,7 @@ use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
 use crate::filters::decode_stream_with_budget;
 use crate::metadata::icc::parse_icc_profile;
 use crate::parser::reference_resolver::ObjectNodeMap;
-use crate::performance::ResourceBudget;
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::types::{PdfArray, PdfDictionary, PdfValue};
 use std::collections::{HashMap, HashSet};
 
@@ -12,6 +12,7 @@ pub struct PageTreeParser<'a> {
     resources_cache: HashMap<NodeId, PdfDictionary>,
     budget: ResourceBudget,
     visited: HashSet<NodeId>,
+    budget_error: Option<ResourceBudgetError>,
 }
 
 impl<'a> PageTreeParser<'a> {
@@ -30,6 +31,7 @@ impl<'a> PageTreeParser<'a> {
             resources_cache: HashMap::new(),
             budget: budget.clone(),
             visited: HashSet::new(),
+            budget_error: None,
         }
     }
 
@@ -38,7 +40,21 @@ impl<'a> PageTreeParser<'a> {
         pages_dict: &PdfDictionary,
         parent_id: NodeId,
     ) -> Vec<NodeId> {
+        self.budget_error = None;
         self.parse_page_tree_at_depth(pages_dict, parent_id, 0, &PdfDictionary::new())
+    }
+
+    pub fn parse_page_tree_with_budget(
+        &mut self,
+        pages_dict: &PdfDictionary,
+        parent_id: NodeId,
+    ) -> Result<Vec<NodeId>, ResourceBudgetError> {
+        self.budget_error = None;
+        let pages = self.parse_page_tree_at_depth(pages_dict, parent_id, 0, &PdfDictionary::new());
+        match self.budget_error.take() {
+            Some(error) => Err(error),
+            None => Ok(pages),
+        }
     }
 
     fn parse_page_tree_at_depth(
@@ -63,7 +79,8 @@ impl<'a> PageTreeParser<'a> {
             .and_then(|value| self.resolve_array(value))
         {
             for kid_ref in &kids {
-                if self.budget.check().is_err() {
+                if let Err(error) = self.budget.check() {
+                    self.budget_error = Some(error);
                     break;
                 }
                 if let PdfValue::Reference(obj_id) = kid_ref {
@@ -476,7 +493,8 @@ impl<'a> PageTreeParser<'a> {
         match value {
             PdfValue::Name(cs_name) => {
                 // Simple color space name
-                if self.budget.consume_node().is_err() {
+                if let Err(error) = self.budget.consume_node() {
+                    self.budget_error = Some(error);
                     return;
                 }
                 let node_id = self.ast.next_node_id();
@@ -508,7 +526,8 @@ impl<'a> PageTreeParser<'a> {
 
                     let node_id = self.ast.next_node_id();
                     let is_icc_based = node_type == NodeType::ICCBased;
-                    if self.budget.consume_node().is_err() {
+                    if let Err(error) = self.budget.consume_node() {
+                        self.budget_error = Some(error);
                         return;
                     }
                     let cs_node_id =
@@ -586,7 +605,12 @@ impl<'a> PageTreeParser<'a> {
         };
         let decoded = match decode_stream_with_budget(raw, &filters, &self.budget) {
             Ok(decoded) => decoded,
-            Err(_) => return,
+            Err(message) => {
+                if let Some(error) = budget_error_from_message(&message.to_string()) {
+                    self.budget_error = Some(error);
+                }
+                return;
+            }
         };
 
         let info = match parse_icc_profile(&decoded) {
@@ -594,7 +618,8 @@ impl<'a> PageTreeParser<'a> {
             None => return,
         };
 
-        if self.budget.consume_node().is_err() {
+        if let Err(error) = self.budget.consume_node() {
+            self.budget_error = Some(error);
             return;
         }
         let node_id = self.ast.next_node_id();
@@ -623,7 +648,9 @@ impl<'a> PageTreeParser<'a> {
     }
 
     fn add_edge(&mut self, from: NodeId, to: NodeId, edge_type: crate::ast::EdgeType) {
-        if self.budget.consume_edge().is_ok() {
+        if let Err(error) = self.budget.consume_edge() {
+            self.budget_error = Some(error);
+        } else {
             self.ast.add_edge(from, to, edge_type);
         }
     }
@@ -670,6 +697,20 @@ impl<'a> PageTreeParser<'a> {
 
         resources
     }
+}
+
+fn budget_error_from_message(message: &str) -> Option<ResourceBudgetError> {
+    [
+        ("InputBytes", ResourceBudgetError::InputBytes),
+        ("DecodedBytes", ResourceBudgetError::DecodedBytes),
+        ("Objects", ResourceBudgetError::Objects),
+        ("Nodes", ResourceBudgetError::Nodes),
+        ("Edges", ResourceBudgetError::Edges),
+        ("Deadline", ResourceBudgetError::Deadline),
+        ("Cancelled", ResourceBudgetError::Cancelled),
+    ]
+    .into_iter()
+    .find_map(|(name, error)| message.contains(name).then_some(error))
 }
 
 #[cfg(test)]
@@ -746,6 +787,53 @@ mod tests {
         parser.parse_page_tree(&pages_dict, root_id);
         assert_eq!(ast.node_count(), 2);
         assert_eq!(ast.edge_count(), 0);
+    }
+
+    #[test]
+    fn page_tree_parser_reports_resource_budget_exhaustion() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.add_node(AstNode::new(NodeId(0), NodeType::Catalog, PdfValue::Null));
+        let page_id = ast.add_node(AstNode::new(
+            NodeId(1),
+            NodeType::Page,
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Type", PdfValue::Name(PdfName::new("Page")));
+                dict.insert(
+                    "Resources",
+                    PdfValue::Dictionary({
+                        let mut resources = PdfDictionary::new();
+                        resources.insert(
+                            "ColorSpace",
+                            PdfValue::Dictionary({
+                                let mut colorspaces = PdfDictionary::new();
+                                colorspaces
+                                    .insert("CS1", PdfValue::Name(PdfName::new("DeviceRGB")));
+                                colorspaces
+                            }),
+                        );
+                        resources
+                    }),
+                );
+                dict
+            }),
+        ));
+        let mut pages_dict = PdfDictionary::new();
+        pages_dict.insert(
+            "Kids",
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(1, 0))].into()),
+        );
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), page_id);
+        let budget = ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 8);
+        let mut parser = PageTreeParser::new_with_budget(&mut ast, &resolver, &budget);
+
+        assert_eq!(
+            parser
+                .parse_page_tree_with_budget(&pages_dict, root_id)
+                .expect_err("page resource budget must propagate"),
+            ResourceBudgetError::Nodes
+        );
     }
 
     #[test]
