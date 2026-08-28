@@ -486,6 +486,11 @@ mod parser_tests {
     }
 
     #[test]
+    fn tolerant_parse_object_does_not_hide_malformed_indirect_objects() {
+        assert!(PdfParser::new().parse_object(b"7 0 obj\n42\n").is_err());
+    }
+
+    #[test]
     fn public_parser_apis_respect_input_budget() {
         let limits = PerformanceLimits {
             max_file_size_mb: 0,

@@ -249,9 +249,7 @@ impl PdfParser {
         let object_input = crate::parser::lexer::skip_whitespace_and_comments(input)
             .map(|(remaining, _)| remaining)
             .unwrap_or(input);
-        if self.mode == ParseMode::Strict
-            && object_parser::parse_indirect_object_header(object_input).is_ok()
-        {
+        if object_parser::parse_indirect_object_header(object_input).is_ok() {
             let (remaining, (_, value)) =
                 object_parser::parse_indirect_object_with_max_depth_unbudgeted(
                     object_input,
