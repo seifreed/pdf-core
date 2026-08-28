@@ -547,6 +547,9 @@ Pendientes actuales, en orden practico:
   etiquetas BCP 47 sintácticamente válidas, incluyendo `PdfString` codificado
   en UTF-16; `LANG_INVALID` queda mapeado a `ISO 14289-1:2014, 7.2`, con
   regresiones positivas y negativas.
+  `3ad19fe` corrige la lectura de destinos `bfrange` cuyos arrays están
+  partidos entre líneas; la suite focalizada de CMap pasa `14/14`, con
+  Clippy estricto.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
