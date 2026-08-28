@@ -161,6 +161,9 @@ recorre niveles anidados de `Kids` en `ParentTree`; la suite de estructura pasa
 `d7c6135` resuelve referencias indirectas en campos de estructura y MCR
 (`S`, `Type`, `MCID`, `Pg` y `Obj`); la suite de estructura pasa `9/9` y
 Clippy estricto.
+`2c61d80` resuelve metadata de fuentes indirectas (`Subtype`, `BaseFont`,
+`Encoding`, `FontMatrix`, anchos y diferencias); la suite de extraccion pasa
+`5/5` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
