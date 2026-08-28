@@ -222,6 +222,10 @@ JBIG2Globals, xref, objetos malformados, linealizacion y resolucion transitiva:
 `a75bcd2`, `551c6a7`, `0302f79`, `6a0f346`, `44f6904`, `13f8e6a`, `9203503`,
 `8517d21`, `636c571` y `a1f3b39`. Las suites focalizadas pasan `26/26` en `pdf_file`,
 `20/20` en `reference_resolver` y `284/284` tests de libreria en `pdf-ast`.
+`7edcfec` corrige el doble cobro del presupuesto de objetos al inspeccionar el
+prefijo de un stream antes de su parseo completo; la regresion de streams,
+el resolver completo (`21/21`), Clippy estricto y la suite de libreria
+(`301/301` en `7` suites) pasan.
 La suite completa local posterior pasa `282` tests en `7` suites de libreria
 con `cargo test --workspace --locked --lib -- --test-threads=1`.
 `750d48c` expone `ColorSpaceParser::parse_colorspace_with_budget` y propaga
