@@ -56,13 +56,6 @@ pub(crate) fn parse_value_with_max_depth_budgeted_no_memory<'a>(
     parse_value_with_depth_budget(input, 0, max_depth, budget)
 }
 
-pub(crate) fn parse_value_with_max_depth_unbudgeted(
-    input: &[u8],
-    max_depth: usize,
-) -> IResult<&[u8], PdfValue> {
-    parse_value_with_depth(input, 0, max_depth)
-}
-
 fn charge_input<'a>(
     input: &'a [u8],
     budget: &ResourceBudget,
@@ -85,33 +78,6 @@ fn charge_object<'a>(
             nom::error::ErrorKind::TooLarge,
         ))
     })
-}
-
-fn parse_value_with_depth(
-    input: &[u8],
-    depth: usize,
-    max_depth: usize,
-) -> IResult<&[u8], PdfValue> {
-    if depth > max_depth {
-        return Err(nom::Err::Failure(nom::error::Error::new(
-            input,
-            nom::error::ErrorKind::TooLarge,
-        )));
-    }
-
-    preceded(
-        skip_whitespace_and_comments,
-        alt((
-            parse_null,
-            parse_boolean,
-            parse_reference,
-            parse_real_or_integer,
-            parse_string,
-            parse_name_value,
-            |i| parse_array_with_depth(i, depth + 1, max_depth),
-            |i| parse_dictionary_with_depth(i, depth + 1, max_depth),
-        )),
-    )(input)
 }
 
 fn parse_value_with_depth_budget<'a>(
@@ -180,47 +146,6 @@ fn parse_string(input: &[u8]) -> IResult<&[u8], PdfValue> {
 
 fn parse_name_value(input: &[u8]) -> IResult<&[u8], PdfValue> {
     map(name, |n| PdfValue::Name(PdfName::new(n)))(input)
-}
-
-fn parse_array_with_depth(
-    input: &[u8],
-    depth: usize,
-    max_depth: usize,
-) -> IResult<&[u8], PdfValue> {
-    map(
-        delimited(
-            terminated(char('['), skip_whitespace_and_comments),
-            many0(|i| parse_value_with_depth(i, depth + 1, max_depth)),
-            preceded(skip_whitespace_and_comments, char(']')),
-        ),
-        |values| PdfValue::Array(PdfArray::from(values)),
-    )(input)
-}
-
-fn parse_dictionary_with_depth(
-    input: &[u8],
-    depth: usize,
-    max_depth: usize,
-) -> IResult<&[u8], PdfValue> {
-    map(
-        delimited(
-            terminated(tag(b"<<"), skip_whitespace_and_comments),
-            many0(preceded(
-                skip_whitespace_and_comments,
-                separated_pair(name, skip_whitespace_and_comments, |i| {
-                    parse_value_with_depth(i, depth + 1, max_depth)
-                }),
-            )),
-            preceded(skip_whitespace_and_comments, tag(b">>")),
-        ),
-        |pairs| {
-            let mut dict = PdfDictionary::new();
-            for (key, value) in pairs {
-                dict.insert(key, value);
-            }
-            PdfValue::Dictionary(dict)
-        },
-    )(input)
 }
 
 fn parse_array_with_depth_budget<'a>(
@@ -410,39 +335,6 @@ pub(crate) fn parse_indirect_stream_prefix_with_max_depth_budgeted<'a>(
     }
     let (input, _) = skip_whitespace_and_comments(input)?;
     let (input, value) = parse_value_with_max_depth_budgeted_no_memory(input, max_depth, budget)?;
-    let dict = match value {
-        PdfValue::Dictionary(dict) => dict,
-        _ => {
-            return Err(nom::Err::Error(nom::error::Error::new(
-                input,
-                nom::error::ErrorKind::Tag,
-            )))
-        }
-    };
-    let (input, _) = skip_whitespace_and_comments(input)?;
-    let (input, _) = tag(b"stream")(input)?;
-    let (input, _) = alt((tag(b"\r\n"), tag(b"\n")))(input)?;
-
-    Ok((input, (ObjectId::new(obj_num as u32, gen_num as u16), dict)))
-}
-
-pub(crate) fn parse_indirect_stream_prefix_with_max_depth_unbudgeted(
-    input: &[u8],
-    max_depth: usize,
-) -> IResult<&[u8], (ObjectId, PdfDictionary)> {
-    let (input, obj_num) = integer(input)?;
-    let (input, _) = skip_whitespace(input)?;
-    let (input, gen_num) = integer(input)?;
-    let (input, _) = skip_whitespace(input)?;
-    let (input, _) = tag(b"obj")(input)?;
-    if obj_num < 0 || gen_num < 0 || obj_num > u32::MAX as i64 || gen_num > u16::MAX as i64 {
-        return Err(nom::Err::Failure(nom::error::Error::new(
-            input,
-            nom::error::ErrorKind::Verify,
-        )));
-    }
-    let (input, _) = skip_whitespace_and_comments(input)?;
-    let (input, value) = parse_value_with_max_depth_unbudgeted(input, max_depth)?;
     let dict = match value {
         PdfValue::Dictionary(dict) => dict,
         _ => {
