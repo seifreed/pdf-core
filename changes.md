@@ -216,6 +216,8 @@ positivos/negativos de reglas locales.
 `c3ff7c1` propaga tambien los excesos de nodos de `ResourceBudget` desde
 `OutputIntentsParser` hasta la ruta principal; su regresion pasa `1/1`, la
 suite de `pdf_file` `22/22` y Clippy estricto.
+La suite completa local posterior pasa `282` tests en `7` suites de libreria
+con `cargo test --workspace --locked --lib -- --test-threads=1`.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
