@@ -528,13 +528,11 @@ impl PdfAstGraph {
         budget: &ResourceBudget,
     ) -> Result<Vec<NodeId>, ResourceBudgetError> {
         let mut children = Vec::new();
-        if let Some(&index) = self.node_map.get(&node_id) {
-            for edge in self.graph.edges(index) {
-                if *edge.weight() == EdgeType::Child {
-                    if let Some(node) = self.graph.node_weight(edge.target()) {
-                        budget.consume_node()?;
-                        children.push(node.id);
-                    }
+        if let Some(node) = self.get_node(node_id) {
+            for child_id in &node.children {
+                if self.node_map.contains_key(child_id) {
+                    budget.consume_node()?;
+                    children.push(*child_id);
                 }
             }
         }
@@ -559,13 +557,11 @@ impl PdfAstGraph {
         budget: &ResourceBudget,
     ) -> Result<Vec<NodeId>, ResourceBudgetError> {
         let mut references = Vec::new();
-        if let Some(&index) = self.node_map.get(&node_id) {
-            for edge in self.graph.edges(index) {
-                if *edge.weight() == EdgeType::Reference {
-                    if let Some(node) = self.graph.node_weight(edge.target()) {
-                        budget.consume_node()?;
-                        references.push(node.id);
-                    }
+        if let Some(node) = self.get_node(node_id) {
+            for reference_id in &node.references {
+                if self.node_map.contains_key(reference_id) {
+                    budget.consume_node()?;
+                    references.push(*reference_id);
                 }
             }
         }
@@ -701,7 +697,26 @@ impl PdfAstGraph {
     /// `true` if the node was removed, `false` if it didn't exist
     pub fn remove_node(&mut self, node_id: NodeId) -> bool {
         if let Some(index) = self.node_map.remove(&node_id) {
+            let incident_edges: Vec<(NodeId, NodeId, EdgeType)> = self
+                .graph
+                .edges_directed(index, petgraph::Direction::Incoming)
+                .map(|edge| (self.graph[edge.source()].id, node_id, *edge.weight()))
+                .chain(
+                    self.graph
+                        .edges_directed(index, petgraph::Direction::Outgoing)
+                        .map(|edge| (node_id, self.graph[edge.target()].id, *edge.weight())),
+                )
+                .collect();
+            for (from, to, edge_type) in incident_edges {
+                if from != node_id {
+                    self.remove_edge_metadata(from, to, edge_type);
+                }
+                if to != node_id {
+                    self.remove_edge_metadata(from, to, edge_type);
+                }
+            }
             self.graph.remove_node(index);
+            self.object_map.retain(|_, mapped_id| *mapped_id != node_id);
             true
         } else {
             false
@@ -712,11 +727,73 @@ impl PdfAstGraph {
         if let (Some(&from_idx), Some(&to_idx)) = (self.node_map.get(&from), self.node_map.get(&to))
         {
             if let Some(edge_idx) = self.graph.find_edge(from_idx, to_idx) {
+                let edge_type = *self.graph.edge_weight(edge_idx).expect("edge exists");
                 self.graph.remove_edge(edge_idx);
+                self.remove_edge_metadata(from, to, edge_type);
                 return true;
             }
         }
         false
+    }
+
+    fn remove_edge_metadata(&mut self, from: NodeId, to: NodeId, edge_type: EdgeType) {
+        if let Some(node) = self.get_node_mut(from) {
+            let values = match edge_type {
+                EdgeType::Child => &mut node.children,
+                EdgeType::Reference => &mut node.references,
+                _ => return,
+            };
+            if let Some(index) = values.iter().position(|value| *value == to) {
+                values.remove(index);
+            }
+        }
+    }
+
+    /// Replace the order of a parent's child edges and child metadata.
+    pub fn reorder_children(&mut self, parent: NodeId, ordered: &[NodeId]) -> bool {
+        let Some(&parent_idx) = self.node_map.get(&parent) else {
+            return false;
+        };
+        let current = self.get_children(parent);
+        if current.len() != ordered.len() {
+            return false;
+        }
+        let mut counts = HashMap::new();
+        for child in current {
+            *counts.entry(child).or_insert(0usize) += 1;
+        }
+        for child in ordered {
+            let Some(count) = counts.get_mut(child) else {
+                return false;
+            };
+            if *count == 0 {
+                return false;
+            }
+            *count -= 1;
+        }
+        if counts.values().any(|count| *count != 0) {
+            return false;
+        }
+
+        let child_edges: Vec<_> = self
+            .graph
+            .edges(parent_idx)
+            .filter(|edge| *edge.weight() == EdgeType::Child)
+            .map(|edge| edge.id())
+            .collect();
+        for edge in child_edges {
+            self.graph.remove_edge(edge);
+        }
+        for child in ordered {
+            let Some(&child_idx) = self.node_map.get(child) else {
+                return false;
+            };
+            self.graph.add_edge(parent_idx, child_idx, EdgeType::Child);
+        }
+        if let Some(node) = self.get_node_mut(parent) {
+            node.children = ordered.to_vec();
+        }
+        true
     }
 
     /// Returns the parent node of the specified node.

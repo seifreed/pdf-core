@@ -42,11 +42,28 @@ impl TransformOperation {
                 child,
                 position,
             } => {
+                if graph.get_node(*parent).is_none() {
+                    return Err(AstError::NodeNotFound(format!("Parent node {:?}", parent)));
+                }
                 let child_id = graph.create_node(child.node_type.clone(), child.value.clone());
-                graph.add_edge(*parent, child_id, crate::ast::EdgeType::Child);
-
-                // TODO: Handle position parameter for ordered insertion
-                let _ = position;
+                if let Some(node) = graph.get_node_mut(child_id) {
+                    node.metadata = child.metadata.clone();
+                }
+                if !graph.add_edge(*parent, child_id, crate::ast::EdgeType::Child) {
+                    graph.remove_node(child_id);
+                    return Err(AstError::NodeNotFound(format!("Parent node {:?}", parent)));
+                }
+                if let Some(position) = position {
+                    let mut children = graph.get_children(*parent);
+                    children.retain(|id| *id != child_id);
+                    let position = (*position).min(children.len());
+                    children.insert(position, child_id);
+                    if !graph.reorder_children(*parent, &children) {
+                        return Err(AstError::InvalidStructure(
+                            "Unable to reorder inserted child".to_string(),
+                        ));
+                    }
+                }
             }
             TransformOperation::RemoveNode {
                 target,
@@ -69,16 +86,43 @@ impl TransformOperation {
                 new_parent,
                 position,
             } => {
+                if graph.get_node(*target).is_none() {
+                    return Err(AstError::NodeNotFound(format!("Node {:?}", target)));
+                }
+                if graph.get_node(*new_parent).is_none() {
+                    return Err(AstError::NodeNotFound(format!(
+                        "Parent node {:?}",
+                        new_parent
+                    )));
+                }
+                if target == new_parent {
+                    return Err(AstError::InvalidStructure(
+                        "Cannot move a node under itself".to_string(),
+                    ));
+                }
                 // Remove from current parent
                 if let Some(old_parent) = graph.get_parent(*target) {
                     graph.remove_edge(old_parent, *target);
                 }
 
                 // Add to new parent
-                graph.add_edge(*new_parent, *target, crate::ast::EdgeType::Child);
-
-                // TODO: Handle position parameter
-                let _ = position;
+                if !graph.add_edge(*new_parent, *target, crate::ast::EdgeType::Child) {
+                    return Err(AstError::NodeNotFound(format!(
+                        "Parent node {:?}",
+                        new_parent
+                    )));
+                }
+                if let Some(position) = position {
+                    let mut children = graph.get_children(*new_parent);
+                    children.retain(|id| *id != *target);
+                    let position = (*position).min(children.len());
+                    children.insert(position, *target);
+                    if !graph.reorder_children(*new_parent, &children) {
+                        return Err(AstError::InvalidStructure(
+                            "Unable to reorder moved child".to_string(),
+                        ));
+                    }
+                }
             }
             TransformOperation::UpdateValue { target, new_value } => {
                 if let Some(node) = graph.get_node_mut(*target) {
@@ -161,5 +205,64 @@ impl TransformOperation {
     /// Create a batch operation
     pub fn batch(operations: Vec<TransformOperation>) -> Self {
         TransformOperation::Batch(operations)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TransformOperation;
+    use crate::ast::{NodeType, PdfAstGraph};
+    use crate::types::PdfValue;
+
+    #[test]
+    fn insert_at_preserves_requested_child_order() {
+        let mut graph = PdfAstGraph::new();
+        let parent = graph.create_node(NodeType::Pages, PdfValue::Null);
+        let first = graph.create_node(NodeType::Page, PdfValue::Integer(1));
+        let second = graph.create_node(NodeType::Page, PdfValue::Integer(2));
+        graph.add_edge(parent, first, crate::ast::EdgeType::Child);
+        graph.add_edge(parent, second, crate::ast::EdgeType::Child);
+
+        TransformOperation::insert_at(
+            parent,
+            crate::ast::AstNode::new(crate::ast::NodeId(99), NodeType::Page, PdfValue::Integer(0)),
+            0,
+        )
+        .apply(&mut graph)
+        .expect("insert should succeed");
+
+        let values: Vec<_> = graph
+            .get_children(parent)
+            .iter()
+            .map(|id| graph.get_node(*id).expect("child exists").value.clone())
+            .collect();
+        assert_eq!(
+            values,
+            vec![
+                PdfValue::Integer(0),
+                PdfValue::Integer(1),
+                PdfValue::Integer(2)
+            ]
+        );
+    }
+
+    #[test]
+    fn move_to_position_updates_both_parent_lists() {
+        let mut graph = PdfAstGraph::new();
+        let source = graph.create_node(NodeType::Pages, PdfValue::Null);
+        let target = graph.create_node(NodeType::Pages, PdfValue::Null);
+        let first = graph.create_node(NodeType::Page, PdfValue::Integer(1));
+        let moved = graph.create_node(NodeType::Page, PdfValue::Integer(2));
+        let existing = graph.create_node(NodeType::Page, PdfValue::Integer(3));
+        graph.add_edge(source, first, crate::ast::EdgeType::Child);
+        graph.add_edge(source, moved, crate::ast::EdgeType::Child);
+        graph.add_edge(target, existing, crate::ast::EdgeType::Child);
+
+        TransformOperation::move_to_position(moved, target, 0)
+            .apply(&mut graph)
+            .expect("move should succeed");
+
+        assert_eq!(graph.get_children(source), vec![first]);
+        assert_eq!(graph.get_children(target), vec![moved, existing]);
     }
 }
