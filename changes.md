@@ -558,6 +558,8 @@ Pendientes actuales, en orden practico:
   la regresión de offsets inválidos pasa `1/1`.
   `d65d6c3` rechaza tokens hexadecimales inválidos y arrays sin cierre en
   destinos `bfrange`; la suite de CMap pasa `15/15`.
+  `9756abe` exige el marcador `~>` de ASCII85 y rechaza el shorthand `z` en
+  una tupla parcial; la suite de filtros pasa `9/9`.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
