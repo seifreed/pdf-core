@@ -2150,7 +2150,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     let own_resources =
                         self.resolve_resource_dictionary(pages_dict.get("Resources"))?;
                     let effective_resources =
-                        Self::merge_resource_dictionaries(&inherited_resources, &own_resources);
+                        self.merge_resource_dictionaries(&inherited_resources, &own_resources)?;
                     let node_type = if let Some(type_name) = pages_dict.get_type() {
                         match type_name.without_slash() {
                             "Pages" => NodeType::Pages,
@@ -2442,7 +2442,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         }
     }
 
-    fn merge_resource_dictionaries(parent: &PdfDictionary, child: &PdfDictionary) -> PdfDictionary {
+    fn merge_resource_dictionaries(
+        &mut self,
+        parent: &PdfDictionary,
+        child: &PdfDictionary,
+    ) -> AstResult<PdfDictionary> {
         const CATEGORIES: &[&str] = &[
             "ColorSpace",
             "ExtGState",
@@ -2455,13 +2459,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
         let mut merged = parent.clone();
         for (name, value) in child.iter() {
-            if CATEGORIES.contains(&name.as_str()) {
-                let mut category = parent
-                    .get(name.as_str())
-                    .and_then(PdfValue::as_dict)
-                    .cloned()
-                    .unwrap_or_default();
-                if let Some(child_category) = value.as_dict() {
+            if CATEGORIES.contains(&name.without_slash()) {
+                let mut category = self.resolve_resource_dictionary(parent.get(name.as_str()))?;
+                let child_category = self.resolve_resource_dictionary(Some(value))?;
+                if !child_category.is_empty() {
                     for (resource_name, resource_value) in child_category {
                         category.insert(resource_name.clone(), resource_value.clone());
                     }
@@ -2473,7 +2474,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 merged.insert(name.clone(), value.clone());
             }
         }
-        merged
+        Ok(merged)
     }
 
     fn load_object(&mut self, obj_id: &ObjectId) -> AstResult<PdfValue> {
@@ -3588,6 +3589,44 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn resolves_indirect_resource_category_dictionaries() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut data = b"%PDF-1.7\n".to_vec();
+        let category_offset = data.len() as u64;
+        data.extend_from_slice(b"8 0 obj\n<< /F1 null >>\nendobj\n");
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("valid header should construct parser");
+        parser.document.xref.entries.insert(
+            ObjectId::new(8, 0),
+            XRefEntry::InUse {
+                offset: category_offset,
+                generation: 0,
+            },
+        );
+
+        let mut parent = PdfDictionary::new();
+        parent.insert("Font", PdfValue::Reference(PdfReference::new(8, 0)));
+        let mut child = PdfDictionary::new();
+        let mut child_fonts = PdfDictionary::new();
+        child_fonts.insert("F2", PdfValue::Null);
+        child.insert("Font", PdfValue::Dictionary(child_fonts));
+        let merged = parser
+            .merge_resource_dictionaries(&parent, &child)
+            .expect("indirect resource category should resolve");
+        assert!(matches!(
+            merged.get("Font"),
+            Some(PdfValue::Dictionary(fonts))
+                if fonts.get("F1") == Some(&PdfValue::Null)
+                    && fonts.get("F2") == Some(&PdfValue::Null)
+        ));
     }
 
     #[test]
