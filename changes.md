@@ -78,6 +78,11 @@ intenta parsear streams referenciados desde `/Contents` de páginas, evitando
 interpretar perfiles ICC, fuentes u otros datos binarios como operadores en
 modo strict; la regresión del resolver pasa `22/22` y el smoke strict real
 queda verde.
+La corrección `c3247eb` adapta el árbol de estructura al `collapsible_match`
+detectado por Clippy 1.98.0. La tanda remota final de ese commit queda verde:
+`CI` `33187348344`, `Bindings` `33187348418`, `API Stability Audit`
+`33187348323`, `Fuzzing` `33187348409`, `ClusterFuzzLite` `33187348364`,
+`Differential Corpus` `33187348399` y `External PDF Corpus` `33187348328`.
 
 Actualizacion posterior: `b410aa5` deduplica referencias repetidas durante la
 resolucion y reutiliza nodos semanticos ya asociados a `ObjectId`; `62adb2a`
