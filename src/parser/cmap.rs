@@ -378,8 +378,16 @@ impl<'a> CMapParser<'a> {
                     if i >= lines.len() {
                         return Ok(None);
                     }
-                    let range_line = lines[i].trim();
-                    let Some(range) = self.parse_range_mapping(range_line) else {
+                    let mut range_line = lines[i].trim().to_string();
+                    while range_line.contains('[') && !range_line.contains(']') {
+                        i += 1;
+                        if i >= lines.len() {
+                            return Ok(None);
+                        }
+                        range_line.push(' ');
+                        range_line.push_str(lines[i].trim());
+                    }
+                    let Some(range) = self.parse_range_mapping(&range_line) else {
                         return Ok(None);
                     };
                     ranges.push(range);
@@ -828,6 +836,17 @@ mod tests {
     #[test]
     fn decodes_bfrange_destinations() {
         let data = b"/CMapName /Test def\n1 begincodespacerange\n<01> <02>\nendcodespacerange\n1 beginbfrange\n<01> <02> <0041>\nendbfrange";
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let parser = CMapParser::new(&mut ast, &resolver);
+        let cmap = parser.parse_cmap_data(data).expect("CMap should parse");
+
+        assert_eq!(parser.decode_bytes(&cmap, b"\x01\x02"), "AB");
+    }
+
+    #[test]
+    fn decodes_bfrange_array_split_across_lines() {
+        let data = b"/CMapName /Test def\n1 begincodespacerange\n<01> <02>\nendcodespacerange\n1 beginbfrange\n<01> <02> [\n<0041>\n<0042>\n]\nendbfrange";
         let mut ast = PdfAstGraph::new();
         let resolver = ObjectNodeMap::new();
         let parser = CMapParser::new(&mut ast, &resolver);
