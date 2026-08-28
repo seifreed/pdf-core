@@ -1726,6 +1726,32 @@ mod tests {
     }
 
     #[test]
+    fn page_color_space_budget_exhaustion_is_propagated() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(1024, 1024, 1024, 10, 10, 0, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let resolver =
+            ReferenceResolver::from_document(Cursor::new(Vec::new()), &document, false, limits);
+
+        let mut colorspaces = PdfDictionary::new();
+        colorspaces.insert("CS1", PdfValue::Name(PdfName::new("DeviceRGB")));
+        let mut resources = PdfDictionary::new();
+        resources.insert("ColorSpace", PdfValue::Dictionary(colorspaces));
+        let mut page = PdfDictionary::new();
+        page.insert("Resources", PdfValue::Dictionary(resources));
+
+        let mut ast = PdfAstGraph::new();
+        ast.create_node(NodeType::Page, PdfValue::Dictionary(page));
+
+        let error = resolver
+            .build_page_resources(&mut ast)
+            .expect_err("page resource budget must propagate");
+        assert!(error.contains("Nodes"));
+    }
+
+    #[test]
     fn xref_scan_respects_input_budget() {
         let mut limits = crate::performance::PerformanceLimits::default();
         limits.budget.max_input_bytes = 1024;
