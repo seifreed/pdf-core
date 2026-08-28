@@ -364,6 +364,16 @@ impl PdfParser {
                     remaining = rest;
                 }
                 Err(err) => {
+                    if matches!(
+                        &err,
+                        nom::Err::Failure(error)
+                            if error.code == nom::error::ErrorKind::TooLarge
+                    ) {
+                        return Err(AstError::ParseError(format!(
+                            "Resource budget exceeded while parsing objects: {:?}",
+                            err
+                        )));
+                    }
                     errors += 1;
                     if !self.mode.is_tolerant() || errors > self.max_errors {
                         return Err(AstError::ParseError(format!(
@@ -453,6 +463,16 @@ mod tests {
             .with_resource_budget(budget)
             .parse_object(b"1 0 obj [null] endobj")
             .expect_err("indirect nested values must consume node budget");
+        assert!(error.to_string().contains("TooLarge"));
+    }
+
+    #[test]
+    fn tolerant_object_batches_propagate_nested_node_budget() {
+        let budget = ResourceBudget::new(1024, 1024, 1024, 100, 10, 1, 10, 10);
+        let error = PdfParser::new()
+            .with_resource_budget(budget)
+            .parse_objects_with_diagnostics(b"[null]")
+            .expect_err("tolerant object batches must not hide budget errors");
         assert!(error.to_string().contains("TooLarge"));
     }
 
