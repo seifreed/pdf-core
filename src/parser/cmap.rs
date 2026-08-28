@@ -528,12 +528,10 @@ impl<'a> CMapParser<'a> {
                 // Parse array of destinations
                 let mut array_dests = Vec::new();
                 let array_str = parts[2..].join(" ");
-                let array_content = array_str.trim_start_matches('[').trim_end_matches(']');
+                let array_content = array_str.strip_prefix('[')?.strip_suffix(']')?;
 
                 for hex in array_content.split_whitespace() {
-                    if let Some(bytes) = self.hex_to_bytes(hex) {
-                        array_dests.push(bytes);
-                    }
+                    array_dests.push(self.hex_to_bytes(hex)?);
                 }
 
                 return Some(CharRangeMapping {
@@ -853,6 +851,21 @@ mod tests {
         let cmap = parser.parse_cmap_data(data).expect("CMap should parse");
 
         assert_eq!(parser.decode_bytes(&cmap, b"\x01\x02"), "AB");
+    }
+
+    #[test]
+    fn rejects_malformed_bfrange_array_destinations() {
+        let cases = [
+            b"1 beginbfrange\n<01> <02> [<0041> <ZZZZ>]\nendbfrange".as_slice(),
+            b"1 beginbfrange\n<01> <02> [<0041>\nendbfrange".as_slice(),
+        ];
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let parser = CMapParser::new(&mut ast, &resolver);
+
+        for data in cases {
+            assert!(parser.parse_cmap_data(data).is_none());
+        }
     }
 
     #[test]
