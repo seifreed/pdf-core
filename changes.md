@@ -213,6 +213,9 @@ clasificar, no findings de crash.
 La suite de mapeo reproducible contra veraPDF pasa `6/6`: cubre los `205`
 casos negativos Isartor, los casos PDF/UA publicados y los `9` pares
 positivos/negativos de reglas locales.
+`c3ff7c1` propaga tambien los excesos de nodos de `ResourceBudget` desde
+`OutputIntentsParser` hasta la ruta principal; su regresion pasa `1/1`, la
+suite de `pdf_file` `22/22` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
