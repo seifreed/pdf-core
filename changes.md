@@ -227,6 +227,9 @@ agotamiento de nodos al mismo presupuesto compartido.
 `c5e7092` propaga tambien los errores de decodificacion presupuestada de
 perfiles ICC, distinguiendolos de un perfil invalido; la suite de colores pasa
 `3/3` y Clippy estricto.
+`4330704` añade una regresion de la ruta `ReferenceResolver -> Page resources`
+que verifica la propagacion de `Nodes` para espacios de color; el caso pasa
+con Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
