@@ -57,11 +57,11 @@ temprana que el presupuesto pueda retener el documento lossless. El workspace
 queda en `514` tests verdes en `69` suites; esto endurece la frontera de parseo,
 pero no completa todavía todas las rutas de recuperación ni la conformidad
 normativa.
-El repositorio `pdf-core-corpus` añade además ocho pares PDF/A verificables en
-`1e3574f48ad11aa3522432650fb95d2f7a6b3693`, elevando `RULE-COVERAGE.json` a
-`20` mappings con positivo/negativo local, resultado documental de veraPDF e
-ID exacto para el fallo negativo. `6364b88` fija ese commit en el descargador y
-en los workflows de corpus.
+El repositorio `pdf-core-corpus` añade además ocho pares PDF/A y un par PDF/UA
+verificables en `51c53d5ac34cdb0a3ad8179ccf02b3e98608d5bc`, elevando
+`RULE-COVERAGE.json` a `21` mappings con positivo/negativo local, resultado
+documental de veraPDF e ID exacto para el fallo negativo. `0839ca2` fija ese
+commit en el descargador y en los workflows de corpus.
 La verificación local completa del corpus actualizado pasa `2.810/2.810`
 sin panics ni errores de parseo, con `2.810` hashes, `161281039` bytes,
 `peak_rss_kib=474480` y percentiles `3/57/178 ms`. La comparación veraPDF
