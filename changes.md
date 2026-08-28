@@ -836,7 +836,9 @@ Quedan estos puntos de gobernanza:
   API y bindings; falta obtener ejecuciones verdes sostenidas.
 * El workspace raíz ya incluye los crates auxiliares y bindings; `fuzz` sigue
   excluido porque usa su propio workspace.
-* Hay actualizaciones de Dependabot relacionadas con advisories que siguen abiertas, incluyendo actualizaciones de `rustls-webpki` y `quinn-proto`.
+* Las alertas históricas de Dependabot para `rustls-webpki` y `quinn-proto` constan
+  como corregidas; `07a7ac0` actualiza `chacha20` fuera de la versión yanked y
+  `cargo audit --deny warnings` pasa.
 
 Esto no es cosmético. Afecta a:
 
