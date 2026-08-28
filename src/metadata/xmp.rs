@@ -2550,6 +2550,17 @@ mod tests {
     }
 
     #[test]
+    fn description_attributes_do_not_inherit_previous_language() {
+        let xmp_xml = r#"<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title><rdf:Alt><rdf:li xml:lang="x-default">Title</rdf:li></rdf:Alt></dc:title></rdf:Description><rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:CreateDate="2024-01-01T12:00:00Z"/></rdf:RDF></x:xmpmeta>"#;
+
+        let metadata = parse_xmp(xmp_xml).expect("valid XMP");
+        assert_eq!(
+            metadata.get_xmp_property("CreateDate"),
+            Some(&"2024-01-01T12:00:00Z".to_string())
+        );
+    }
+
+    #[test]
     fn test_geographic_metadata_detection() {
         let xmp_xml = r#"<?xml version="1.0"?>
         <x:xmpmeta xmlns:x="adobe:ns:meta/">
