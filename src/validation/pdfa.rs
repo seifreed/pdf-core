@@ -5,6 +5,53 @@ use crate::validation::{
 };
 use std::collections::HashSet;
 
+fn metadata_values_match(field: &str, info_value: Option<&str>, xmp_value: Option<&str>) -> bool {
+    if info_value.is_none() || xmp_value.is_none() || info_value == xmp_value {
+        return true;
+    }
+    if !matches!(field, "CreationDate" | "ModDate") {
+        return false;
+    }
+    match (info_value, xmp_value) {
+        (Some(info), Some(xmp)) => {
+            let normalized_info = normalize_metadata_date(info);
+            let normalized_xmp = normalize_metadata_date(xmp);
+            normalized_info == normalized_xmp
+        }
+        _ => false,
+    }
+}
+
+fn normalize_metadata_date(value: &str) -> Option<String> {
+    let value = value.trim().strip_prefix("D:").unwrap_or(value.trim());
+    let zone_start = value.rfind(['+', '-', 'Z']);
+    let (local, zone) = zone_start
+        .map(|index| value.split_at(index))
+        .unwrap_or((value, ""));
+    let digits: String = local
+        .chars()
+        .filter(|character| character.is_ascii_digit())
+        .collect();
+    if digits.len() != 14 {
+        return None;
+    }
+    let normalized_zone = if zone.is_empty() {
+        String::new()
+    } else if zone == "Z" {
+        "+0000".to_string()
+    } else {
+        let zone_digits: String = zone[1..]
+            .chars()
+            .filter(|character| character.is_ascii_digit())
+            .collect();
+        if zone_digits.len() != 4 {
+            return None;
+        }
+        format!("{}{}", &zone[..1], zone_digits)
+    };
+    Some(format!("{digits}{normalized_zone}"))
+}
+
 /// PDF/A-1b validator implementing ISO 19005-1:2005 Level B requirements
 pub struct PdfA1bValidator {
     strict_mode: bool,
@@ -558,30 +605,37 @@ impl PdfA1bValidator {
 
     fn validate_images(&self, report: &mut ValidationReport, document: &PdfDocument) {
         for node in document.ast.get_all_nodes() {
-            if matches!(node.node_type, NodeType::Image | NodeType::ImageXObject) {
-                if let Some(image_dict) = node.as_dict() {
-                    if let Some(filter_value) = image_dict.get("Filter") {
-                        let has_lzw = match filter_value {
-                            PdfValue::Name(name) => name.without_slash() == "LZWDecode",
-                            PdfValue::Array(filters) => filters.iter().any(|f| {
-                                f.as_name()
-                                    .map(|n| n.without_slash() == "LZWDecode")
-                                    .unwrap_or(false)
-                            }),
-                            _ => false,
-                        };
+            let image_dict = match &node.value {
+                PdfValue::Dictionary(dict) => Some(dict),
+                PdfValue::Stream(stream) => Some(&stream.dict),
+                _ => None,
+            };
+            let is_image = matches!(node.node_type, NodeType::Image | NodeType::ImageXObject)
+                || image_dict
+                    .and_then(|dict| dict.get("Subtype"))
+                    .and_then(PdfValue::as_name)
+                    .is_some_and(|name| name.without_slash() == "Image");
+            if let Some(image_dict) = image_dict.filter(|_| is_image) {
+                if let Some(filter_value) = image_dict.get("Filter") {
+                    let has_lzw = match filter_value {
+                        PdfValue::Name(name) => name.without_slash() == "LZWDecode",
+                        PdfValue::Array(filters) => filters.iter().any(|f| {
+                            f.as_name()
+                                .map(|n| n.without_slash() == "LZWDecode")
+                                .unwrap_or(false)
+                        }),
+                        _ => false,
+                    };
 
-                        if has_lzw && self.strict_mode {
-                            report.add_issue(ValidationIssue {
-                                severity: ValidationSeverity::Warning,
-                                code: "PDF_A_LZW_DECODE".to_string(),
-                                message: "LZWDecode filter should be avoided in PDF/A-1"
-                                    .to_string(),
-                                node_id: None,
-                                location: Some("Image compression".to_string()),
-                                suggestion: Some("Consider using FlateDecode instead".to_string()),
-                            });
-                        }
+                    if has_lzw && self.strict_mode {
+                        report.add_issue(ValidationIssue {
+                            severity: ValidationSeverity::Warning,
+                            code: "PDF_A_LZW_DECODE".to_string(),
+                            message: "LZWDecode filter should be avoided in PDF/A-1".to_string(),
+                            node_id: None,
+                            location: Some("Image compression".to_string()),
+                            suggestion: Some("Consider using FlateDecode instead".to_string()),
+                        });
                     }
                 }
             }
@@ -885,8 +939,9 @@ impl PdfA1bValidator {
             let mismatches: Vec<&str> = fields
                 .iter()
                 .filter_map(|(name, info_value, xmp_value)| {
-                    (info_value != xmp_value && (info_value.is_some() || xmp_value.is_some()))
-                        .then_some(*name)
+                    ((!metadata_values_match(name, *info_value, *xmp_value))
+                        && (info_value.is_some() || xmp_value.is_some()))
+                    .then_some(*name)
                 })
                 .collect();
             if !mismatches.is_empty() {

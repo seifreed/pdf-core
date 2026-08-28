@@ -319,13 +319,21 @@ mod validation_tests {
                 PdfValue::Dictionary({
                     let mut dict = PdfDictionary::new();
                     dict.insert("Title", PdfValue::String(PdfString::from(title)));
+                    dict.insert(
+                        "CreationDate",
+                        PdfValue::String(PdfString::from("D:20240101120000+01'00'")),
+                    );
+                    dict.insert(
+                        "ModDate",
+                        PdfValue::String(PdfString::from("D:20240101120000+01'00'")),
+                    );
                     dict
                 }),
             );
             document.set_info(info_id);
 
             let xmp = format!(
-                "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>{xmp_title}</dc:title></rdf:Description></rdf:RDF></x:xmpmeta>"
+                "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\"><rdf:Description xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>{xmp_title}</dc:title></rdf:Description><rdf:Description xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\" xmp:CreateDate=\"2024-01-01T12:00:00+01:00\" xmp:ModifyDate=\"2024-01-01T12:00:00+01:00\"/></rdf:RDF></x:xmpmeta>"
             );
             let metadata = PdfValue::Stream(PdfStream::new(
                 {

@@ -176,20 +176,24 @@ impl<'a> EnhancedXmpParser<'a> {
         &mut self,
         element: &quick_xml::events::BytesStart,
     ) -> Result<(), String> {
-        for attr in element.attributes() {
-            let attr = attr.map_err(|e| format!("Attribute error: {}", e))?;
-            let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
-            let value = std::str::from_utf8(&attr.value).unwrap_or("");
+        let previous_lang = self.current_lang.take();
+        let result = (|| {
+            for attr in element.attributes() {
+                let attr = attr.map_err(|e| format!("Attribute error: {}", e))?;
+                let key = std::str::from_utf8(attr.key.as_ref()).unwrap_or("");
+                let value = std::str::from_utf8(&attr.value).unwrap_or("");
 
-            // Skip namespace and special attributes
-            if key.starts_with("xmlns") || key == "rdf:about" || key == "xml:lang" {
-                continue;
+                // Skip namespace and special attributes
+                if key.starts_with("xmlns") || key == "rdf:about" || key == "xml:lang" {
+                    continue;
+                }
+
+                self.store_property(key, value);
             }
-
-            // Store as property
-            self.store_property(key, value);
-        }
-        Ok(())
+            Ok(())
+        })();
+        self.current_lang = previous_lang;
+        result
     }
 
     fn store_property(&mut self, key: &str, value: &str) {
