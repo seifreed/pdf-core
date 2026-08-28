@@ -271,7 +271,10 @@ impl<'a> StructTreeParser<'a> {
             if let (Some(PdfValue::Integer(page_obj_num)), Some(parent_value)) =
                 (nums_array.get(i), nums_array.get(i + 1))
             {
-                let page_obj_num = *page_obj_num as u32;
+                let Ok(page_obj_num) = u32::try_from(*page_obj_num) else {
+                    i += 2;
+                    continue;
+                };
                 if let Some(parent_array) = self.resolve_array(parent_value) {
                     let parents = parent_array
                         .iter()
@@ -1075,6 +1078,8 @@ mod tests {
         let nums_id = ast.create_node(
             NodeType::Object(ObjectId::new(3, 0)),
             PdfValue::Array(PdfArray::from(vec![
+                PdfValue::Integer(-1),
+                PdfValue::Reference(PdfReference::new(5, 0)),
                 PdfValue::Integer(9),
                 PdfValue::Reference(PdfReference::new(5, 0)),
             ])),
