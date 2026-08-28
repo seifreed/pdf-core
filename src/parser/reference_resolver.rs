@@ -538,10 +538,9 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             let buffer = self.read_object_buffer(offset)?;
 
             // Resolve an indirect stream length before parsing stream bytes.
-            let parsed = match object_parser::parse_indirect_stream_prefix_with_max_depth_and_budget(
+            let parsed = match object_parser::parse_indirect_stream_prefix_with_max_depth_unbudgeted(
                 &buffer,
                 self.limits.max_depth,
-                &self.limits.budget,
             ) {
                 Ok((_, (_, dict))) => {
                     if let Some(PdfValue::Reference(length_ref)) = dict.get("Length") {
@@ -1882,6 +1881,27 @@ mod tests {
             .load_object_value(ObjectId::new(2, 0))
             .expect_err("object parser budget must propagate");
         assert!(error.contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn stream_prefix_inspection_does_not_consume_object_budget_twice() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(1024, 1024, 1024, 100, 1, 10, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(b"2 0 obj\n<< /Length 3 >>\nstream\nabc\nendstream\nendobj\n".to_vec()),
+            &document,
+            false,
+            limits,
+        );
+        resolver.xref_table.insert(ObjectId::new(2, 0), 0);
+
+        let mut ast = PdfAstGraph::new();
+        resolver
+            .resolve_object(ObjectId::new(2, 0), &mut ast)
+            .expect("valid stream should consume one object budget unit");
     }
 
     #[test]

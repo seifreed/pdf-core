@@ -294,7 +294,7 @@ pub fn parse_indirect_stream_prefix_with_max_depth_and_budget<'a>(
     Ok(parsed)
 }
 
-fn parse_indirect_stream_prefix_with_max_depth_unbudgeted(
+pub(crate) fn parse_indirect_stream_prefix_with_max_depth_unbudgeted(
     input: &[u8],
     max_depth: usize,
 ) -> IResult<&[u8], (ObjectId, PdfDictionary)> {
