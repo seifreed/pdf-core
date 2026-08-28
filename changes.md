@@ -588,6 +588,10 @@ Pendientes actuales, en orden practico:
   La cobertura reproducible añade `LANG_INVALID` con el par upstream
   `7.2-t24-pass-a`/`7.2-t29-fail-b`; la prueba local y la correspondencia
   `ISO 14289-1:2014:7.2:29` de veraPDF pasan.
+  `6b2372d` reinicia los contadores de `ResourceBudget` entre operaciones
+  independientes de `PdfParser`, conservando el presupuesto compartido dentro
+  de cada documento; parser focalizado `9/9`, `parser_tests` `32/32` y Clippy
+  estricto pasan.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
