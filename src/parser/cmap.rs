@@ -95,8 +95,25 @@ impl<'a> CMapParser<'a> {
     }
 
     pub fn parse_cmap_stream(&mut self, stream: &PdfStream) -> Option<(NodeId, CMap)> {
-        let data = stream.decode_with_budget(&self.budget).ok()?;
-        let mut cmap = self.parse_cmap_data(&data)?;
+        self.parse_cmap_stream_with_budget(stream).ok().flatten()
+    }
+
+    pub fn parse_cmap_stream_with_budget(
+        &mut self,
+        stream: &PdfStream,
+    ) -> Result<Option<(NodeId, CMap)>, ResourceBudgetError> {
+        let data = match stream.decode_with_budget(&self.budget) {
+            Ok(data) => data,
+            Err(message) => {
+                if let Some(error) = budget_error_from_message(&message) {
+                    return Err(error);
+                }
+                return Ok(None);
+            }
+        };
+        let Some(mut cmap) = self.parse_cmap_data_with_budget(&data)? else {
+            return Ok(None);
+        };
         self.resolve_usecmap(&mut cmap);
         if !cmap.name.is_empty() {
             self.parsed_cmaps.insert(cmap.name.clone(), cmap.clone());
@@ -127,15 +144,34 @@ impl<'a> CMapParser<'a> {
         node.metadata
             .set_property("wmode".to_string(), cmap.wmode.to_string());
 
-        self.budget.consume_node().ok()?;
+        self.budget.consume_node()?;
         let node_id = self.ast.add_node(node);
 
-        Some((node_id, cmap))
+        Ok(Some((node_id, cmap)))
     }
 
     pub fn parse_tounicode_stream(&mut self, stream: &PdfStream) -> Option<NodeId> {
-        let data = stream.decode_with_budget(&self.budget).ok()?;
-        let mut cmap = self.parse_cmap_data(&data)?;
+        self.parse_tounicode_stream_with_budget(stream)
+            .ok()
+            .flatten()
+    }
+
+    pub fn parse_tounicode_stream_with_budget(
+        &mut self,
+        stream: &PdfStream,
+    ) -> Result<Option<NodeId>, ResourceBudgetError> {
+        let data = match stream.decode_with_budget(&self.budget) {
+            Ok(data) => data,
+            Err(message) => {
+                if let Some(error) = budget_error_from_message(&message) {
+                    return Err(error);
+                }
+                return Ok(None);
+            }
+        };
+        let Some(mut cmap) = self.parse_cmap_data_with_budget(&data)? else {
+            return Ok(None);
+        };
         self.resolve_usecmap(&mut cmap);
         if !cmap.name.is_empty() {
             self.parsed_cmaps.insert(cmap.name.clone(), cmap.clone());
@@ -169,10 +205,10 @@ impl<'a> CMapParser<'a> {
         node.metadata
             .set_property("mapping_count".to_string(), mapping_count.to_string());
 
-        self.budget.consume_node().ok()?;
+        self.budget.consume_node()?;
         let node_id = self.ast.add_node(node);
 
-        Some(node_id)
+        Ok(Some(node_id))
     }
 
     fn resolve_usecmap(&self, cmap: &mut CMap) {
@@ -217,8 +253,19 @@ impl<'a> CMapParser<'a> {
         };
     }
 
+    #[cfg(test)]
     fn parse_cmap_data(&self, data: &[u8]) -> Option<CMap> {
-        let content = std::str::from_utf8(data).ok()?;
+        self.parse_cmap_data_with_budget(data).ok().flatten()
+    }
+
+    fn parse_cmap_data_with_budget(
+        &self,
+        data: &[u8],
+    ) -> Result<Option<CMap>, ResourceBudgetError> {
+        let content = match std::str::from_utf8(data) {
+            Ok(content) => content,
+            Err(_) => return Ok(None),
+        };
         let mut cmap = CMap {
             name: String::new(),
             cid_system_info: CIDSystemInfo {
@@ -284,74 +331,96 @@ impl<'a> CMapParser<'a> {
             }
             // Code space ranges
             else if line.contains("begincodespacerange") {
-                let count = self.extract_count(line)?;
+                let Some(count) = self.extract_count(line) else {
+                    return Ok(None);
+                };
                 i += 1;
                 for _ in 0..count {
-                    self.budget.consume_node().ok()?;
+                    self.budget.consume_node()?;
                     if i >= lines.len() {
-                        return None;
+                        return Ok(None);
                     }
                     let range_line = lines[i].trim();
-                    let (start, end) = self.parse_hex_range(range_line)?;
+                    let Some((start, end)) = self.parse_hex_range(range_line) else {
+                        return Ok(None);
+                    };
                     cmap.code_space_ranges.push(CodeSpaceRange { start, end });
                     i += 1;
                 }
             }
             // Character mappings
             else if line.contains("beginbfchar") {
-                let count = self.extract_count(line)?;
+                let Some(count) = self.extract_count(line) else {
+                    return Ok(None);
+                };
                 i += 1;
                 for _ in 0..count {
-                    self.budget.consume_node().ok()?;
+                    self.budget.consume_node()?;
                     if i >= lines.len() {
-                        return None;
+                        return Ok(None);
                     }
                     let char_line = lines[i].trim();
-                    let (src, dst) = self.parse_char_mapping(char_line)?;
+                    let Some((src, dst)) = self.parse_char_mapping(char_line) else {
+                        return Ok(None);
+                    };
                     chars.insert(src, dst);
                     i += 1;
                 }
             }
             // Range mappings
             else if line.contains("beginbfrange") {
-                let count = self.extract_count(line)?;
+                let Some(count) = self.extract_count(line) else {
+                    return Ok(None);
+                };
                 i += 1;
                 for _ in 0..count {
-                    self.budget.consume_node().ok()?;
+                    self.budget.consume_node()?;
                     if i >= lines.len() {
-                        return None;
+                        return Ok(None);
                     }
                     let range_line = lines[i].trim();
-                    ranges.push(self.parse_range_mapping(range_line)?);
+                    let Some(range) = self.parse_range_mapping(range_line) else {
+                        return Ok(None);
+                    };
+                    ranges.push(range);
                     i += 1;
                 }
             }
             // CID character mappings
             else if line.contains("begincidchar") {
-                let count = self.extract_count(line)?;
+                let Some(count) = self.extract_count(line) else {
+                    return Ok(None);
+                };
                 i += 1;
                 for _ in 0..count {
-                    self.budget.consume_node().ok()?;
+                    self.budget.consume_node()?;
                     if i >= lines.len() {
-                        return None;
+                        return Ok(None);
                     }
                     let cid_line = lines[i].trim();
-                    let (src, cid) = self.parse_cid_char(cid_line)?;
+                    let Some((src, cid)) = self.parse_cid_char(cid_line) else {
+                        return Ok(None);
+                    };
                     cid_chars.insert(src, cid);
                     i += 1;
                 }
             }
             // CID range mappings
             else if line.contains("begincidrange") {
-                let count = self.extract_count(line)?;
+                let Some(count) = self.extract_count(line) else {
+                    return Ok(None);
+                };
                 i += 1;
                 for _ in 0..count {
-                    self.budget.consume_node().ok()?;
+                    self.budget.consume_node()?;
                     if i >= lines.len() {
-                        return None;
+                        return Ok(None);
                     }
                     let cid_range_line = lines[i].trim();
-                    cid_ranges.push(self.parse_cid_range(cid_range_line)?);
+                    let Some(cid_range) = self.parse_cid_range(cid_range_line) else {
+                        return Ok(None);
+                    };
+                    cid_ranges.push(cid_range);
                     i += 1;
                 }
             }
@@ -393,7 +462,7 @@ impl<'a> CMapParser<'a> {
             }
         };
 
-        Some(cmap)
+        Ok(Some(cmap))
     }
 
     fn extract_name(&self, line: &str) -> Option<String> {
@@ -722,6 +791,20 @@ fn mapping_parts(mappings: &CMapMappings) -> MappingParts {
     }
 }
 
+fn budget_error_from_message(message: &str) -> Option<ResourceBudgetError> {
+    [
+        ("InputBytes", ResourceBudgetError::InputBytes),
+        ("DecodedBytes", ResourceBudgetError::DecodedBytes),
+        ("Objects", ResourceBudgetError::Objects),
+        ("Nodes", ResourceBudgetError::Nodes),
+        ("Edges", ResourceBudgetError::Edges),
+        ("Deadline", ResourceBudgetError::Deadline),
+        ("Cancelled", ResourceBudgetError::Cancelled),
+    ]
+    .into_iter()
+    .find_map(|(name, error)| message.contains(name).then_some(error))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CMapMappings, CMapParser};
@@ -886,6 +969,26 @@ mod tests {
         let parser = CMapParser::new_with_budget(&mut ast, &resolver, &budget);
         let data = b"2 beginbfchar\n<01> <0041>\n<02> <0042>\nendbfchar";
 
-        assert!(parser.parse_cmap_data(data).is_none());
+        assert!(matches!(
+            parser.parse_cmap_data_with_budget(data),
+            Err(ResourceBudgetError::Nodes)
+        ));
+    }
+
+    #[test]
+    fn reports_cmap_budget_exhaustion() {
+        let mut ast = PdfAstGraph::new();
+        let resolver = ObjectNodeMap::new();
+        let budget = crate::performance::ResourceBudget::new(1024, 1024, 1024, 100, 10, 0, 10, 10);
+        let mut parser = CMapParser::new_with_budget(&mut ast, &resolver, &budget);
+        let stream = PdfStream::new(
+            PdfDictionary::new(),
+            b"1 beginbfchar\n<01> <0041>\nendbfchar".to_vec(),
+        );
+
+        assert!(matches!(
+            parser.parse_cmap_stream_with_budget(&stream),
+            Err(ResourceBudgetError::Nodes)
+        ));
     }
 }

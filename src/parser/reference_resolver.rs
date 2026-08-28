@@ -1409,8 +1409,12 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             &resolver_map,
             &self.limits.budget,
         );
-        if let Some(node_id) = cmap_parser.parse_tounicode_stream(&stream) {
-            self.add_edge(ast, font_id, node_id, EdgeType::Child)?;
+        match cmap_parser.parse_tounicode_stream_with_budget(&stream) {
+            Ok(Some(node_id)) => self.add_edge(ast, font_id, node_id, EdgeType::Child)?,
+            Ok(None) => {}
+            Err(error) => {
+                return Err(format!("Failed to parse ToUnicode CMap: {error}"));
+            }
         }
         Ok(())
     }

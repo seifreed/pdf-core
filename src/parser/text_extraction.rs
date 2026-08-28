@@ -132,7 +132,7 @@ impl<'a> TextExtractor<'a> {
             .collect();
         for (name, font_value) in fonts {
             budget.consume_node()?;
-            let font_info = self.parse_font_info(&name, &font_value, budget);
+            let font_info = self.parse_font_info(&name, &font_value, budget)?;
             self.fonts.insert(name, font_info);
         }
         Ok(())
@@ -222,7 +222,7 @@ impl<'a> TextExtractor<'a> {
         name: &str,
         font_value: &PdfValue,
         budget: &ResourceBudget,
-    ) -> FontInfo {
+    ) -> Result<FontInfo, ResourceBudgetError> {
         let top_dict = self.resolve_dict(font_value).unwrap_or_default();
         let descendant_dict = top_dict
             .get("DescendantFonts")
@@ -295,14 +295,14 @@ impl<'a> TextExtractor<'a> {
                 let resolver = ObjectNodeMap::new();
                 if let Some((_, cmap)) =
                     CMapParser::new_with_budget(&mut cmap_ast, &resolver, budget)
-                        .parse_cmap_stream(&stream)
+                        .parse_cmap_stream_with_budget(&stream)?
                 {
                     self.cmaps.insert(name.to_string(), cmap);
                 }
             }
         }
 
-        FontInfo {
+        Ok(FontInfo {
             font_type,
             base_font,
             encoding,
@@ -311,7 +311,7 @@ impl<'a> TextExtractor<'a> {
             width_map,
             default_width,
             font_matrix,
-        }
+        })
     }
 
     fn parse_simple_widths(&self, dict: &PdfDictionary, width_map: &mut HashMap<u32, f64>) {
