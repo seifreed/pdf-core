@@ -1123,8 +1123,12 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             };
             match decode_stream_with_budget(raw, &filters, &self.limits.budget) {
                 Ok(decoded) => stream.set_decoded(decoded),
-                Err(_) if self.tolerant => {}
-                Err(error) => return Err(format!("Failed to decode JBIG2Globals: {error}")),
+                Err(error) => {
+                    let message = format!("Failed to decode JBIG2Globals: {error}");
+                    if !self.tolerant || message.contains("resource budget exceeded:") {
+                        return Err(message);
+                    }
+                }
             }
         }
         dict.insert("JBIG2Globals", PdfValue::Stream(stream));
@@ -1184,7 +1188,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                                 message.clone(),
                                 "stream_decode_skipped",
                             );
-                            if !self.tolerant {
+                            if !self.tolerant || message.contains("resource budget exceeded:") {
                                 return Err(message);
                             }
                             continue;
@@ -1739,6 +1743,59 @@ mod tests {
         );
         let mut strict_ast = make_ast();
         assert!(strict.build_content_stream_ast(&mut strict_ast).is_err());
+    }
+
+    #[test]
+    fn content_stream_budget_exhaustion_is_not_recovered() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(1024, 1024, 0, 10, 10, 10, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let mut resolver =
+            ReferenceResolver::from_document(Cursor::new(Vec::new()), &document, true, limits);
+        let mut ast = PdfAstGraph::new();
+        ast.create_node(
+            NodeType::ContentStream,
+            PdfValue::Stream(crate::types::PdfStream::new(
+                PdfDictionary::new(),
+                b"content".to_vec(),
+            )),
+        );
+
+        let error = resolver
+            .build_content_stream_ast(&mut ast)
+            .expect_err("content stream budget must propagate");
+        assert!(error.contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn jbig2_globals_budget_exhaustion_is_not_recovered() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(1024, 1024, 0, 10, 10, 10, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let mut resolver =
+            ReferenceResolver::from_document(Cursor::new(Vec::new()), &document, true, limits);
+        let mut ast = PdfAstGraph::new();
+        let globals_id = ast.create_node(
+            NodeType::Object(ObjectId::new(9, 0)),
+            PdfValue::Stream(crate::types::PdfStream::new(
+                PdfDictionary::new(),
+                b"globals".to_vec(),
+            )),
+        );
+        resolver
+            .object_to_node
+            .insert(ObjectId::new(9, 0), globals_id);
+
+        let mut dict = PdfDictionary::new();
+        dict.insert("JBIG2Globals", PdfValue::Reference(PdfReference::new(9, 0)));
+        let error = resolver
+            .resolve_jbig2_globals_dict(&mut dict, &ast)
+            .expect_err("JBIG2 globals budget must propagate");
+        assert!(error.contains("resource budget exceeded"));
     }
 
     #[test]
