@@ -34,6 +34,8 @@ entorno virtual y `python/test_bindings.py` pasan con CPython 3.14 en macOS
 arm64; el binding Node pasa `npm test` y `test/package-smoke.js` tras instalar
 el paquete nativo localmente con Node 26.7.0. Esto no sustituye los seis jobs
 multiplataforma ni la publicación en registros.
+El smoke del ABI C también pasa en macOS arm64 compilando `tests/ffi_header_smoke.c`
+contra `libpdf_ast.dylib`, con salida `pdf-ast 0.2.0-alpha.1: nodes=5 root=0`.
 
 Actualizacion posterior: `b410aa5` deduplica referencias repetidas durante la
 resolucion y reutiliza nodos semanticos ya asociados a `ObjectId`; `62adb2a`
