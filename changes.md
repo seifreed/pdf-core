@@ -9,8 +9,8 @@ validacion de limites en las rutas de xref/object streams, y la serializacion
 restaura el estado documental lossless disponible. Tambien existe un corpus
 reproducible de 2.806 fixtures upstream mas tres regresiones, metricas
 diferenciales, una campana fuzz local de 16.000 ejecuciones sin crashes y un
-chequeo completo de 205 mapeos negativos contra veraPDF 1.30.2 y nueve pares
-positivos/negativos de reglas locales, ocho con ID veraPDF exacto; la cobertura positiva exacta por regla
+chequeo completo de 205 mapeos negativos contra veraPDF 1.30.2 y diez pares
+positivos/negativos de reglas locales, nueve con ID veraPDF exacto; la cobertura positiva exacta por regla
 sigue sin estar disponible para los 95 IDs porque veraPDF no emite resúmenes
 de reglas aprobadas.
 La rama `main` queda protegida en GitHub con checks estrictos de CI, corpus,
@@ -585,6 +585,9 @@ Pendientes actuales, en orden practico:
   pasa `10/10` y Clippy estricto.
   `a0fed6c` acota el fallback del header truncado en reconstrucción para evitar
   slices fuera de rango; la regresión pasa `1/1` y Clippy estricto.
+  La cobertura reproducible añade `LANG_INVALID` con el par upstream
+  `7.2-t24-pass-a`/`7.2-t29-fail-b`; la prueba local y la correspondencia
+  `ISO 14289-1:2014:7.2:29` de veraPDF pasan.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de

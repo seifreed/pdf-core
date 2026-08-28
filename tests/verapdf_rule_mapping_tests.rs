@@ -84,8 +84,18 @@ const PDFUA_CASES: &[(&str, &str, bool)] = &[
         true,
     ),
     (
+        "verapdf-pdfua-1/7.2 Text/7.2-t29-fail-b.pdf",
+        "LANG_INVALID",
+        true,
+    ),
+    (
         "verapdf-pdfua-1/7.2 Text/7.2-t24-pass-a.pdf",
         "LANG_EMPTY",
+        false,
+    ),
+    (
+        "verapdf-pdfua-1/7.2 Text/7.2-t24-pass-a.pdf",
+        "LANG_INVALID",
         false,
     ),
     (
@@ -439,7 +449,7 @@ fn published_rule_coverage_has_positive_and_negative_verapdf_evidence() {
         serde_json::from_slice(&fs::read(&manifest_path).expect("read coverage manifest"))
             .expect("valid coverage manifest");
     let mappings = manifest["mappings"].as_array().expect("coverage mappings");
-    assert_eq!(mappings.len(), 9);
+    assert_eq!(mappings.len(), 10);
 
     for mapping in mappings {
         let positive = manifest_fixture_path(
