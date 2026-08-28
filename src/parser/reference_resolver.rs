@@ -543,7 +543,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             ) {
                 Ok((_, (_, dict))) => {
                     if let Some(PdfValue::Reference(length_ref)) = dict.get("Length") {
-                        match self.load_object_value(length_ref.id()) {
+                        match self.load_object_value(length_ref.id())? {
                             Some(PdfValue::Integer(length)) if length >= 0 => {
                                 match usize::try_from(length) {
                                     Ok(length) => {
@@ -1298,7 +1298,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             }
 
             let resolved = match js_value {
-                PdfValue::Reference(r) => match self.load_object_value(r.id()) {
+                PdfValue::Reference(r) => match self.load_object_value(r.id())? {
                     Some(value) => value,
                     None if self.tolerant => PdfValue::Null,
                     None => return Err(format!("Failed to resolve JavaScript object {}", r.id())),
@@ -1364,7 +1364,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         value: &PdfValue,
     ) -> Result<(), String> {
         let resolved = match value {
-            PdfValue::Reference(r) => match self.load_object_value(r.id()) {
+            PdfValue::Reference(r) => match self.load_object_value(r.id())? {
                 Some(value) => value,
                 None if self.tolerant => PdfValue::Null,
                 None => return Err(format!("Failed to resolve font encoding object {}", r.id())),
@@ -1388,7 +1388,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         value: &PdfValue,
     ) -> Result<(), String> {
         let resolved = match value {
-            PdfValue::Reference(r) => match self.load_object_value(r.id()) {
+            PdfValue::Reference(r) => match self.load_object_value(r.id())? {
                 Some(value) => value,
                 None if self.tolerant => PdfValue::Null,
                 None => return Err(format!("Failed to resolve ToUnicode object {}", r.id())),
@@ -1422,17 +1422,27 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
         Ok(())
     }
 
-    fn load_object_value(&mut self, obj_id: ObjectId) -> Option<PdfValue> {
-        let offset = self.xref_table.get(&obj_id).copied()?;
-        let buffer = self.read_object_buffer(offset).ok()?;
+    fn load_object_value(&mut self, obj_id: ObjectId) -> Result<Option<PdfValue>, String> {
+        let Some(offset) = self.xref_table.get(&obj_id).copied() else {
+            return Ok(None);
+        };
+        let buffer = match self.read_object_buffer(offset) {
+            Ok(buffer) => buffer,
+            Err(error) if error.starts_with("resource budget exceeded:") => return Err(error),
+            Err(_) => return Ok(None),
+        };
 
-        object_parser::parse_indirect_object_with_max_depth_and_budget(
+        match object_parser::parse_indirect_object_with_max_depth_and_budget(
             &buffer,
             self.limits.max_depth,
             &self.limits.budget,
-        )
-        .ok()
-        .map(|(_, (_, value))| value)
+        ) {
+            Ok((_, (_, value))) => Ok(Some(value)),
+            Err(nom::Err::Failure(error)) if error.code == nom::error::ErrorKind::TooLarge => {
+                Err("resource budget exceeded: object parser".to_string())
+            }
+            Err(_) => Ok(None),
+        }
     }
 
     fn read_object_buffer(&mut self, offset: u64) -> Result<Vec<u8>, String> {
@@ -1749,6 +1759,27 @@ mod tests {
             .build_page_resources(&mut ast)
             .expect_err("page resource budget must propagate");
         assert!(error.contains("Nodes"));
+    }
+
+    #[test]
+    fn indirect_object_parser_budget_exhaustion_is_not_treated_as_missing() {
+        let document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(0, 1024, 1024, 10, 10, 10, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(b"2 0 obj\nnull\nendobj\n".to_vec()),
+            &document,
+            true,
+            limits,
+        );
+        resolver.xref_table.insert(ObjectId::new(2, 0), 0);
+
+        let error = resolver
+            .load_object_value(ObjectId::new(2, 0))
+            .expect_err("object parser budget must propagate");
+        assert!(error.contains("resource budget exceeded"));
     }
 
     #[test]
