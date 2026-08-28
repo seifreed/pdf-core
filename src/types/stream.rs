@@ -240,7 +240,7 @@ impl PdfStream {
             }
             StreamData::Decoded(data) => {
                 budget
-                    .consume_decoded(data.len() as u64)
+                    .consume_memory(data.len() as u64)
                     .map_err(|e| e.to_string())?;
                 Ok(data.clone())
             }
@@ -568,6 +568,17 @@ mod tests {
             stream.lossless.recovery_actions,
             vec!["content_stream_skipped"]
         );
+    }
+
+    #[test]
+    fn already_decoded_stream_uses_total_memory_budget() {
+        let stream = PdfStream::from_data(
+            PdfDictionary::new(),
+            StreamData::Decoded(b"decoded".to_vec()),
+        );
+        let budget = ResourceBudget::new(1, 7, 1, 10, 10, 10, 10, 8);
+
+        assert_eq!(stream.decode_with_budget(&budget).unwrap(), b"decoded");
     }
 
     #[test]
