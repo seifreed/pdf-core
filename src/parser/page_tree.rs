@@ -801,4 +801,57 @@ mod tests {
         assert_eq!(ast.find_nodes_by_type(NodeType::ColorSpace).len(), 1);
         assert_eq!(ast.edge_count(), 3);
     }
+
+    #[test]
+    fn page_tree_parser_resolves_indirect_contents_and_annots() {
+        let mut ast = PdfAstGraph::new();
+        let root_id = ast.add_node(AstNode::new(NodeId(0), NodeType::Catalog, PdfValue::Null));
+        let page_id = ast.add_node(AstNode::new(
+            NodeId(1),
+            NodeType::Page,
+            PdfValue::Dictionary({
+                let mut dict = PdfDictionary::new();
+                dict.insert("Type", PdfValue::Name(PdfName::new("Page")));
+                dict.insert("Contents", PdfValue::Reference(PdfReference::new(5, 0)));
+                dict.insert("Annots", PdfValue::Reference(PdfReference::new(6, 0)));
+                dict
+            }),
+        ));
+        let content_id = ast.add_node(AstNode::new(NodeId(3), NodeType::Unknown, PdfValue::Null));
+        let annotation_id = ast.add_node(AstNode::new(
+            NodeId(4),
+            NodeType::Unknown,
+            PdfValue::Dictionary(PdfDictionary::new()),
+        ));
+        let contents_array_id = ast.add_node(AstNode::new(
+            NodeId(5),
+            NodeType::Unknown,
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(3, 0))].into()),
+        ));
+        let annots_array_id = ast.add_node(AstNode::new(
+            NodeId(6),
+            NodeType::Unknown,
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(4, 0))].into()),
+        ));
+        let mut pages_dict = PdfDictionary::new();
+        pages_dict.insert(
+            "Kids",
+            PdfValue::Array(vec![PdfValue::Reference(PdfReference::new(1, 0))].into()),
+        );
+        let mut resolver = ObjectNodeMap::new();
+        resolver.insert(ObjectId::new(1, 0), page_id);
+        resolver.insert(ObjectId::new(3, 0), content_id);
+        resolver.insert(ObjectId::new(4, 0), annotation_id);
+        resolver.insert(ObjectId::new(5, 0), contents_array_id);
+        resolver.insert(ObjectId::new(6, 0), annots_array_id);
+        let mut parser = PageTreeParser::new(&mut ast, &resolver);
+
+        assert_eq!(parser.parse_page_tree(&pages_dict, root_id), vec![page_id]);
+        assert_eq!(ast.edge_count(), 3);
+        assert_eq!(
+            ast.get_node(annotation_id)
+                .map(|node| node.node_type.clone()),
+            Some(NodeType::Annotation)
+        );
+    }
 }
