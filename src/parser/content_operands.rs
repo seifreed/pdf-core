@@ -1100,7 +1100,9 @@ fn pdf_value_to_content_operand(
         crate::types::PdfValue::Name(n) => {
             crate::parser::content_stream::Operand::Name(n.without_slash().to_string())
         }
-        crate::types::PdfValue::Boolean(_) => crate::parser::content_stream::Operand::Integer(1), // Simplified
+        crate::types::PdfValue::Boolean(value) => {
+            crate::parser::content_stream::Operand::Integer(i64::from(value))
+        }
         crate::types::PdfValue::Null => crate::parser::content_stream::Operand::Integer(0), // Simplified
         crate::types::PdfValue::Array(arr) => {
             let operands: Vec<_> = arr
@@ -1115,8 +1117,12 @@ fn pdf_value_to_content_operand(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_content_stream_strict_with_budget, parse_inline_image_with_budget};
+    use super::{
+        parse_content_stream_strict_with_budget, parse_inline_image_with_budget,
+        pdf_value_to_content_operand,
+    };
     use crate::performance::ResourceBudget;
+    use crate::types::PdfValue;
 
     #[test]
     fn inline_image_parser_respects_input_budget() {
@@ -1135,5 +1141,17 @@ mod tests {
             &budget
         )
         .is_ok());
+    }
+
+    #[test]
+    fn pdf_boolean_operand_preserves_false_value() {
+        assert_eq!(
+            pdf_value_to_content_operand(PdfValue::Boolean(false)),
+            crate::parser::content_stream::Operand::Integer(0)
+        );
+        assert_eq!(
+            pdf_value_to_content_operand(PdfValue::Boolean(true)),
+            crate::parser::content_stream::Operand::Integer(1)
+        );
     }
 }
