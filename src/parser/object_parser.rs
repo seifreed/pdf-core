@@ -35,9 +35,25 @@ pub fn parse_value_with_max_depth_and_budget<'a>(
     budget: &ResourceBudget,
 ) -> IResult<&'a [u8], PdfValue> {
     charge_input(input, budget)?;
-    let parsed = parse_value_with_max_depth_unbudgeted(input, max_depth)?;
+    parse_value_with_max_depth_budgeted(input, max_depth, budget)
+}
+
+pub(crate) fn parse_value_with_max_depth_budgeted<'a>(
+    input: &'a [u8],
+    max_depth: usize,
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], PdfValue> {
+    let parsed = parse_value_with_max_depth_budgeted_no_memory(input, max_depth, budget)?;
     charge_value_memory(&parsed.1, budget, input)?;
     Ok(parsed)
+}
+
+pub(crate) fn parse_value_with_max_depth_budgeted_no_memory<'a>(
+    input: &'a [u8],
+    max_depth: usize,
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], PdfValue> {
+    parse_value_with_depth_budget(input, 0, max_depth, budget)
 }
 
 pub(crate) fn parse_value_with_max_depth_unbudgeted(
@@ -96,6 +112,44 @@ fn parse_value_with_depth(
             |i| parse_dictionary_with_depth(i, depth + 1, max_depth),
         )),
     )(input)
+}
+
+fn parse_value_with_depth_budget<'a>(
+    input: &'a [u8],
+    depth: usize,
+    max_depth: usize,
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], PdfValue> {
+    if depth > max_depth {
+        return Err(nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::TooLarge,
+        )));
+    }
+    let (input, _) = skip_whitespace_and_comments(input)?;
+    if input.first() == Some(&b']') || input.starts_with(b">>") {
+        return Err(nom::Err::Error(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::Tag,
+        )));
+    }
+    budget.consume_node().map_err(|_| {
+        nom::Err::Failure(nom::error::Error::new(
+            input,
+            nom::error::ErrorKind::TooLarge,
+        ))
+    })?;
+
+    alt((
+        parse_null,
+        parse_boolean,
+        parse_reference,
+        parse_real_or_integer,
+        parse_string,
+        parse_name_value,
+        |i| parse_array_with_depth_budget(i, depth + 1, max_depth, budget),
+        |i| parse_dictionary_with_depth_budget(i, depth + 1, max_depth, budget),
+    ))(input)
 }
 
 fn parse_null(input: &[u8]) -> IResult<&[u8], PdfValue> {
@@ -169,6 +223,49 @@ fn parse_dictionary_with_depth(
     )(input)
 }
 
+fn parse_array_with_depth_budget<'a>(
+    input: &'a [u8],
+    depth: usize,
+    max_depth: usize,
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], PdfValue> {
+    map(
+        delimited(
+            terminated(char('['), skip_whitespace_and_comments),
+            many0(|i| parse_value_with_depth_budget(i, depth + 1, max_depth, budget)),
+            preceded(skip_whitespace_and_comments, char(']')),
+        ),
+        |values| PdfValue::Array(PdfArray::from(values)),
+    )(input)
+}
+
+fn parse_dictionary_with_depth_budget<'a>(
+    input: &'a [u8],
+    depth: usize,
+    max_depth: usize,
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], PdfValue> {
+    map(
+        delimited(
+            terminated(tag(b"<<"), skip_whitespace_and_comments),
+            many0(preceded(
+                skip_whitespace_and_comments,
+                separated_pair(name, skip_whitespace_and_comments, |i| {
+                    parse_value_with_depth_budget(i, depth + 1, max_depth, budget)
+                }),
+            )),
+            preceded(skip_whitespace_and_comments, tag(b">>")),
+        ),
+        |pairs| {
+            let mut dict = PdfDictionary::new();
+            for (key, value) in pairs {
+                dict.insert(key, value);
+            }
+            PdfValue::Dictionary(dict)
+        },
+    )(input)
+}
+
 fn parse_reference(input: &[u8]) -> IResult<&[u8], PdfValue> {
     map(
         tuple((
@@ -217,18 +314,19 @@ pub fn parse_indirect_object_with_max_depth_and_budget<'a>(
 ) -> IResult<&'a [u8], (ObjectId, PdfValue)> {
     charge_input(input, budget)?;
     charge_object(input, budget)?;
-    let parsed = parse_indirect_object_with_max_depth_unbudgeted(input, max_depth)?;
+    let parsed = parse_indirect_object_with_max_depth_budgeted(input, max_depth, budget)?;
     charge_value_memory(&parsed.1 .1, budget, input)?;
     Ok(parsed)
 }
 
-pub(crate) fn parse_indirect_object_with_max_depth_unbudgeted(
-    input: &[u8],
+pub(crate) fn parse_indirect_object_with_max_depth_budgeted<'a>(
+    input: &'a [u8],
     max_depth: usize,
-) -> IResult<&[u8], (ObjectId, PdfValue)> {
+    budget: &ResourceBudget,
+) -> IResult<&'a [u8], (ObjectId, PdfValue)> {
     let (input, obj_id) = parse_indirect_object_header(input)?;
     let (input, _) = skip_whitespace_and_comments(input)?;
-    let (input, value) = parse_value_with_max_depth_unbudgeted(input, max_depth)?;
+    let (input, value) = parse_value_with_max_depth_budgeted_no_memory(input, max_depth, budget)?;
     let (input, _) = skip_whitespace_and_comments(input)?;
 
     let (input, value) =
