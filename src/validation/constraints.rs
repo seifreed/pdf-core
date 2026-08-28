@@ -1077,9 +1077,8 @@ impl SchemaConstraint for FontCMapEncodingConstraint {
 
     fn check(&self, document: &PdfDocument, report: &mut ValidationReport) {
         let font_nodes = document.ast.find_nodes_by_type(NodeType::Font);
-        let cid_nodes = document.ast.find_nodes_by_type(NodeType::CIDFont);
 
-        for font_id in font_nodes.into_iter().chain(cid_nodes) {
+        for font_id in font_nodes {
             let mut has_encoding = false;
             let mut has_tounicode = false;
 

@@ -37,6 +37,41 @@ fn font_encoding_missing_warns() {
 }
 
 #[test]
+fn cid_font_does_not_require_parent_font_mapping() {
+    let mut document = PdfDocument::new(PdfVersion { major: 2, minor: 0 });
+    let cid_font = document.ast.create_node(
+        NodeType::CIDFont,
+        PdfValue::Dictionary({
+            let mut dict = PdfDictionary::new();
+            dict.insert("Type", PdfValue::Name(PdfName::new("Font")));
+            dict.insert("Subtype", PdfValue::Name(PdfName::new("CIDFontType2")));
+            dict
+        }),
+    );
+    let catalog_id = document.ast.create_node(
+        NodeType::Catalog,
+        PdfValue::Dictionary({
+            let mut dict = PdfDictionary::new();
+            dict.insert("Type", PdfValue::Name(PdfName::new("Catalog")));
+            dict.insert("Pages", PdfValue::Reference(PdfReference::new(2, 0)));
+            dict
+        }),
+    );
+    document.set_catalog(catalog_id);
+    document
+        .ast
+        .add_edge(catalog_id, cid_font, pdf_ast::ast::EdgeType::Child);
+
+    let report = SchemaRegistry::new()
+        .validate(&document, "PDF-2.0")
+        .expect("report");
+    assert!(!report
+        .issues
+        .iter()
+        .any(|issue| issue.code == "FONT_ENCODING_MISSING"));
+}
+
+#[test]
 fn invalid_tounicode_reference_warns() {
     let mut document = PdfDocument::new(PdfVersion { major: 2, minor: 0 });
     let invalid_tounicode = document.ast.create_node(
