@@ -250,6 +250,9 @@ estricto.
 limites de nodos, aristas, cancelacion/deadline y decodificacion ICC durante
 la herencia y procesamiento de recursos; la suite de page tree pasa `5/5` y
 Clippy estricto.
+`e4f0973` expone `ExtGStateParser::parse_extgstate_with_budget` y propaga los
+limites de nodos y aristas de mascaras/halftones inline; la suite de ExtGState
+pasa `3/3` y Clippy estricto.
 La verificacion completa posterior pasa `274` tests del crate principal y
 `14` de crates auxiliares con `cargo test --workspace --locked --lib
 -- --test-threads=1`.
