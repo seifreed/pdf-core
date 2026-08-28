@@ -522,6 +522,9 @@ Pendientes actuales, en orden practico:
   referencias tampoco salte errores de presupuesto en modo tolerante.
   `46b1813` aplica la misma garantía a la resolución final de referencias del
   documento, que antes convertía esos excesos en simples avisos tolerantes.
+  `d24cf35` extiende el cobro de `max_objects` a las entradas de xref streams
+  materializadas por `PdfFileParser`; la regresión específica y la suite
+  `pdf_file` pasan `28/28`, con Clippy estricto.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
