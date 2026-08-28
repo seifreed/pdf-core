@@ -178,6 +178,9 @@ indirectas; la suite de name trees pasa `5/5` y Clippy estricto.
 `add2fa2` rechaza claves negativas en `ParentTree/Nums` en lugar de
 convertirlas silenciosamente a `u32`; la suite de estructura pasa `9/9` y
 Clippy estricto.
+`2e9a5c2` evita que `parse_object` convierta una cabecera indirecta truncada
+en un valor parcial, tambien en modo tolerante; `parser_tests` pasa `32/32` y
+Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
