@@ -2885,7 +2885,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             }
             self.limits
                 .budget
-                .consume_decoded(bytes_read as u64)
+                .consume_memory(bytes_read as u64)
                 .map_err(|error| AstError::ParseError(error.to_string()))?;
             buffer.extend_from_slice(&chunk[..bytes_read]);
         }
@@ -3946,6 +3946,29 @@ mod tests {
         let mut parser = parser;
         let buffer = parser.read_xref_buffer(0).expect("xref data should read");
         assert_eq!(buffer.len(), data.len());
+    }
+
+    #[test]
+    fn lossless_input_is_not_limited_by_per_stream_decode_size() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let limits = PerformanceLimits {
+            budget: ResourceBudget::new(1024, 1024, 1, 10, 10, 10, 10, 8),
+            ..PerformanceLimits::default()
+        };
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            limits,
+        )
+        .expect("parser should initialize");
+
+        assert_eq!(
+            parser
+                .read_limited_input()
+                .expect("lossless input should use the total memory budget"),
+            b"%PDF-1.7\n"
+        );
     }
 
     #[test]
