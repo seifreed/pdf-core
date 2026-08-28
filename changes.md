@@ -1,22 +1,23 @@
 # Veredicto
 
-## Estado de seguimiento (2026-08-27)
+## Estado de seguimiento (2026-08-28)
 
 Este documento conserva la auditoria original. Desde entonces se han cerrado
 varios puntos: el workspace incluye todos los crates, `main` esta protegida,
 las alertas de Dependabot estan resueltas, el parser tiene lecturas acotadas y
 validacion de limites en las rutas de xref/object streams, y la serializacion
 restaura el estado documental lossless disponible. Tambien existe un corpus
-reproducible de 2.806 fixtures upstream, tres regresiones y un fixture derivado,
-metricas
-diferenciales, una campana fuzz local de 16.000 ejecuciones sin crashes y un
-chequeo completo de 205 mapeos negativos contra veraPDF 1.30.2 y once pares
-positivos/negativos de reglas locales, diez con ID veraPDF exacto; la cobertura positiva exacta por regla
-sigue sin estar disponible para los 95 IDs porque veraPDF no emite resúmenes
-de reglas aprobadas.
+reproducible de 2.812 PDFs, metricas diferenciales con memoria, una campana
+fuzz local de 16.000 ejecuciones sin crashes y un chequeo completo de 205
+mapeos negativos contra veraPDF 1.30.2. `RULE-COVERAGE.json` documenta 24
+mappings de reglas locales con fixtures positivos/negativos y evidencia
+veraPDF; la cobertura positiva exacta por regla sigue sin estar disponible para
+los 95 IDs porque veraPDF no emite resumenes de reglas aprobadas.
 La rama `main` queda protegida en GitHub con checks estrictos de CI, corpus,
 diferencial, fuzz, API y bindings; tambien se exige resolver conversaciones y
-se bloquean force-pushes y borrados.
+se bloquean force-pushes y borrados. En `21f5840`, los siete workflows remotos
+(`CI`, `Bindings`, `Fuzzing`, `ClusterFuzzLite`, `Differential Corpus`,
+`External PDF Corpus` y `API Stability Audit`) terminan verdes.
 La extraccion de texto resuelve ahora fuentes indirectas, descendientes CID,
 `ToUnicode`, encodings y metricas basicas de glifo dentro de su alcance
 experimental.
