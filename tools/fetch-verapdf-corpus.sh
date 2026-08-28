@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_url="${PDF_CORPUS_REPO_URL:-https://github.com/seifreed/pdf-core-corpus.git}"
-commit="${PDF_CORPUS_COMMIT:-12a746d8f6026315a3f6a0a1a21e0fdcb842b5bb}"
+commit="${PDF_CORPUS_COMMIT:-f5ce55d8a2c8386fdf79b92e607d351623cfa59c}"
 source_path="${1:-fixtures}"
 destination="${2:-.external-corpus/verapdf}"
 max_files="${MAX_FILES:-0}"

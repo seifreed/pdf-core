@@ -114,6 +114,13 @@ PDF/A-1b positivo y el negativo Isartor que veraPDF identifica como
 `ISO 19005-1:2005:6.1.10:1`. `RULE-COVERAGE.json` queda en `23` pares y el
 descargador fija el nuevo SHA completo del corpus.
 
+`f5ce55d` añade el fixture mínimo `pdfa-version-negative.pdf`, con cabecera
+PDF-2.0, y lo mapea a `PDF_A_VERSION` / `ISO 19005-1:2005:6.1.2:2`. El corpus
+reproducible queda en `2.812` PDFs y `RULE-COVERAGE.json` en `24` pares; la
+suite completa de mapping pasa `6/6` con veraPDF 1.30.2. `a9ec87d` fija las
+Actions mutables de CI, corpus, fuzzing, bindings y release a commits
+verificables.
+
 La validación de fuentes PDF/A resuelve ahora también `/DescendantFonts` cuando
 apunta indirectamente a un array, manteniendo la detección de programas
 embebidos en fuentes Type0/CIDFont. La regresión y la suite de validación pasan
