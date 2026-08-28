@@ -550,6 +550,9 @@ Pendientes actuales, en orden practico:
   `3ad19fe` corrige la lectura de destinos `bfrange` cuyos arrays están
   partidos entre líneas; la suite focalizada de CMap pasa `14/14`, con
   Clippy estricto.
+  `c3c6478` evita reportar `FONT_ENCODING_MISSING` en `CIDFont` descendientes,
+  cuya codificación pertenece al `Type0` padre; la regresión de fuentes pasa
+  `4/4`.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
