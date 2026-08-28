@@ -3530,7 +3530,9 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                     &resolver_map,
                     &self.limits.budget,
                 );
-            output_intents.parse_output_intents(&catalog);
+            output_intents
+                .parse_output_intents_with_budget(&catalog)
+                .map_err(|error| AstError::ParseError(error.to_string()))?;
         }
         Ok(())
     }

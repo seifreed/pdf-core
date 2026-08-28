@@ -2,7 +2,7 @@ use crate::ast::{AstNode, NodeId, NodeType, PdfAstGraph};
 use crate::filters::decode_stream_with_budget;
 use crate::metadata::icc::parse_icc_profile;
 use crate::parser::reference_resolver::ObjectNodeMap;
-use crate::performance::ResourceBudget;
+use crate::performance::{ResourceBudget, ResourceBudgetError};
 use crate::types::{PdfDictionary, PdfValue};
 
 /// Parser for OutputIntents from catalog
@@ -30,15 +30,21 @@ impl<'a> OutputIntentsParser<'a> {
     }
 
     pub fn parse_output_intents(&mut self, catalog: &PdfDictionary) -> Vec<NodeId> {
+        self.parse_output_intents_with_budget(catalog)
+            .unwrap_or_default()
+    }
+
+    pub fn parse_output_intents_with_budget(
+        &mut self,
+        catalog: &PdfDictionary,
+    ) -> Result<Vec<NodeId>, ResourceBudgetError> {
         let mut intent_nodes = Vec::new();
 
         if let Some(PdfValue::Array(intents)) = catalog.get("OutputIntents") {
             for intent_value in intents {
                 match intent_value {
                     PdfValue::Dictionary(intent_dict) => {
-                        if let Some(intent_id) = self.parse_output_intent(intent_dict) {
-                            intent_nodes.push(intent_id);
-                        }
+                        intent_nodes.push(self.parse_output_intent(intent_dict)?);
                     }
                     PdfValue::Reference(obj_id) => {
                         if let Some(intent_id) = self.resolver.get_node_id(&obj_id.id()) {
@@ -62,11 +68,14 @@ impl<'a> OutputIntentsParser<'a> {
             }
         }
 
-        intent_nodes
+        Ok(intent_nodes)
     }
 
-    fn parse_output_intent(&mut self, intent_dict: &PdfDictionary) -> Option<NodeId> {
-        self.budget.consume_node().ok()?;
+    fn parse_output_intent(
+        &mut self,
+        intent_dict: &PdfDictionary,
+    ) -> Result<NodeId, ResourceBudgetError> {
+        self.budget.consume_node()?;
         // Create OutputIntent node
         let mut node = AstNode::new(
             self.ast.next_node_id(),
@@ -133,7 +142,7 @@ impl<'a> OutputIntentsParser<'a> {
             }
         }
 
-        Some(intent_id)
+        Ok(intent_id)
     }
 
     fn enrich_output_intent(&mut self, intent_dict: PdfDictionary, intent_id: NodeId) {
@@ -307,7 +316,10 @@ mod tests {
             PdfValue::Array(PdfArray::from(vec![intent(), intent()])),
         );
 
-        assert_eq!(parser.parse_output_intents(&catalog).len(), 1);
+        assert!(matches!(
+            parser.parse_output_intents_with_budget(&catalog),
+            Err(ResourceBudgetError::Nodes)
+        ));
         assert_eq!(ast.node_count(), 1);
     }
 }
