@@ -181,6 +181,10 @@ Clippy estricto.
 `2e9a5c2` evita que `parse_object` convierta una cabecera indirecta truncada
 en un valor parcial, tambien en modo tolerante; `parser_tests` pasa `32/32` y
 Clippy estricto.
+`3cfedf6` conserva la `/Length` indirecta resuelta en
+`PdfStream.lossless.declared_length`, sin mutar el diccionario ni perder
+`observed_length`; la suite de reference resolver pasa `14/14` y Clippy
+estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
