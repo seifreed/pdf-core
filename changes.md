@@ -226,6 +226,9 @@ JBIG2Globals, xref, objetos malformados, linealizacion y resolucion transitiva:
 prefijo de un stream antes de su parseo completo; la regresion de streams,
 el resolver completo (`21/21`), Clippy estricto y la suite de libreria
 (`301/301` en `7` suites) pasan.
+`46b1813` evita que el modo tolerante oculte agotamientos de `ResourceBudget`
+durante la resolucion final de referencias; su regresion de `pdf_file` pasa
+`1/1`, la suite focalizada `27/27` y Clippy estricto.
 La suite completa local posterior pasa `282` tests en `7` suites de libreria
 con `cargo test --workspace --locked --lib -- --test-threads=1`.
 `750d48c` expone `ColorSpaceParser::parse_colorspace_with_budget` y propaga
