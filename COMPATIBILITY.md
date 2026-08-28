@@ -36,12 +36,14 @@ remain outside this envelope.
 
 ## C ABI
 
-The C header exposes ABI version `1.0`, returned by `pdf_ast_abi_version()` as
+The C header exposes ABI version `2.0`, returned by `pdf_ast_abi_version()` as
 `(major << 16) | minor`. Opaque document and node handles are owned by the
 caller after successful creation; strings, result messages, and child arrays
-must be released with the matching `pdf_ast_free_*` function. The ABI smoke
-test compiles with `-Wall -Wextra -Werror`; incompatible C changes require an
-ABI major bump.
+must be released with the matching `pdf_ast_free_*` function. Public lengths
+and counts use fixed-width `uint64_t`, and boolean fields use `uint8_t`; this
+avoids platform-dependent `size_t` and C `bool` layout in the contract. The
+ABI smoke test compiles with `-Wall -Wextra -Werror`; incompatible C changes
+require an ABI major bump.
 
 ## Security Scope
 

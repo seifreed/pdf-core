@@ -14,6 +14,13 @@ _Static_assert(offsetof(pdf_ast_node_info_t, id) == 0,
                "pdf_ast_node_info_t id layout changed");
 _Static_assert(offsetof(pdf_ast_node_info_t, node_type) == sizeof(uint64_t),
                "pdf_ast_node_info_t node_type layout changed");
+_Static_assert(offsetof(pdf_ast_node_info_t, has_children) ==
+                   sizeof(uint64_t) + sizeof(uint32_t),
+               "pdf_ast_node_info_t has_children layout changed");
+_Static_assert(sizeof(((pdf_ast_node_info_t *)0)->has_children) == sizeof(uint8_t),
+               "pdf_ast_node_info_t has_children width changed");
+_Static_assert(sizeof(((pdf_ast_node_info_t *)0)->children_count) == sizeof(uint64_t),
+               "pdf_ast_node_info_t children_count width changed");
 
 int main(void) {
     static const char *path =
@@ -90,7 +97,7 @@ int main(void) {
     pdf_ast_free_result(&result);
 
     CAstNode **children = NULL;
-    size_t child_count = 0;
+    uint64_t child_count = 0;
     result = pdf_ast_get_children(document, root, NULL, &child_count);
     if (result.error_code != PDF_AST_NULL_POINTER) {
         pdf_ast_free_node(root);
@@ -105,8 +112,9 @@ int main(void) {
     }
     pdf_ast_free_children(children, child_count);
 
-    printf("pdf-ast %s: nodes=%zu root=%llu\n", pdf_ast_version(),
-           pdf_ast_get_node_count(document), (unsigned long long)info.id);
+    printf("pdf-ast %s: nodes=%llu root=%llu\n", pdf_ast_version(),
+           (unsigned long long)pdf_ast_get_node_count(document),
+           (unsigned long long)info.id);
     pdf_ast_free_node(root);
     pdf_ast_free_document(document);
     return 0;

@@ -29,6 +29,10 @@ ellos con ID veraPDF exacto. El mapeo de `PDF_A_OUTPUT_INTENT` queda enlazado
 al caso normativo `6.2.3.3:1`. `a42b4fd` publica ese mapeo corregido en el
 manifiesto del corpus. El descargador y los workflows quedan fijados a
 `a42b4fddba72e35c65410cfe64a5c95bbbbb828f`.
+El ABI C pasa a `2.0`: longitudes y contadores publicos usan `uint64_t` y los
+booleanos `uint8_t`, con asserts de layout y smoke test compilable con warnings
+estrictos. Es un bump mayor deliberado porque cambia firmas y layout respecto
+al contrato C `1.0` no publicado.
 La evidencia local de bindings queda ampliada: wheel Python instalado en un
 entorno virtual y `python/test_bindings.py` pasan con CPython 3.14 en macOS
 arm64; el binding Node pasa `npm test` y `test/package-smoke.js` tras instalar
