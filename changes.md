@@ -168,6 +168,9 @@ Clippy estricto.
 `Annots` en el arbol de paginas, incluidos tipos de fuentes y XObjects; la
 regresion adicional `ec971d6` deja la suite de page tree en `4/4`, con Clippy
 estricto.
+`bf7290e` clasifica tambien definiciones `ColorSpace` indirectas (`Indexed`,
+`ICCBased`, `Separation`, `DeviceN` y `Pattern`); la suite de page tree pasa
+`4/4` y Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
