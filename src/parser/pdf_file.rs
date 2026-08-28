@@ -1836,12 +1836,17 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
         page_dict: &PdfDictionary,
         page_id: crate::ast::NodeId,
     ) -> AstResult<()> {
-        let annots = match page_dict.get("Annots") {
-            Some(PdfValue::Array(array)) => array,
+        let annots_value = match page_dict.get("Annots").cloned() {
+            Some(PdfValue::Reference(reference)) => self.load_object(&reference.id())?,
+            Some(value) => value,
+            None => return Ok(()),
+        };
+        let annots = match annots_value {
+            PdfValue::Array(array) => array,
             _ => return Ok(()),
         };
 
-        for annot in annots.iter() {
+        for annot in &annots {
             self.process_single_annotation(annot, page_id)?;
         }
 
@@ -3544,6 +3549,45 @@ mod tests {
         type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
         assert!(Parser::parse_object_header(b"-1 0 obj").is_err());
         assert!(Parser::parse_object_header(b"1 -1 obj").is_err());
+    }
+
+    #[test]
+    fn resolves_indirect_page_annotation_arrays() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let mut data = b"%PDF-1.7\n".to_vec();
+        let annotations_offset = data.len() as u64;
+        data.extend_from_slice(b"8 0 obj\n[<< /Subtype /Link >>]\nendobj\n");
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Strict,
+            0,
+            PerformanceLimits::default(),
+        )
+        .expect("valid header should construct parser");
+        parser.document.xref.entries.insert(
+            ObjectId::new(8, 0),
+            XRefEntry::InUse {
+                offset: annotations_offset,
+                generation: 0,
+            },
+        );
+        let page_id = parser
+            .add_to_ast(PdfValue::Dictionary(PdfDictionary::new()), NodeType::Page)
+            .expect("page node should be created");
+        let mut page_dict = PdfDictionary::new();
+        page_dict.insert("Annots", PdfValue::Reference(PdfReference::new(8, 0)));
+
+        parser
+            .parse_page_annotations(&page_dict, page_id)
+            .expect("indirect annotation array should parse");
+        assert_eq!(
+            parser
+                .document
+                .ast
+                .find_nodes_by_type(NodeType::Annotation)
+                .len(),
+            1
+        );
     }
 
     #[test]
