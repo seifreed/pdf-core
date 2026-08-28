@@ -1554,27 +1554,41 @@ impl StreamRepairStrategy {
 
     fn repair_compressed_streams(&self, data: &mut Vec<u8>) -> bool {
         let mut modified = false;
-        let data_str = String::from_utf8_lossy(data);
 
         // Look for compressed streams with corrupted headers
-        if data_str.contains("/Filter ") && data_str.contains("FlateDecode") {
+        if data
+            .windows(b"/Filter ".len())
+            .any(|window| window == b"/Filter ")
+            && data
+                .windows(b"FlateDecode".len())
+                .any(|window| window == b"FlateDecode")
+        {
             // Find FlateDecode streams
             let mut pos = 0;
-            while let Some(filter_pos) = data_str[pos..].find("/Filter ") {
+            while let Some(filter_pos) = find_pattern(&data[pos..], b"/Filter ") {
                 let abs_pos = pos + filter_pos;
 
-                if data_str[abs_pos..].starts_with("/Filter /FlateDecode")
-                    || data_str[abs_pos..].starts_with("/Filter [/FlateDecode")
+                if data
+                    .get(abs_pos..)
+                    .is_some_and(|tail| tail.starts_with(b"/Filter /FlateDecode"))
+                    || data
+                        .get(abs_pos..)
+                        .is_some_and(|tail| tail.starts_with(b"/Filter [/FlateDecode"))
                 {
                     // Find the stream data
-                    if let Some(stream_start) = data_str[abs_pos..].find("stream\n") {
+                    if let Some(stream_start) = find_pattern(&data[abs_pos..], b"stream\n") {
                         let stream_data_start = abs_pos + stream_start + 7;
 
-                        if let Some(endstream_pos) = data_str[stream_data_start..].find("endstream")
+                        if let Some(endstream_pos) = data
+                            .get(stream_data_start..)
+                            .and_then(|tail| find_pattern(tail, b"endstream"))
                         {
                             // Check if stream data looks like it starts with zlib header
-                            let stream_bytes =
-                                &data[stream_data_start..stream_data_start + endstream_pos];
+                            let stream_end = stream_data_start.saturating_add(endstream_pos);
+                            let Some(stream_bytes) = data.get(stream_data_start..stream_end) else {
+                                pos = abs_pos.saturating_add(b"/Filter ".len());
+                                continue;
+                            };
 
                             if !stream_bytes.is_empty() {
                                 // Check for corrupted zlib header
@@ -2298,7 +2312,7 @@ fn find_pattern(data: &[u8], pattern: &[u8]) -> Option<usize> {
 mod tests {
     use super::{
         BasicStructureRecovery, RecoveryConfig, RecoveryContext, RecoveryStrategy,
-        XRefRebuildStrategy,
+        StreamRepairStrategy, XRefRebuildStrategy,
     };
     use crate::ast::{PdfDocument, PdfVersion};
 
@@ -2347,5 +2361,15 @@ mod tests {
         assert!(rebuilt.contains("/Size 13"));
         assert!(!rebuilt.contains("/Root 1 0 R"));
         assert!(rebuilt.contains("0000000009 00000 n"));
+    }
+
+    #[test]
+    fn compressed_stream_repair_keeps_byte_offsets_on_invalid_utf8() {
+        let mut data = b"\xff/Filter /FlateDecode\nstream\nnot-zlib\nendstream".to_vec();
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            StreamRepairStrategy::new().repair_compressed_streams(&mut data)
+        }));
+
+        assert!(result.is_ok());
     }
 }
