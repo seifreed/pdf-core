@@ -552,6 +552,29 @@ mod integration_tests {
         let _ = has_recovery;
     }
 
+    #[test]
+    fn tolerant_parser_recovers_from_object_offset_outside_file() {
+        let mut pdf = create_minimal_pdf();
+        let root_entry = b"0000000009 00000 n ";
+        let root_entry_start = pdf
+            .windows(root_entry.len())
+            .position(|window| window == root_entry)
+            .expect("minimal PDF root xref entry should exist");
+        pdf.splice(
+            root_entry_start..root_entry_start + root_entry.len(),
+            b"9999999999 00000 n ".iter().copied(),
+        );
+
+        assert!(PdfParser::strict().parse_bytes(&pdf).is_err());
+        let document = PdfParser::new()
+            .parse_bytes(&pdf)
+            .expect("tolerant parser should preserve a controlled result");
+        assert!(document
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.error_code == "object_buffer"));
+    }
+
     // Helper functions to create test PDFs
 
     fn create_minimal_pdf() -> Vec<u8> {

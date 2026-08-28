@@ -2602,7 +2602,22 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
 
             let value = match entry {
                 XRefEntry::InUse { offset, .. } => {
-                    let buffer = self.read_object_buffer(offset)?;
+                    let buffer = match self.read_object_buffer(offset) {
+                        Ok(buffer) => buffer,
+                        Err(err) if self.tolerant && !is_resource_budget_error(&err) => {
+                            self.record_diagnostic(
+                                Some(*obj_id),
+                                Some(offset),
+                                "object_buffer",
+                                "returned Null",
+                                1.0,
+                                0,
+                                &err.to_string(),
+                            )?;
+                            return Ok(PdfValue::Null);
+                        }
+                        Err(err) => return Err(err),
+                    };
 
                     let parsed =
                         match object_parser::parse_indirect_stream_prefix_with_max_depth_and_budget(
