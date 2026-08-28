@@ -363,14 +363,8 @@ impl<'a> StructTreeParser<'a> {
                     PdfValue::Reference(obj_id) => {
                         self.parse_parent_tree_intermediate(&obj_id.id(), parent_tree, depth + 1);
                     }
-                    PdfValue::Dictionary(kid_dict) => {
-                        if depth + 1 < self.budget.max_depth {
-                            self.parse_parent_tree_intermediate_dict(
-                                kid_dict,
-                                parent_tree,
-                                depth + 1,
-                            );
-                        }
+                    PdfValue::Dictionary(kid_dict) if depth + 1 < self.budget.max_depth => {
+                        self.parse_parent_tree_intermediate_dict(kid_dict, parent_tree, depth + 1);
                     }
                     _ => {}
                 }
