@@ -175,6 +175,9 @@ estricto.
 indirectas; la suite de name trees pasa `5/5` y Clippy estricto.
 `71682f3` resuelve valores numericos indirectos en `ExtGState` (`LW`, `LC`,
 `LJ` y `OPM`); la suite de ExtGState pasa `2/2` y Clippy estricto.
+`add2fa2` rechaza claves negativas en `ParentTree/Nums` en lugar de
+convertirlas silenciosamente a `u32`; la suite de estructura pasa `9/9` y
+Clippy estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
