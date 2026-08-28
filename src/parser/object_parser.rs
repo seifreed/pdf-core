@@ -458,7 +458,9 @@ fn parse_stream_data_with_resolver<'a>(
     if let PdfValue::Dictionary(dict) = dict_value {
         let (input, _) = alt((tag(b"\r\n"), tag(b"\n")))(input)?;
 
-        // Try to resolve Length - could be direct integer or indirect reference
+        // A standalone parser cannot resolve indirect references safely. The
+        // document parser resolves /Length before calling the explicit-length
+        // variant below.
         let length = match dict.get("Length") {
             Some(PdfValue::Integer(len)) if *len >= 0 => *len as usize,
             Some(PdfValue::Integer(_)) => {
@@ -467,11 +469,13 @@ fn parse_stream_data_with_resolver<'a>(
                     nom::error::ErrorKind::Verify,
                 )))
             }
-            Some(PdfValue::Reference(pdf_ref)) => {
-                let _ = pdf_ref;
-                return parse_stream_with_endstream_detection(input, dict);
+            Some(_) => {
+                return Err(nom::Err::Failure(nom::error::Error::new(
+                    input,
+                    nom::error::ErrorKind::Verify,
+                )))
             }
-            _ => {
+            None => {
                 return parse_stream_with_endstream_detection(input, dict);
             }
         };
@@ -620,10 +624,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_indirect_stream_length_without_scanning_for_endstream() {
+    fn rejects_indirect_stream_length_without_resolution() {
         let data = b"1 0 obj\n<< /Length 9 0 R >>\nstream\nabcendstreamxyz\nendstream\nendobj";
         let (remaining, (_, _dict)) = parse_indirect_stream_prefix(data).unwrap();
         assert_eq!(remaining, b"abcendstreamxyz\nendstream\nendobj");
+        assert!(parse_indirect_object(data).is_err());
 
         let (_, (_, value)) = parse_indirect_object_with_stream_length(data, 15).unwrap();
         let PdfValue::Stream(stream) = value else {
