@@ -237,6 +237,9 @@ name trees pasa `6/6` y Clippy estricto.
 propaga durante la construccion los limites de nodos, objetos, aristas y
 contenido MCID, conservando el wrapper legacy parcial; la suite de estructura
 pasa `10/10` y Clippy estricto.
+La verificacion posterior de `cargo test --workspace --locked --lib
+-- --test-threads=1` pasa `273` tests del crate principal y `14` de crates
+auxiliares; los workflows remotos del push siguen pendientes.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
