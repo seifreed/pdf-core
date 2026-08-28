@@ -304,7 +304,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                 break;
             }
             budget
-                .consume_decoded(bytes_read as u64)
+                .consume_memory(bytes_read as u64)
                 .map_err(|error| error.to_string())?;
             content.extend_from_slice(&chunk[..bytes_read]);
         }
@@ -1549,7 +1549,7 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
             .min(max_bytes);
         self.limits
             .budget
-            .consume_decoded(bound)
+            .consume_memory(bound)
             .map_err(|error| error.to_string())?;
 
         self.reader
@@ -2044,6 +2044,20 @@ mod tests {
             result,
             Err(error) if error.contains("Input exceeds resource limit")
         ));
+    }
+
+    #[test]
+    fn xref_scan_is_not_limited_by_per_stream_decode_size() {
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(1024, 1024, 1, 10, 10, 10, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let result = ReferenceResolver::new(Cursor::new(vec![0u8; 16]), true, limits);
+
+        assert!(
+            result.is_ok(),
+            "raw xref input uses the total memory budget"
+        );
     }
 
     #[test]
