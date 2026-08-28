@@ -140,9 +140,21 @@ fn convert_issue(issue: ValidationIssue, document: &PdfDocument) -> Violation {
         .and_then(|id| document.ast.get_node(id))
         .and_then(|node| node.metadata.offset);
     let standard_reference = match issue.code.as_str() {
+        "PDF_A_VERSION" => Some("ISO 19005-1:2005, 6.1.2"),
+        "PDF_A_ENCRYPTION" => Some("ISO 19005-1:2005, 6.1.3"),
+        "PDF_A_XREF_FORMAT" => Some("ISO 19005-1:2005, 6.1.4"),
+        "PDF_A_LZW_DECODE" => Some("ISO 19005-1:2005, 6.1.10"),
+        "PDF_A_EMBEDDED_FILES" => Some("ISO 19005-1:2005, 6.1.11"),
+        "PDF_A_OUTPUT_INTENT" | "PDF_A_COLOR_SPACE" => Some("ISO 19005-1:2005, 6.2.3.3"),
         "PDF_A_FONT_EMBEDDING" => Some("ISO 19005-1:2005, 6.3.4"),
-        "PDF_A_MULTIMEDIA" => Some("ISO 19005-1:2005, 6.5.2"),
+        "PDF_A_FONT_ENCODING" => Some("ISO 19005-1:2005, 6.3.7"),
         "PDF_A_JAVASCRIPT" => Some("ISO 19005-1:2005, 6.6.1"),
+        "PDF_A_XMP_METADATA" => Some("ISO 19005-1:2005, 6.7.2"),
+        "PDF_A_METADATA_SYNC" => Some("ISO 19005-1:2005, 6.7.3"),
+        "PDF_A_MULTIMEDIA"
+        | "PDF_A_ANNOTATION_TYPE"
+        | "PDF_A_ANNOTATION_APPEARANCE"
+        | "PDF_A_TRANSPARENCY" => Some("ISO 19005-1:2005, 6.5.2"),
         "NO_TAGGED_STRUCTURE"
         | "STRUCT_ELEM_MISSING"
         | "ACCESSIBILITY_METADATA_MISSING"
@@ -318,5 +330,42 @@ mod tests {
             violation.standard_reference.as_deref(),
             Some("ISO 14289-1:2014, 7.2")
         );
+    }
+
+    #[test]
+    fn maps_all_pdfa_rules_to_normative_clauses() {
+        let document = PdfDocument::new(PdfVersion::new(1, 4));
+        let expected = [
+            ("PDF_A_VERSION", "6.1.2"),
+            ("PDF_A_ENCRYPTION", "6.1.3"),
+            ("PDF_A_XREF_FORMAT", "6.1.4"),
+            ("PDF_A_LZW_DECODE", "6.1.10"),
+            ("PDF_A_EMBEDDED_FILES", "6.1.11"),
+            ("PDF_A_OUTPUT_INTENT", "6.2.3.3"),
+            ("PDF_A_COLOR_SPACE", "6.2.3.3"),
+            ("PDF_A_FONT_EMBEDDING", "6.3.4"),
+            ("PDF_A_FONT_ENCODING", "6.3.7"),
+            ("PDF_A_JAVASCRIPT", "6.6.1"),
+            ("PDF_A_XMP_METADATA", "6.7.2"),
+            ("PDF_A_METADATA_SYNC", "6.7.3"),
+            ("PDF_A_MULTIMEDIA", "6.5.2"),
+            ("PDF_A_ANNOTATION_TYPE", "6.5.2"),
+            ("PDF_A_ANNOTATION_APPEARANCE", "6.5.2"),
+            ("PDF_A_TRANSPARENCY", "6.5.2"),
+        ];
+
+        for (code, clause) in expected {
+            let issue = ValidationIssue {
+                severity: ValidationSeverity::Error,
+                code: code.to_string(),
+                message: String::new(),
+                node_id: None,
+                location: None,
+                suggestion: None,
+            };
+            let reference = convert_issue(issue, &document).standard_reference;
+            let expected = format!("ISO 19005-1:2005, {clause}");
+            assert_eq!(reference.as_deref(), Some(expected.as_str()));
+        }
     }
 }
