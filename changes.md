@@ -48,8 +48,12 @@ sin panics ni errores de parseo, con `2.810` hashes, `161281039` bytes,
 `peak_rss_kib=474480` y percentiles `3/57/178 ms`. La comparación veraPDF
 pasa `569/569`, con `263` conformes, `565` rechazos strict y `0` divergencias
 tolerantes. El diferencial pasa `2.810/2.810` y registra `397` divergencias
-(`396` desacuerdos entre referencias y `1` de consenso), `peak_rss_kib=362032`
-y percentiles `34/91/227 ms`; su clasificación sigue pendiente.
+(`396` desacuerdos entre referencias y `1` de consenso), `peak_rss_kib=312112`
+y percentiles `31/62/102 ms`. La matriz reproducible las clasifica en `389`
+casos `core_mutool_only`, `7` `core_qpdf_only` y `1` `core_only`; los otros
+cinco estados quedan en cero. Falta todavía explicar la causa semántica de
+cada grupo, pero ya no se confunden desacuerdos de referencia con divergencias
+de consenso.
 `b56e861` corrige la clasificación de streams: el AST de contenido solo
 intenta parsear streams referenciados desde `/Contents` de páginas, evitando
 interpretar perfiles ICC, fuentes u otros datos binarios como operadores en
@@ -529,8 +533,8 @@ Pendientes actuales, en orden practico:
   `peak_rss_kib=228824` y percentiles `0/12/80 ms` (`p50/p95/p99`).
   `33165897723` deja verde el diferencial completo: `2.809` archivos,
   `386` divergencias (`385` desacuerdos entre referencias y `1` de consenso),
-  `peak_rss_kib=253592` y percentiles `11/81/241 ms`; las divergencias siguen
-  pendientes de clasificacion.
+  `peak_rss_kib=253592` y percentiles `11/81/241 ms`; esa medicion historica
+  precede al corpus actual y a la matriz de clasificacion.
 * **Parser endurecido:** strict y varios recorridos ya tienen guardas, incluido
   el árbol de páginas y sus referencias obligatorias, y los streams conservan
   ahora estado lossless explícito. Las APIs públicas de
