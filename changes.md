@@ -201,6 +201,15 @@ agotamiento de `ResourceBudget`, y propaga este ultimo en resolver y
 extraccion; las suites pasan `13/13`, `14/14` y `5/5`, con Clippy estricto.
 `bc3c183` alinea el commit por defecto del descargador de corpus con
 `b3e6f341`, la revision reproducida por CI para los `2.809` fixtures.
+Verificacion local contra esa revision: el corpus externo pasa `2.809/2.809`
+sin panics, con `2.809` hashes comprobados, `1.990` errores controlados y
+`peak_rss_kib=284816` (`p50=0 ms`, `p95=8 ms`, `p99=60 ms`). La comparacion
+veraPDF 1.30.2 pasa `569/569`, con `263` conformes, `565` rechazos strict y
+`0` divergencias tolerantes. El diferencial completo contra qpdf y MuPDF
+registra `397` divergencias (`396` desacuerdos entre referencias y `1`
+divergencia de consenso), con `peak_rss_kib=428240` y percentiles
+`27/83/196 ms` (`p50/p95/p99`); esas divergencias siguen siendo pendientes de
+clasificar, no findings de crash.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
