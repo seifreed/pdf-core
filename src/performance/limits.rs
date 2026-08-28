@@ -99,6 +99,22 @@ impl ResourceBudget {
         }
     }
 
+    pub(crate) fn fresh(&self) -> Self {
+        let mut budget = Self::new(
+            self.max_input_bytes,
+            self.max_decoded_bytes_total,
+            self.max_decoded_bytes_per_stream,
+            self.max_decode_ratio,
+            self.max_objects,
+            self.max_nodes,
+            self.max_edges,
+            self.max_depth,
+        );
+        budget.deadline = self.deadline;
+        budget.cancellation = self.cancellation.clone();
+        budget
+    }
+
     pub fn check(&self) -> Result<(), ResourceBudgetError> {
         if self.cancellation.is_cancelled() {
             return Err(ResourceBudgetError::Cancelled);

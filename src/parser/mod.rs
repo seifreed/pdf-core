@@ -126,7 +126,7 @@ impl PdfParser {
     }
 
     pub(crate) fn resource_budget(&self) -> ResourceBudget {
-        self.limits.budget.clone()
+        self.limits.budget.fresh()
     }
 
     /// Sets the maximum nesting depth for PDF objects.
@@ -181,11 +181,13 @@ impl PdfParser {
     /// # Errors
     /// Returns `AstError::ParseError` if the PDF cannot be parsed
     pub fn parse<R: Read + Seek + BufRead>(&self, reader: R) -> AstResult<PdfDocument> {
+        let mut limits = self.limits.clone();
+        limits.budget = self.resource_budget();
         let parser = document_parser::DocumentParser::new_with_limits(
             reader,
             self.mode,
             self.max_errors,
-            self.limits.clone(),
+            limits,
         );
         parser.parse()
     }
@@ -218,17 +220,18 @@ impl PdfParser {
     /// # Errors
     /// Returns `AstError::ParseError` if the value cannot be parsed
     pub fn parse_value(&self, input: &[u8]) -> AstResult<PdfValue> {
-        self.consume_input(input)?;
-        self.consume_object()?;
-        self.parse_value_unbudgeted(input)
+        let budget = self.resource_budget();
+        Self::consume_input(&budget, input)?;
+        Self::consume_object(&budget)?;
+        self.parse_value_unbudgeted(input, &budget)
     }
 
-    fn parse_value_unbudgeted(&self, input: &[u8]) -> AstResult<PdfValue> {
+    fn parse_value_unbudgeted(&self, input: &[u8], budget: &ResourceBudget) -> AstResult<PdfValue> {
         let (remaining, value) =
             object_parser::parse_value_with_max_depth_unbudgeted(input, self.limits.max_depth)
                 .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
         self.ensure_strictly_consumed(remaining)?;
-        object_parser::charge_value_memory(&value, &self.limits.budget, input)
+        object_parser::charge_value_memory(&value, budget, input)
             .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
         Ok(value)
     }
@@ -244,8 +247,9 @@ impl PdfParser {
     /// # Errors
     /// Returns `AstError::ParseError` if the object cannot be parsed
     pub fn parse_object(&self, input: &[u8]) -> AstResult<PdfValue> {
-        self.consume_input(input)?;
-        self.consume_object()?;
+        let budget = self.resource_budget();
+        Self::consume_input(&budget, input)?;
+        Self::consume_object(&budget)?;
         let object_input = crate::parser::lexer::skip_whitespace_and_comments(input)
             .map(|(remaining, _)| remaining)
             .unwrap_or(input);
@@ -257,7 +261,7 @@ impl PdfParser {
                 )
                 .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
             self.ensure_strictly_consumed(remaining)?;
-            object_parser::charge_value_memory(&value, &self.limits.budget, object_input)
+            object_parser::charge_value_memory(&value, &budget, object_input)
                 .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
             return Ok(value);
         }
@@ -265,23 +269,21 @@ impl PdfParser {
             object_input,
             self.limits.max_depth,
         ) {
-            object_parser::charge_value_memory(&value, &self.limits.budget, object_input)
+            object_parser::charge_value_memory(&value, &budget, object_input)
                 .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
             return Ok(value);
         }
-        self.parse_value_unbudgeted(input)
+        self.parse_value_unbudgeted(input, &budget)
     }
 
-    fn consume_input(&self, input: &[u8]) -> AstResult<()> {
-        self.limits
-            .budget
+    fn consume_input(budget: &ResourceBudget, input: &[u8]) -> AstResult<()> {
+        budget
             .consume_input(input.len() as u64)
             .map_err(|error| AstError::ParseError(error.to_string()))
     }
 
-    fn consume_object(&self) -> AstResult<()> {
-        self.limits
-            .budget
+    fn consume_object(budget: &ResourceBudget) -> AstResult<()> {
+        budget
             .consume_object()
             .map_err(|error| AstError::ParseError(error.to_string()))
     }
@@ -321,7 +323,8 @@ impl PdfParser {
         &self,
         input: &[u8],
     ) -> AstResult<(Vec<PdfValue>, Vec<ParseDiagnostic>)> {
-        self.consume_input(input)?;
+        let budget = self.resource_budget();
+        Self::consume_input(&budget, input)?;
         let mut objects = Vec::new();
         let mut diagnostics = Vec::new();
         let mut remaining = input;
@@ -334,7 +337,7 @@ impl PdfParser {
             if object_input.is_empty() {
                 break;
             }
-            self.consume_object()?;
+            Self::consume_object(&budget)?;
             let parsed = if object_parser::parse_indirect_object_header(object_input).is_ok() {
                 object_parser::parse_indirect_object_with_max_depth_unbudgeted(
                     object_input,
@@ -350,7 +353,7 @@ impl PdfParser {
 
             match parsed {
                 Ok((rest, value)) => {
-                    object_parser::charge_value_memory(&value, &self.limits.budget, object_input)
+                    object_parser::charge_value_memory(&value, &budget, object_input)
                         .map_err(|e| AstError::ParseError(format!("{:?}", e)))?;
                     objects.push(value);
                     remaining = rest;
@@ -435,5 +438,14 @@ mod tests {
             .parse_object(b"1 0 obj (three) endobj")
             .expect_err("indirect objects must charge retained memory");
         assert!(error.to_string().contains("TooLarge"));
+    }
+
+    #[test]
+    fn parser_reuses_limits_for_independent_operations() {
+        let budget = ResourceBudget::new(1, 1024, 1024, 100, 10, 10, 10, 10);
+        let parser = PdfParser::new().with_resource_budget(budget);
+
+        assert!(parser.parse_value(b"1").is_ok());
+        assert!(parser.parse_value(b"1").is_ok());
     }
 }
