@@ -210,6 +210,9 @@ registra `397` divergencias (`396` desacuerdos entre referencias y `1`
 divergencia de consenso), con `peak_rss_kib=428240` y percentiles
 `27/83/196 ms` (`p50/p95/p99`); esas divergencias siguen siendo pendientes de
 clasificar, no findings de crash.
+La suite de mapeo reproducible contra veraPDF pasa `6/6`: cubre los `205`
+casos negativos Isartor, los casos PDF/UA publicados y los `9` pares
+positivos/negativos de reglas locales.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
