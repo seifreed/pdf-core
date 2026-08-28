@@ -251,6 +251,15 @@ impl<'a> NameTreeParser<'a> {
         match value {
             PdfValue::String(s) => Some(s.to_string_lossy()),
             PdfValue::Name(n) => Some(n.without_slash().to_string()),
+            PdfValue::Reference(reference) => self
+                .resolver
+                .get_node_id(&reference.id())
+                .and_then(|node_id| self.ast.get_node(node_id))
+                .and_then(|node| match &node.value {
+                    PdfValue::String(s) => Some(s.to_string_lossy()),
+                    PdfValue::Name(n) => Some(n.without_slash().to_string()),
+                    _ => None,
+                }),
             _ => None,
         }
     }
@@ -620,16 +629,21 @@ mod tests {
             NodeType::Object(crate::types::ObjectId::new(2, 0)),
             PdfValue::String(crate::types::PdfString::new_literal(b"value")),
         );
+        let name_id = ast.create_node(
+            NodeType::Object(crate::types::ObjectId::new(3, 0)),
+            PdfValue::String(crate::types::PdfString::new_literal(b"name")),
+        );
         let names_id = ast.create_node(
             NodeType::Object(crate::types::ObjectId::new(1, 0)),
             PdfValue::Array(PdfArray::from(vec![
-                PdfValue::String(crate::types::PdfString::new_literal(b"name")),
+                PdfValue::Reference(PdfReference::new(3, 0)),
                 PdfValue::Reference(PdfReference::new(2, 0)),
             ])),
         );
         let mut resolver = ObjectNodeMap::new();
         resolver.insert(crate::types::ObjectId::new(1, 0), names_id);
         resolver.insert(crate::types::ObjectId::new(2, 0), value_id);
+        resolver.insert(crate::types::ObjectId::new(3, 0), name_id);
         let mut names_dict = PdfDictionary::new();
         names_dict.insert(
             "Dests",
