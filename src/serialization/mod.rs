@@ -8,7 +8,7 @@ use crate::types::{ObjectId, PdfValue};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-pub const AST_SCHEMA_VERSION: &str = "1.1.0";
+pub const AST_SCHEMA_VERSION: &str = "1.2.0";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SerializableDocument {
@@ -335,6 +335,10 @@ pub enum SerializableValue {
     Integer(i64),
     Real(f64),
     String(String),
+    StringBytes {
+        bytes: Vec<u8>,
+        hexadecimal: bool,
+    },
     Name(String),
     Array(Vec<SerializableValue>),
     Dictionary(HashMap<String, SerializableValue>),
@@ -489,6 +493,7 @@ fn check_serializable_value_budget(
         SerializableValue::String(value) | SerializableValue::Name(value) => {
             budget.consume_input(value.len() as u64)?
         }
+        SerializableValue::StringBytes { bytes, .. } => budget.consume_input(bytes.len() as u64)?,
         SerializableValue::Array(values) => {
             for value in values {
                 check_serializable_value_budget(value, budget)?;
@@ -645,7 +650,10 @@ impl GraphSerializer {
             PdfValue::Boolean(b) => SerializableValue::Boolean(*b),
             PdfValue::Integer(i) => SerializableValue::Integer(*i),
             PdfValue::Real(r) => SerializableValue::Real(*r),
-            PdfValue::String(s) => SerializableValue::String(s.to_string_lossy()),
+            PdfValue::String(s) => SerializableValue::StringBytes {
+                bytes: s.as_bytes().to_vec(),
+                hexadecimal: matches!(s, crate::types::PdfString::Hexadecimal(_)),
+            },
             PdfValue::Name(n) => SerializableValue::Name(n.as_str().to_string()),
             PdfValue::Array(arr) => {
                 let items: Vec<SerializableValue> = arr.iter().map(Self::serialize_value).collect();
@@ -788,7 +796,10 @@ impl GraphDeserializer {
                 serialized.metadata.serialization_version = AST_SCHEMA_VERSION.to_string();
                 Ok(serialized)
             }
-            AST_SCHEMA_VERSION => Ok(serialized),
+            "1.1.0" | AST_SCHEMA_VERSION => {
+                serialized.metadata.serialization_version = AST_SCHEMA_VERSION.to_string();
+                Ok(serialized)
+            }
             _ => Err(format!(
                 "Unsupported AST serialization version: {}; expected {}",
                 serialized.metadata.serialization_version, AST_SCHEMA_VERSION
@@ -912,6 +923,13 @@ impl GraphDeserializer {
             SerializableValue::String(s) => Ok(PdfValue::String(
                 crate::types::PdfString::new_literal(s.as_bytes()),
             )),
+            SerializableValue::StringBytes { bytes, hexadecimal } => {
+                Ok(PdfValue::String(if *hexadecimal {
+                    crate::types::PdfString::new_hex(bytes.clone())
+                } else {
+                    crate::types::PdfString::new_literal(bytes.clone())
+                }))
+            }
             SerializableValue::Name(n) => Ok(PdfValue::Name(crate::types::PdfName::new(n))),
             SerializableValue::Array(items) => {
                 let mut array = crate::types::PdfArray::new();
@@ -1599,7 +1617,7 @@ mod tests {
         ast.set_root(root_id);
         let mut graph = SerializableGraph::from_ast(&ast);
 
-        for version in ["1", "1.2.0", "2.0.0"] {
+        for version in ["1", "1.3.0", "2.0.0"] {
             graph.metadata.serialization_version = version.to_string();
             let error = GraphDeserializer::deserialize(graph.clone()).unwrap_err();
             assert!(error.contains("Unsupported AST serialization version"));
@@ -1617,6 +1635,25 @@ mod tests {
 
         let restored = GraphDeserializer::deserialize(graph).unwrap();
         assert!(restored.get_node_by_object(object_id).is_some());
+    }
+
+    #[test]
+    fn migrates_ast_1_1_string_values() {
+        let mut ast = PdfAstGraph::new();
+        let node_id = ast.create_node(NodeType::Root, PdfValue::Null);
+        ast.set_root(node_id);
+        let mut graph = SerializableGraph::from_ast(&ast);
+        graph.metadata.serialization_version = "1.1.0".to_string();
+        graph.nodes[0].value = SerializableValue::String("legacy".to_string());
+
+        let restored = GraphDeserializer::deserialize(graph).expect("1.1 graph should migrate");
+        assert_eq!(
+            restored
+                .get_node(node_id)
+                .and_then(|node| node.value.as_string())
+                .map(|value| value.as_bytes()),
+            Some(b"legacy".as_slice())
+        );
     }
 
     #[test]
@@ -1737,6 +1774,44 @@ mod tests {
         assert_eq!(
             stream.lossless.recovery_actions,
             vec!["stream_decode_skipped"]
+        );
+    }
+
+    #[test]
+    fn preserves_pdf_string_bytes_and_encoding_across_round_trip() {
+        let mut ast = PdfAstGraph::new();
+        let mut dictionary = PdfDictionary::new();
+        dictionary.insert(
+            "Literal",
+            PdfValue::String(crate::types::PdfString::new_literal(vec![0, 0xff, b'a'])),
+        );
+        dictionary.insert(
+            "Hex",
+            PdfValue::String(crate::types::PdfString::new_hex(vec![0xde, 0xad])),
+        );
+        let root_id = ast.create_node(NodeType::Root, PdfValue::Dictionary(dictionary));
+        ast.set_root(root_id);
+
+        let serialized = SerializableGraph::from_ast(&ast);
+        let json = serialized
+            .to_json()
+            .expect("string values should serialize");
+        let restored = GraphDeserializer::deserialize(
+            SerializableGraph::from_json(&json).expect("serialized graph should parse"),
+        )
+        .expect("graph should restore");
+        let dictionary = restored
+            .get_node(root_id)
+            .and_then(|node| node.value.as_dict())
+            .expect("restored dictionary");
+
+        assert_eq!(
+            dictionary.get("Literal").and_then(PdfValue::as_string),
+            Some(&crate::types::PdfString::new_literal(vec![0, 0xff, b'a']))
+        );
+        assert_eq!(
+            dictionary.get("Hex").and_then(PdfValue::as_string),
+            Some(&crate::types::PdfString::new_hex(vec![0xde, 0xad]))
         );
     }
 
