@@ -579,12 +579,13 @@ construye y prepara, pero la publicación en registros sigue deshabilitada.
 
 Pendientes actuales, en orden practico:
 
-* **Evidencia remota:** la tanda final del commit `c3247eb` queda verde en
-  `CI`, `Bindings`, `API Stability Audit`, `Fuzzing`, `ClusterFuzzLite`,
-  `Differential Corpus` y `External PDF Corpus`; los IDs están registrados
-  arriba. Sigue faltando repetir esta evidencia en el tiempo para convertirla
-  en una garantía sostenida, y explicar semánticamente todos los grupos
-  diferenciales.
+* **Evidencia remota:** sobre `6098ac6`, `External PDF Corpus`
+  (`33195920560`) y `Differential Corpus` (`33195920543`) quedan verdes.
+  `API Stability Audit` (`33195920549`) sigue bloqueado instalando
+  `cargo-semver-checks`, mientras `CI`, `Bindings`, `Fuzzing` y
+  `ClusterFuzzLite` continúan en cola. Sigue faltando repetir esta evidencia
+  en el tiempo para convertirla en una garantía sostenida, y explicar
+  semánticamente todos los grupos diferenciales.
 * **Parser endurecido:** strict y varios recorridos ya tienen guardas, incluido
   el árbol de páginas y sus referencias obligatorias, y los streams conservan
   ahora estado lossless explícito. Las APIs públicas de
