@@ -28,6 +28,11 @@ cross-reference streams en PDF/A-1b, que se basa en PDF 1.4. La regresion
 El corpus publico anade `pdfa-xref-stream-negative.pdf` con evidencia veraPDF
 `ISO 19005-1:2005:6.1.4:3`; queda fijado en `344a1c906b158568f47af5f5e9ee8371dddc30c7`.
 
+Actualizacion posterior: la extraccion de texto conserva ahora el codigo fuente
+de cada entrada CMap junto a su Unicode. Las fuentes Type0/CIDFont consultan
+`W`/`DW` por codigo PDF, no por codepoint Unicode, evitando anchos incorrectos
+cuando `ToUnicode` remapea un CID; la regresion Type0 y las suites CMap pasan.
+
 Actualizacion posterior: `cee290c` corrige dos falsos negativos de la cobertura
 PDF/A. La sincronizacion de metadata acepta las fechas PDF/XMP equivalentes,
 no exige que un campo opcional exista en ambos diccionarios y mantiene el

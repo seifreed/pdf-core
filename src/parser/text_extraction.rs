@@ -604,7 +604,11 @@ impl<'a> TextExtractor<'a> {
         let mut total_width = 0.0;
 
         // Decode text using font encoding/ToUnicode
-        let decoded = self.decode_text_with_budget(text_bytes, font, budget)?;
+        let decoded_parts = self.decode_text_with_codes_with_budget(text_bytes, font, budget)?;
+        let decoded = decoded_parts
+            .iter()
+            .map(|(_, unicode)| unicode.as_str())
+            .collect::<String>();
 
         // Calculate position for each character
         let tm = &self.graphics_state.text_matrix;
@@ -613,11 +617,12 @@ impl<'a> TextExtractor<'a> {
         // Transform text space to device space
         let (x, y) = self.transform_point(0.0, 0.0, tm, ctm);
 
-        for ch in decoded.chars() {
-            let char_width = self.get_char_width(ch, font);
+        for (code, unicode) in decoded_parts {
+            let char_width = self.get_code_width(code, font);
+            let is_space = unicode == " ";
 
             let char_info = CharInfo {
-                unicode: ch.to_string(),
+                unicode,
                 x: x + total_width,
                 y,
                 width: char_width * self.graphics_state.font_size,
@@ -630,7 +635,7 @@ impl<'a> TextExtractor<'a> {
             total_width += char_width * self.graphics_state.font_size;
             total_width += self.graphics_state.char_space;
 
-            if ch == ' ' {
+            if is_space {
                 total_width += self.graphics_state.word_space;
             }
         }
@@ -657,15 +662,18 @@ impl<'a> TextExtractor<'a> {
         Ok(())
     }
 
-    fn decode_text_with_budget(
+    fn decode_text_with_codes_with_budget(
         &self,
         text_bytes: &[u8],
         font: &FontInfo,
         budget: &ResourceBudget,
-    ) -> Result<String, ResourceBudgetError> {
+    ) -> Result<Vec<(u32, String)>, ResourceBudgetError> {
         // Try ToUnicode CMap first
         if let Some(cmap) = &self.text_state.current_cmap {
-            return self.decode_with_cmap_with_budget(text_bytes, cmap, budget);
+            let mut ast = PdfAstGraph::new();
+            let resolver = crate::parser::reference_resolver::ObjectNodeMap::new();
+            return CMapParser::new_with_budget(&mut ast, &resolver, budget)
+                .decode_bytes_with_codes_with_budget(cmap, text_bytes, budget);
         }
 
         // Fallback to encoding
@@ -673,29 +681,18 @@ impl<'a> TextExtractor<'a> {
         let decoded = text_bytes
             .iter()
             .map(|byte| {
-                font.differences.get(byte).cloned().unwrap_or_else(|| {
+                let unicode = font.differences.get(byte).cloned().unwrap_or_else(|| {
                     match font.encoding.as_str() {
                         "WinAnsiEncoding" => self.decode_win_ansi_byte(*byte).to_string(),
                         "MacRomanEncoding" => self.decode_mac_roman_byte(*byte).to_string(),
                         _ => (*byte as char).to_string(),
                     }
-                })
+                });
+                (u32::from(*byte), unicode)
             })
-            .collect::<String>();
-        budget.consume_decoded(decoded.len() as u64)?;
+            .collect::<Vec<_>>();
+        budget.consume_decoded(decoded.iter().map(|(_, value)| value.len() as u64).sum())?;
         Ok(decoded)
-    }
-
-    fn decode_with_cmap_with_budget(
-        &self,
-        text_bytes: &[u8],
-        cmap: &CMap,
-        budget: &ResourceBudget,
-    ) -> Result<String, ResourceBudgetError> {
-        let mut ast = PdfAstGraph::new();
-        let resolver = crate::parser::reference_resolver::ObjectNodeMap::new();
-        CMapParser::new_with_budget(&mut ast, &resolver, budget)
-            .decode_bytes_with_budget(cmap, text_bytes, budget)
     }
 
     fn decode_win_ansi_byte(&self, byte: u8) -> char {
@@ -769,6 +766,10 @@ impl<'a> TextExtractor<'a> {
                 })
             })
             .unwrap_or(ch as u32);
+        self.get_code_width(code, font)
+    }
+
+    fn get_code_width(&self, code: u32, font: &FontInfo) -> f64 {
         font.width_map
             .get(&code)
             .copied()
@@ -905,7 +906,7 @@ mod tests {
 
     #[test]
     fn extracts_indirect_font_with_tounicode_and_widths() {
-        let cmap = b"begincmap\n/CMapName /Test def\n1 begincodespacerange\n<00> <FF>\nendcodespacerange\n1 beginbfchar\n<41> <0041>\nendbfchar\nendcmap";
+        let cmap = b"begincmap\n/CMapName /Test def\n1 begincodespacerange\n<00> <FF>\nendcodespacerange\n2 beginbfchar\n<01> <0041>\n<02> <0042>\nendbfchar\nendcmap";
 
         let mut ast = PdfAstGraph::new();
         ast.add_node(AstNode::new(
@@ -988,8 +989,11 @@ mod tests {
             NodeId::new(5),
             NodeType::Object(ObjectId::new(5, 0)),
             PdfValue::Array(PdfArray::from(vec![
-                PdfValue::Integer(65),
-                PdfValue::Array(PdfArray::from(vec![PdfValue::Integer(600)])),
+                PdfValue::Integer(1),
+                PdfValue::Array(PdfArray::from(vec![
+                    PdfValue::Integer(600),
+                    PdfValue::Integer(500),
+                ])),
             ])),
         ));
         ast.add_node(AstNode::new(
@@ -1021,7 +1025,7 @@ mod tests {
         let operators = [
             ContentOperator::BeginText,
             ContentOperator::SetFont("/F1".to_string(), 10.0),
-            ContentOperator::ShowText(vec![0x41, 0x42]),
+            ContentOperator::ShowText(vec![0x01, 0x02]),
             ContentOperator::EndText,
         ];
         let mut extractor = TextExtractor::new(&ast, &resources);

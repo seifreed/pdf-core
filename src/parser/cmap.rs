@@ -655,6 +655,20 @@ impl<'a> CMapParser<'a> {
         text: &[u8],
         budget: &ResourceBudget,
     ) -> Result<String, ResourceBudgetError> {
+        Ok(self
+            .decode_bytes_with_codes_with_budget(cmap, text, budget)?
+            .into_iter()
+            .map(|(_, unicode)| unicode)
+            .collect())
+    }
+
+    /// Decode text while retaining the source code used for each Unicode span.
+    pub fn decode_bytes_with_codes_with_budget(
+        &self,
+        cmap: &CMap,
+        text: &[u8],
+        budget: &ResourceBudget,
+    ) -> Result<Vec<(u32, String)>, ResourceBudgetError> {
         budget.consume_input(text.len() as u64)?;
         let mut lengths: Vec<usize> = cmap
             .code_space_ranges
@@ -668,7 +682,7 @@ impl<'a> CMapParser<'a> {
         lengths.sort_unstable_by(|left, right| right.cmp(left));
         lengths.dedup();
 
-        let mut result = String::new();
+        let mut result = Vec::new();
         let mut offset = 0;
         while offset < text.len() {
             let mut decoded = None;
@@ -697,12 +711,15 @@ impl<'a> CMapParser<'a> {
 
             if let Some(unicode) = decoded {
                 budget.consume_decoded(unicode.len() as u64)?;
-                result.push_str(&unicode);
+                let code = self
+                    .bytes_to_u32(&text[offset..offset + consumed])
+                    .unwrap_or_default();
+                result.push((code, unicode));
                 offset += consumed;
             } else {
                 let character = text[offset] as char;
                 budget.consume_decoded(character.len_utf8() as u64)?;
-                result.push(character);
+                result.push((u32::from(text[offset]), character.to_string()));
                 offset += 1;
             }
         }
