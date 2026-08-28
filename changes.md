@@ -492,7 +492,8 @@ Pendientes actuales, en orden practico:
   parciales. `0302f79` completa esta garantía en trailer y xref streams,
   incluidas sus rutas tolerantes de decode y recuperación cercana. `a75bcd2`
   propaga también los errores de decode ICC, nodos y aristas en
-  `OutputIntentsParser`.
+  `OutputIntentsParser`. `551c6a7` evita además que las rutas tolerantes de
+  content streams y `JBIG2Globals` silencien agotamientos de presupuesto.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
