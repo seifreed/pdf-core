@@ -14,6 +14,10 @@ pub struct ObjectNodeMap {
     object_to_node: HashMap<ObjectId, NodeId>,
 }
 
+fn is_parser_budget_error<I>(error: &nom::Err<nom::error::Error<I>>) -> bool {
+    matches!(error, nom::Err::Failure(error) if error.code == nom::error::ErrorKind::TooLarge)
+}
+
 fn stream_uses_jbig2(filter: Option<&PdfValue>) -> bool {
     match filter {
         Some(PdfValue::Name(name)) => name.without_slash() == "JBIG2Decode",
@@ -396,13 +400,11 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                         }
                         node_id
                     }
-                    Err(e) => {
-                        if self.tolerant {
-                            warn!("Failed to resolve reference {}: {}", obj_id, e);
-                            continue;
-                        }
-                        return Err(e);
+                    Err(e) if self.tolerant && !e.starts_with("resource budget exceeded:") => {
+                        warn!("Failed to resolve reference {}: {}", obj_id, e);
+                        continue;
                     }
+                    Err(e) => return Err(e),
                 }
             } else {
                 continue; // Already resolved but not found in map
@@ -705,6 +707,9 @@ impl<R: BufRead + Seek> ReferenceResolver<R> {
                     }
 
                     Ok(node_id)
+                }
+                Err(e) if is_parser_budget_error(&e) => {
+                    Err("resource budget exceeded: object parser".to_string())
                 }
                 Err(e) => {
                     if self.tolerant {
@@ -1766,6 +1771,40 @@ mod tests {
         let error = resolver
             .build_content_stream_ast(&mut ast)
             .expect_err("content stream budget must propagate");
+        assert!(error.contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn reference_resolution_budget_exhaustion_is_not_skipped_in_tolerant_mode() {
+        let mut document = PdfDocument::new(crate::ast::PdfVersion::new(1, 7));
+        document.xref.entries.insert(
+            ObjectId::new(2, 0),
+            XRefEntry::InUse {
+                offset: 0,
+                generation: 0,
+            },
+        );
+        let limits = crate::performance::PerformanceLimits {
+            budget: crate::performance::ResourceBudget::new(1024, 1024, 1024, 10, 0, 10, 10, 8),
+            ..crate::performance::PerformanceLimits::default()
+        };
+        let mut resolver = ReferenceResolver::from_document(
+            Cursor::new(b"2 0 obj\nnull\nendobj\n".to_vec()),
+            &document,
+            true,
+            limits,
+        );
+        let mut root = PdfDictionary::new();
+        root.insert("Reference", PdfValue::Reference(PdfReference::new(2, 0)));
+        let mut ast = PdfAstGraph::new();
+        ast.create_node(NodeType::Root, PdfValue::Dictionary(root));
+        resolver
+            .pending_references
+            .push_back((NodeId(0), PdfReference::new(2, 0)));
+
+        let error = resolver
+            .resolve_references(&mut ast)
+            .expect_err("reference budget must propagate in tolerant mode");
         assert!(error.contains("resource budget exceeded"));
     }
 
