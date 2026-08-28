@@ -2462,7 +2462,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
             if CATEGORIES.contains(&name.without_slash()) {
                 let mut category = self.resolve_resource_dictionary(parent.get(name.as_str()))?;
                 let child_category = self.resolve_resource_dictionary(Some(value))?;
-                if !child_category.is_empty() {
+                if matches!(value, PdfValue::Dictionary(_) | PdfValue::Reference(_)) {
                     for (resource_name, resource_value) in child_category {
                         category.insert(resource_name.clone(), resource_value.clone());
                     }
@@ -3626,6 +3626,16 @@ mod tests {
             Some(PdfValue::Dictionary(fonts))
                 if fonts.get("F1") == Some(&PdfValue::Null)
                     && fonts.get("F2") == Some(&PdfValue::Null)
+        ));
+
+        let mut empty_child = PdfDictionary::new();
+        empty_child.insert("Font", PdfValue::Dictionary(PdfDictionary::new()));
+        let merged_empty = parser
+            .merge_resource_dictionaries(&parent, &empty_child)
+            .expect("empty resource category should still inherit");
+        assert!(matches!(
+            merged_empty.get("Font"),
+            Some(PdfValue::Dictionary(fonts)) if fonts.get("F1") == Some(&PdfValue::Null)
         ));
     }
 
