@@ -243,6 +243,9 @@ auxiliares; los workflows remotos del push siguen pendientes.
 `948943c` expone `FunctionParser::parse_function_with_budget` y deja de
 ocultar el agotamiento de nodos al materializar funciones anidadas; la suite
 de funciones pasa `3/3` y Clippy estricto.
+`19622f1` expone variantes presupuestadas para construir `OCProperties` y
+`OCMD`, preservando los wrappers legacy; la suite OCG pasa `2/2` y Clippy
+estricto.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
