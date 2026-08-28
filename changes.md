@@ -21,6 +21,15 @@ La extraccion de texto resuelve ahora fuentes indirectas, descendientes CID,
 `ToUnicode`, encodings y metricas basicas de glifo dentro de su alcance
 experimental.
 
+Actualizacion posterior: `cee290c` corrige dos falsos negativos de la cobertura
+PDF/A. La sincronizacion de metadata acepta las fechas PDF/XMP equivalentes,
+no exige que un campo opcional exista en ambos diccionarios y mantiene el
+alcance correcto de `xml:lang` entre descripciones XMP. La regla LZW tambien
+inspecciona streams cuyo diccionario declara `/Subtype /Image`, aunque el
+resolver los materialice como `ContentStream`. Las suites locales pasan `29`
+validaciones, `10` pruebas XMP y `6/6` mappings veraPDF; el siguiente push debe
+confirmar la misma correccion en el workflow externo.
+
 Actualizacion 2026-08-28: `2dc820d` anade un fixture PDF/UA derivado que
 rompe deliberadamente el nombre del diccionario de metadata, con evidencia
 veraPDF exacta para `ISO 14289-1:2014:7.1:8`; el corpus reproducible queda en
