@@ -43,6 +43,12 @@ contra `libpdf_ast.dylib`, con salida `pdf-ast 0.2.0-alpha.1: nodes=5 root=0`.
 `cargo semver-checks check-release --package pdf-ast --baseline-version 0.1.0`
 también pasa localmente: no requiere cambio SemVer y deja `254` checks omitidos
 por tratarse de un salto mayor alpha; esto no estabiliza todavía la API pública.
+Actualización posterior: `b74af07` hace que el agotamiento de `max_depth` en el
+árbol de páginas se propague como `ResourceBudgetError::Depth` en la API
+presupuestada, en lugar de devolver una lista truncada sin error. La regresión
+focalizada, el formato y Clippy estricto pasan. El último push (`b74af07`)
+disparó de nuevo los siete workflows; al redactar esta entrada aún estaban
+pendientes o en cola, por lo que no se cuentan como evidencia remota verde.
 La verificación local completa del corpus actualizado pasa `2.810/2.810`
 sin panics ni errores de parseo, con `2.810` hashes, `161281039` bytes,
 `peak_rss_kib=474480` y percentiles `3/57/178 ms`. La comparación veraPDF
