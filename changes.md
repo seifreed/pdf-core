@@ -199,6 +199,8 @@ un diccionario vacio; la misma suite pasa `22/22` y Clippy estricto.
 `c47985d` añade variantes acotadas de CMap que distinguen sintaxis invalida de
 agotamiento de `ResourceBudget`, y propaga este ultimo en resolver y
 extraccion; las suites pasan `13/13`, `14/14` y `5/5`, con Clippy estricto.
+`bc3c183` alinea el commit por defecto del descargador de corpus con
+`b3e6f341`, la revision reproducida por CI para los `2.809` fixtures.
 
 Avances adicionales publicados: `39de16a` limpia los handles de salida del
 ABI C cuando una operación falla; `2e05453` cobra la entrada de todos los
