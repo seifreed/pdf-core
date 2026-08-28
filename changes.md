@@ -7,10 +7,11 @@ varios puntos: el workspace incluye todos los crates, `main` esta protegida,
 las alertas de Dependabot estan resueltas, el parser tiene lecturas acotadas y
 validacion de limites en las rutas de xref/object streams, y la serializacion
 restaura el estado documental lossless disponible. Tambien existe un corpus
-reproducible de 2.806 fixtures upstream mas tres regresiones, metricas
+reproducible de 2.806 fixtures upstream, tres regresiones y un fixture derivado,
+metricas
 diferenciales, una campana fuzz local de 16.000 ejecuciones sin crashes y un
-chequeo completo de 205 mapeos negativos contra veraPDF 1.30.2 y diez pares
-positivos/negativos de reglas locales, nueve con ID veraPDF exacto; la cobertura positiva exacta por regla
+chequeo completo de 205 mapeos negativos contra veraPDF 1.30.2 y once pares
+positivos/negativos de reglas locales, diez con ID veraPDF exacto; la cobertura positiva exacta por regla
 sigue sin estar disponible para los 95 IDs porque veraPDF no emite resúmenes
 de reglas aprobadas.
 La rama `main` queda protegida en GitHub con checks estrictos de CI, corpus,
@@ -19,6 +20,13 @@ se bloquean force-pushes y borrados.
 La extraccion de texto resuelve ahora fuentes indirectas, descendientes CID,
 `ToUnicode`, encodings y metricas basicas de glifo dentro de su alcance
 experimental.
+
+Actualizacion 2026-08-28: `2dc820d` anade un fixture PDF/UA derivado que
+rompe deliberadamente el nombre del diccionario de metadata, con evidencia
+veraPDF exacta para `ISO 14289-1:2014:7.1:8`; el corpus reproducible queda en
+`2.810` PDFs y la suite de mapeo pasa `6/6` con once pares locales, diez de
+ellos con ID veraPDF exacto. El descargador y los workflows quedan fijados a
+`2dc820d0205d088e1bd36c50b55da480918796c1`.
 
 Actualizacion posterior: `b410aa5` deduplica referencias repetidas durante la
 resolucion y reutiliza nodos semanticos ya asociados a `ObjectId`; `62adb2a`
