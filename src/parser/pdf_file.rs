@@ -873,6 +873,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 let object_number = start.checked_add(i).ok_or_else(|| {
                     AstError::ParseError("Xref object number overflow".to_string())
                 })?;
+                self.limits
+                    .budget
+                    .consume_object()
+                    .map_err(|error| AstError::ParseError(error.to_string()))?;
                 let obj_id = ObjectId::new(object_number, 0);
                 let entry_data = &data[offset..end];
                 let entry = self.parse_xref_stream_entry(entry_data, widths)?;
@@ -3733,6 +3737,27 @@ mod tests {
             .parse_xref_stream_entry(&[3, 0, 0], &[1, 1, 1])
             .expect_err("strict mode must reject unknown XRef entry types");
         assert!(error.to_string().contains("Invalid XRef entry type"));
+    }
+
+    #[test]
+    fn xref_stream_entries_respect_object_budget() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let limits = PerformanceLimits {
+            budget: ResourceBudget::new(1024, 1024, 1024, 10, 1, 100, 100, 8),
+            ..PerformanceLimits::default()
+        };
+        let parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(b"%PDF-1.7\n".to_vec())),
+            ParseMode::Strict,
+            0,
+            limits,
+        )
+        .expect("valid header should construct parser");
+
+        let error = parser
+            .parse_xref_entries_from_data(&[1, 0, 0, 1, 0, 1], &[1, 1, 1], 3, &[(0, 2)])
+            .expect_err("xref entries must consume the shared object budget");
+        assert!(error.to_string().contains("resource budget exceeded"));
     }
 
     #[test]
