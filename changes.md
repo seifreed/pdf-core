@@ -537,6 +537,9 @@ Pendientes actuales, en orden practico:
   insertar/mover hijos y mantiene sincronizadas las listas del AST al quitar
   aristas o nodos. Las regresiones de transform y graph pasan `5/5`, Clippy
   estricto queda limpio y el workspace completo pasa `306` tests.
+  `2043bce` decodifica los streams XMP antes de inspeccionarlos en PDF/UA y
+  convierte los fallos de decode en errores explícitos; el fixture positivo
+  Flate y la suite de validación pasan `26/26`, con Clippy estricto.
 * **Conformidad:** ya existe el inventario publico por clausula en
   `ISO-32000-MATRIX.md` y el mapeo reproducible de veraPDF, pero falta
   convertirlo en cobertura normativa completa y dejar PDF/A/PDF/UA fuera de
