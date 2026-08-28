@@ -39,6 +39,10 @@ fn is_resource_budget_error(error: &AstError) -> bool {
     matches!(error, AstError::ParseError(message) if message.contains("budget"))
 }
 
+fn is_parser_budget_error<I>(error: &nom::Err<nom::error::Error<I>>) -> bool {
+    matches!(error, nom::Err::Failure(error) if error.code == nom::error::ErrorKind::TooLarge)
+}
+
 // Depth and size limits
 const MAX_FORM_FIELD_DEPTH: usize = 64;
 const XREF_RECOVERY_SEARCH_RADIUS: u64 = 2048;
@@ -2644,6 +2648,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                                             "Indirect stream Length is not an integer".to_string(),
                                         ));
                                     }
+                                    Err(err) if is_resource_budget_error(&err) => return Err(err),
                                     Err(err) if self.tolerant => {
                                         log::warn!(
                                             "Failed to resolve indirect stream Length for object {}: {}",
@@ -2666,6 +2671,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                                     )
                                 }
                             }
+                            Err(err) if is_parser_budget_error(&err) => {
+                                return Err(AstError::ParseError(
+                                    "resource budget exceeded: object parser".to_string(),
+                                ));
+                            }
                             Err(_) => {
                                 object_parser::parse_indirect_object_with_max_depth_and_budget(
                                     &buffer,
@@ -2681,7 +2691,7 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                                 if let PdfValue::Stream(stream) = &mut value {
                                     let result = self.resolve_indirect_stream_length(stream);
                                     if let Err(err) = result {
-                                        if !self.tolerant {
+                                        if !self.tolerant || is_resource_budget_error(&err) {
                                             return Err(err);
                                         }
                                         self.record_diagnostic(
@@ -2727,6 +2737,11 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                                     parsed_id.generation
                                 )));
                             }
+                        }
+                        Err(err) if is_parser_budget_error(&err) => {
+                            return Err(AstError::ParseError(
+                                "resource budget exceeded: object parser".to_string(),
+                            ));
                         }
                         Err(err) if self.tolerant => {
                             self.record_diagnostic(
@@ -2936,7 +2951,10 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                             Err(err) => Err(err),
                         };
                     }
-                    Err(err) if !self.tolerant => {
+                    Err(err)
+                        if !self.tolerant
+                            || err.to_string().contains("resource budget exceeded") =>
+                    {
                         return Err(AstError::ParseError(format!(
                             "Failed to decode object stream: {}",
                             err
@@ -3058,14 +3076,14 @@ impl<R: Read + Seek + BufRead> PdfFileParser<R> {
                 }
                 Ok(value)
             }
-            Err(err) if self.tolerant => {
-                log::warn!("Failed to parse compressed object: {:?}", err);
+            Err(err) => {
+                let message = format!("Failed to parse compressed object: {:?}", err);
+                if !self.tolerant || is_parser_budget_error(&err) {
+                    return Err(AstError::ParseError(message));
+                }
+                log::warn!("{message}");
                 Ok(PdfValue::Null)
             }
-            Err(err) => Err(AstError::ParseError(format!(
-                "Failed to parse compressed object: {:?}",
-                err
-            ))),
         }
     }
 
@@ -3934,6 +3952,35 @@ mod tests {
         let error = parser
             .recover_xref_by_scan()
             .expect_err("xref recovery object budget must propagate");
+        assert!(error.to_string().contains("resource budget exceeded"));
+    }
+
+    #[test]
+    fn load_object_budget_exhaustion_is_not_recovered_as_null() {
+        type Parser = PdfFileParser<BufReader<Cursor<Vec<u8>>>>;
+        let data = b"%PDF-1.7\n2 0 obj\nnull\nendobj\n".to_vec();
+        let limits = PerformanceLimits {
+            budget: ResourceBudget::new(1024, 1024, 1024, 10, 0, 10, 10, 8),
+            ..PerformanceLimits::default()
+        };
+        let mut parser = Parser::new_with_limits(
+            BufReader::new(Cursor::new(data)),
+            ParseMode::Tolerant,
+            10,
+            limits,
+        )
+        .expect("parser should initialize");
+        parser.document.xref.entries.insert(
+            ObjectId::new(2, 0),
+            XRefEntry::InUse {
+                offset: 9,
+                generation: 0,
+            },
+        );
+
+        let error = parser
+            .load_object(&ObjectId::new(2, 0))
+            .expect_err("object budget must propagate from the main loader");
         assert!(error.to_string().contains("resource budget exceeded"));
     }
 
